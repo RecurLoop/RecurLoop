@@ -74,6 +74,7 @@ set_target_properties(RecurloopLib PROPERTIES FOLDER "Libraries")
 
 add_executable(Recurloop "${RECURLOOP_SOURCE_DIR}/main.cpp")
 target_include_directories(Recurloop PRIVATE "${RECURLOOP_INCLUDE_DIR}" "${RECURLOOP_SOURCE_DIR}")
+set_target_properties(Recurloop PROPERTIES OUTPUT_NAME recurloop)
 set_target_properties(Recurloop PROPERTIES FOLDER "Executables")
 install(TARGETS Recurloop RUNTIME DESTINATION bin)
 
