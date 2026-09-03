@@ -1,0 +1,561 @@
+// RecurLoop executable tour and smoke test.
+//
+// Run with `make showcase`. The numbered markers cover values, control flow,
+// phrases, records, native functions, x86-64 assembly, ABI declarations, ELF
+// linking, and exact byte output. Assertions stop at the first failed check.
+// Generated artifacts are written to /tmp/recurloop-showcase*.
+
+const decimal = 1_000
+const hexadecimal = 0x2a
+const binary = 0b101010
+const octal = 0o52
+const real_value = 1.25e2
+
+assert hexadecimal == 42 && binary == 42 && octal == 42
+assert decimal + hexadecimal * 2 == 1084
+assert (decimal + hexadecimal) * 2 == 2084
+assert -7 + +2 == -5
+assert 17 / 5 == 3 && 17 % 5 == 2
+assert real_value / 2 == 62.5
+assert 9223372036854775807 > 9223372036854775806
+assert type(null) == "null"
+assert type(true) == "bool"
+assert type(decimal) == "int"
+assert type(real_value) == "real"
+assert type("text") == "string"
+
+assert false && missing_function() || true
+assert true || 1 / 0 == 0
+
+print "[01/19] values and arithmetic: ok"
+
+
+
+const padded = "  hello RecurLoop  "
+const clean = trim(padded)
+const loud = upper(clean)
+const quiet = lower(loud)
+
+assert clean == "hello RecurLoop"
+assert loud == "HELLO RECURLOOP"
+assert quiet == "hello recurloop"
+assert len(clean) == 15
+assert contains(clean, "Recur")
+assert starts_with(clean, "hello")
+assert ends_with(clean, "Loop")
+assert substr(clean, 6, 5) == "Recur"
+assert substr(clean, 6) == "RecurLoop"
+assert replace(clean, "hello", "welcome") == "welcome RecurLoop"
+assert "number=" + 42 + ", bool=" + true == "number=42, bool=true"
+assert "line\nfeed" == "line\nfeed"
+
+print "[02/19] strings: " + replace(loud, "HELLO", "WELCOME")
+
+
+
+var accumulator = 10
+accumulator += 5
+accumulator -= 3
+accumulator *= 4
+accumulator /= 6
+accumulator %= 3
+assert accumulator == 2
+
+accumulator *= 3
+assert accumulator == 6
+
+const scope_name = "outer"
+if true {
+    const scope_name = "inner"
+    var block_only = 40
+    block_only += 2
+    assert scope_name == "inner" && block_only == 42
+} else {
+    assert false
+}
+assert scope_name == "outer"
+
+print "[03/19] bindings and lexical scopes: ok"
+
+
+
+var index = 0
+var sequence = ""
+while index < 5 {
+    if index % 2 == 0 {
+        sequence += "E" + str(index)
+    } else {
+        sequence += "O" + str(index)
+    }
+    index += 1
+}
+assert sequence == "E0O1E2O3E4"
+
+if contains(sequence, "E4") {
+    if !contains(sequence, "E5") {
+        print "[04/19] control flow: " + sequence
+    } else {
+        assert false
+    }
+} else {
+    assert false
+}
+
+
+
+print "[04.5/19] engine image export/import"
+
+engine export "/tmp/recurloop-showcase-engine.rli"
+engine import "/tmp/recurloop-showcase-engine.rli"
+
+
+
+fn factorial(n:i64) -> i64 {
+    if n <= 1 {
+        return 1
+    } else {
+        return n * factorial(n - 1)
+    }
+}
+
+assert factorial(0) == 1
+assert factorial(6) == 720
+
+let add_ten = fn (value:i64) -> i64 {
+    return value + 10
+}
+
+const compile_time_value = add_ten(32)
+assert compile_time_value == 42
+assert add_ten(compile_time_value) == 52
+assert add_ten(factorial(3)) == 16
+
+factorial(3)
+
+print "[05/19] functions and recursion: factorial(6)=" + factorial(6)
+
+
+
+let show = <let>
+show "[06/19] phrases, prototypes and references" = debug:workspace:print
+
+let ping = <debug:ping>
+let ping_alias = <ping>
+ping
+ping_alias
+
+const generated_suffix = "runtime"
+let "generated-${upper(generated_suffix)}" = <debug:ping>
+let generated-${str(42)} = <debug:ping>
+let literal-\${generated_suffix} = <debug:ping>
+let generated_alias = <"generated-${upper(generated_suffix)}">
+
+generated-RUNTIME
+generated-42
+literal-${generated_suffix}
+generated_alias
+
+
+
+show "[07/19] dictionaries, paths and non-C names" = debug:workspace:print
+
+let commands = [
+    ping = <debug:ping>
+    nested = [
+        ping = <debug:ping>
+    ]
+    "${generated_suffix}" = []
+    "hello world" = <debug:ping>
+    "hello RecurLoop 🚀" = <debug:ping>
+    "contains:colon" = <debug:ping>
+    "${generated_suffix} command" = <debug:ping>
+]
+
+let commands:${generated_suffix}:ping = <debug:ping>
+let generated_path = <commands:"${generated_suffix} command">
+let generated_nested_path = <commands:${generated_suffix}:ping>
+
+commands:ping
+commands : nested : ping
+commands hello world
+commands hello RecurLoop 🚀
+commands:contains:colon
+commands runtime command
+commands:runtime:ping
+
+let quoted_ping = <commands:"hello world">
+quoted_ping
+generated_path
+generated_nested_path
+
+
+
+show "[08/19] lexicon checkpoints and comments" = debug:workspace:print
+
+let permanent_ping = <debug:ping>
+{
+    let temporary_ping = <debug:ping>
+    temporary_ping // scoped alias
+    /* Braces { } and "strings" inside comments do not affect block structure. */
+}
+permanent_ping
+
+
+
+
+show "[09/19] dictionary structures and inherited methods" = debug:workspace:print
+
+struct Example = [
+    bytes = hex { c3 }
+    method = asm { ret }
+    nested = [ ping = <debug:ping> ]
+]
+
+let example = <Example>
+struct ExamplePointer = <Example>
+let example_pointer = <ExamplePointer>
+
+let exercise_template = {
+    invoke <Example:method>
+    invoke <Example:nested:ping>
+}
+exercise_template
+
+
+
+show "[10/19] physical records, arrays, methods and pointer depth" = debug:workspace:print
+
+record Header(magic:u8[4], version:u16, flags:u16) packed
+record Packet(header:Header, length:u32, payload:u64) align(16)
+method Packet clear(self:Packet*, fill:u8) -> void abi sysv-amd64
+
+Header header
+Packet packet
+pointer Packet* packet_pointer
+pointer Packet** packet_pointer_pointer
+pointer Packet*** packet_pointer_pointer_pointer
+
+
+
+
+show "[11/19] compiled phrases and JIT invoke" = debug:workspace:print
+
+let jit_tour = {
+    invoke ping
+    invoke <commands:nested:ping>
+    invoke <debug:ping>
+}
+
+jit_tour
+
+
+
+show "[12/19] raw opcodes and phrase-driven x86-64 assembler" = debug:workspace:print
+
+let raw_hex = hex {
+    48 b8 48 45 58 20 4f 4b 21 0a
+    50 b8 01 00 00 00 bf 01 00 00 00
+    48 89 e6 ba 08 00 00 00 0f 05
+    48 83 c4 08 c3
+}
+raw_hex
+
+let asm : { : jump = <asm:{:jmp>
+
+let assembler_demo = asm {
+    mov rax, 5
+    call add_seven
+    cmp rax, 12
+    jne failed
+    mov r10, 0x0a214b4f204d5341
+    jump output
+
+add_seven:
+    add rax, 7
+    ret
+
+failed:
+    mov r10, 0x0a444142204d5341
+
+output:
+    sub rsp, 8
+    mov qword [rsp], r10
+    mov rax, 1
+    mov rdi, 1
+    lea rsi, [rsp]
+    mov rdx, 8
+    syscall
+    add rsp, 8
+    ret
+}
+assembler_demo
+
+let opcode_escape_hatch = assembler {
+    db 0x0f, 0xa2 // cpuid
+    ret
+}
+
+
+
+show "[13/19] typed calls and source-defined ABI" = debug:workspace:print
+
+abi vector-call(integer(r10,r11), floating(xmm4), result(r11), floating-result(xmm5), align(32), shadow(64), stack(down), cleanup(caller))
+extern foreign_scale(packet:Packet**, scale:f64) -> i32 abi vector-call
+
+let native_add = asm {
+    mov rax, rdi
+    add rax, rsi
+    ret
+}
+function native_add(left:u64, right:u64) -> u64 abi sysv-amd64
+
+
+
+show "[14/19] ELF sections, symbols, relocations and language image" = debug:workspace:print
+
+module auto
+module clear
+module embed
+emit object "/tmp/recurloop-showcase-auto.o" = asm {
+.text
+object_entry:
+    invoke native_add(20, 22)
+    ret
+
+object_identity:
+    mov rax, rdi
+    ret
+
+.rodata
+message:
+    db "RecurLoop", 0
+    dw 0x1234
+
+.data
+counter:
+    dd 1
+wide_counter:
+    dq 0x1122334455667788
+
+.bss
+storage:
+    resb 64
+
+.section .rodata.str1.1 alloc merge strings align=1
+string_pool:
+    db "shared", 0
+
+.section .tdata alloc write tls align=8
+thread_value:
+    dq 7
+
+.section .init_array init-array alloc write align=8
+initializer:
+    dq 0
+
+.section .fini_array fini-array alloc write align=8
+finalizer:
+    dq 0
+
+.section .preinit_array preinit-array alloc write align=8
+preinitializer:
+    dq 0
+
+.section .example-note note align=8
+descriptor:
+    db 0x52, 0x4c, 1, 0
+
+.section .example-nobits nobits alloc write align=16
+scratch:
+    resb 32
+}
+
+
+
+show "[15/19] module composition and external static linking" = debug:workspace:print
+
+module manual
+module clear
+module include native_add
+emit object "/tmp/recurloop-showcase-manual.o" manual_bundle = asm { ret }
+
+module auto
+module clear
+module dynamic native_add
+emit object "/tmp/recurloop-showcase-dynamic.o" dynamic_caller = asm {
+    invoke native_add(1, 2)
+    ret
+}
+
+module clear
+module strip
+emit object "/tmp/recurloop-showcase-stripped.o" stripped_entry = asm { ret }
+module embed
+
+emit object "/tmp/recurloop-showcase-linkable.o" = asm {
+object_entry:
+    ret
+object_identity:
+    mov rax, rdi
+    ret
+}
+link object "/tmp/recurloop-showcase-linkable.o"
+extern object_entry() -> void abi sysv-amd64
+extern object_identity(value:u64) -> u64 abi sysv-amd64
+emit executable "/tmp/recurloop-showcase-linked" linked_start = asm {
+    invoke object_identity(7)
+    invoke object_entry()
+    ret
+}
+
+link clear
+
+
+
+show "[16/19] standalone statically linked executable" = debug:workspace:print
+
+let standalone_write = asm {
+    sub rsp, 8
+    mov r10, 0x0a43455845204c52
+    mov qword [rsp], r10
+    mov rax, 1
+    mov rdi, 1
+    mov rsi, rsp
+    mov rdx, 8
+    syscall
+    add rsp, 8
+    ret
+}
+function standalone_write() -> void abi sysv-amd64
+
+module auto
+module clear
+module entry tour_start
+emit executable "/tmp/recurloop-showcase" tour_start = asm {
+    invoke standalone_write()
+    ret
+}
+
+let after_executable = { invoke <debug:ping> }
+after_executable
+
+module auto
+module clear
+emit executable "/tmp/recurloop-showcase-runtime-call" runtime_call_entry = fn (argc:i64, argv:u8**) -> i64 {
+    var base = 32
+    var total = add_ten(base)
+    if total != 42 {
+        return 1
+    }
+    return 0
+}
+link clear
+
+
+
+show "[17/19] compiled Fibonacci using linked printf and atoi phrases" = debug:workspace:print
+
+module auto
+module clear
+emit object "/tmp/recurloop-showcase-cabi.o" = asm {
+.text
+atoi:
+    xor rax, rax
+    xor r8, r8
+    cmp byte [rdi], 45
+    jne atoi_digits
+    mov r8, 1
+    inc rdi
+atoi_digits:
+    movzx ecx, byte [rdi]
+    sub ecx, 48
+    cmp ecx, 9
+    ja atoi_done
+    imul rax, rax, 10
+    add rax, rcx
+    inc rdi
+    jmp atoi_digits
+atoi_done:
+    test r8, r8
+    je atoi_return
+    neg rax
+atoi_return:
+    ret
+
+printf:
+    sub rsp, 64
+    lea r8, [rsp + 63]
+    mov byte [r8], 10
+    mov rcx, 1
+    mov rax, rsi
+    xor r9, r9
+    test rax, rax
+    jns printf_magnitude
+    mov r9, 1
+    neg rax
+printf_magnitude:
+    mov r10, 10
+printf_digits:
+    xor rdx, rdx
+    div r10
+    add dl, 48
+    dec r8
+    mov byte [r8], dl
+    inc rcx
+    test rax, rax
+    jne printf_digits
+    test r9, r9
+    je printf_write
+    dec r8
+    mov byte [r8], 45
+    inc rcx
+printf_write:
+    mov rax, 1
+    mov rdi, 1
+    mov rsi, r8
+    mov rdx, rcx
+    syscall
+    add rsp, 64
+    ret
+}
+
+link object "/tmp/recurloop-showcase-cabi.o"
+extern atoi(text:u8*) -> i64 abi sysv-amd64
+extern printf(format:u8*, ...) -> i64 abi sysv-amd64
+
+let fibonacci = fn (n:i64) -> i64 {
+    if n <= 1 {
+        return n
+    } else {
+        return fibonacci(n - 1) + fibonacci(n - 2)
+    }
+}
+
+module auto
+module clear
+emit executable "/tmp/recurloop-showcase-fibonacci" fibonacci_program = fn (argc:i64, argv:u8**) -> i64 {
+    if argc <= 1 {
+        return 0
+    } else {
+        var limit = atoi(argv[1])
+        var index = 1
+        while index <= limit {
+            var current = fibonacci(index)
+            printf("%lld\n", current)
+            index += 1
+        }
+        return 0
+    }
+}
+link clear
+
+
+
+show "[18/19] exact user-controlled output bytes" = debug:workspace:print
+
+emit raw "/tmp/recurloop-showcase.raw" = hex { 52 4c 20 52 41 57 0a }
+
+
+
+print "[19/19] SHOWCASE PASSED — all assertions and compiled emissions succeeded"
+debug:stats

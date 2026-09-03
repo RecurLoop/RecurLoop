@@ -1,0 +1,147 @@
+name: CI and Release
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+    tags:
+      - "v*.*.*"
+  workflow_dispatch:
+
+# Branch/PR runs only need read access.
+# The release job below gets write access separately.
+permissions:
+  contents: read
+
+concurrency:
+  group: "${{ github.workflow }}-${{ github.ref }}"
+  # Never cancel a tagged release build halfway through.
+  cancel-in-progress: ${{ github.ref_type != 'tag' }}
+
+jobs:
+  ci:
+    name: Release build and tests
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            clang-18 \
+            lld \
+            llvm-18-dev \
+            ninja-build
+
+      - name: Verify compatibility test runners are executable
+        run: |
+          test -x examples/07-workflows/amber-language/run-tests.sh
+          test -x examples/07-workflows/prolog-language/run-tests.sh
+          test -x examples/07-workflows/haskell-language/run-tests.sh
+          test -x examples/07-workflows/erlang-language/run-tests.sh
+
+      - name: Build Release with LLVM
+        run: |
+          make release \
+            CLANG=clang-18 \
+            CLANGXX=clang++-18
+
+      - name: Run test suite
+        run: make test BUILD_TYPE=Release
+
+      - name: Run all examples
+        run: make examples BUILD_TYPE=Release
+
+      - name: Show built version
+        run: build/Release/bin/recurloop --version
+
+      # A GitHub Release is created only from a semantic version tag.
+      # The tag must match the version compiled into Recurloop.
+      - name: Validate release tag and package binary
+        if: github.ref_type == 'tag'
+        env:
+          TAG: ${{ github.ref_name }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [[ ! "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Release tag must have the form vMAJOR.MINOR.PATCH, e.g. v0.1.0" >&2
+            exit 1
+          fi
+
+          VERSION="${TAG#v}"
+          BINARY_VERSION="$(
+            build/Release/bin/recurloop --version |
+            sed -n 's/^Recurloop v//p'
+          )"
+
+          if [[ -z "$BINARY_VERSION" ]]; then
+            echo "Could not read the RecurLoop version from the built binary." >&2
+            exit 1
+          fi
+
+          if [[ "$BINARY_VERSION" != "$VERSION" ]]; then
+            echo "Tag/version mismatch:" >&2
+            echo "  tag:    $TAG" >&2
+            echo "  binary: v$BINARY_VERSION" >&2
+            echo "Update project(... VERSION ...) in CMakeLists.txt before tagging." >&2
+            exit 1
+          fi
+
+          PACKAGE="recurloop-${VERSION}-linux-x86_64"
+          mkdir -p "dist/$PACKAGE/bin"
+
+          cp build/Release/bin/recurloop "dist/$PACKAGE/bin/"
+          cp LICENSE README.md TRADEMARKS.md "dist/$PACKAGE/"
+
+          if [[ -f README.pl.md ]]; then
+            cp README.pl.md "dist/$PACKAGE/"
+          fi
+
+          tar -C dist -czf "dist/${PACKAGE}.tar.gz" "$PACKAGE"
+          sha256sum "dist/${PACKAGE}.tar.gz" > "dist/${PACKAGE}.tar.gz.sha256"
+
+          rm -rf "dist/$PACKAGE"
+
+          echo "Created release assets:"
+          ls -lh dist/
+
+      - name: Upload release assets for publish job
+        if: github.ref_type == 'tag'
+        uses: actions/upload-artifact@v6
+        with:
+          name: release-assets
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 7
+
+  release:
+    name: Publish GitHub Release
+    needs: ci
+    if: github.ref_type == 'tag'
+    runs-on: ubuntu-24.04
+
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download tested release assets
+        uses: actions/download-artifact@v7
+        with:
+          name: release-assets
+          path: dist
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${GITHUB_REF_NAME}" \
+            dist/* \
+            --verify-tag \
+            --title "RecurLoop ${GITHUB_REF_NAME}" \
+            --generate-notes

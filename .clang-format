@@ -1,0 +1,17 @@
+---
+AllowShortFunctionsOnASingleLine: Empty
+AllowShortIfStatementsOnASingleLine: true # Allows short `if` in one line
+AllowShortLoopsOnASingleLine: true
+AllowShortCaseLabelsOnASingleLine: true
+BasedOnStyle: LLVM # Based on LLVM style (you can change to a different style if you prefer)
+BreakBeforeBraces: Attach # End-of-line opening braces (K&R/Attach style)
+ColumnLimit: 120 # Maximum line length is 120 characters
+# ConstructorInitializerAllOnOneLineOrOnePerLine: All
+IndentPPDirectives: BeforeHash # Indentation for preprocessor directives after the # character
+IndentWidth: 2 # Sets the indent to 4 spaces
+IndentWrappedFunctionNames: true # Forces indentation of complex function names
+NamespaceIndentation: All # Indentation for all elements in the namespace
+ReflowComments: true # Apply formatting to comments
+SortIncludes: false # Does not change the order of #include directives
+TabWidth: 4 # Sets the tab width to 4 spaces (if tabs were used)
+UseTab: Never # Use spaces instead of tabs

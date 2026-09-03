@@ -1,0 +1,31 @@
+{
+    "editor.formatOnSave": false,
+    "cmake.buildDirectory": "${workspaceFolder}/build/${buildType}",
+    "cmake.copyCompileCommands": "${workspaceFolder}/build/compile_commands.json",
+    "cmake.generator": "Ninja",
+    "cmake.configureSettings": {
+        "CMAKE_C_COMPILER": "clang",
+        "CMAKE_CXX_COMPILER": "clang++",
+        "CMAKE_EXE_LINKER_FLAGS": "-fuse-ld=lld",
+        "CMAKE_SHARED_LINKER_FLAGS": "-fuse-ld=lld",
+        "CMAKE_MODULE_LINKER_FLAGS": "-fuse-ld=lld",
+        "ENABLE_TESTS": true,
+        "FETCHCONTENT_BASE_DIR": "${workspaceFolder}/build/_deps"
+    },
+    "clangd.arguments": [
+        "--compile-commands-dir=build",
+        "--clang-tidy",
+        "--header-insertion=never"
+    ],
+    "[cpp]": {
+        "editor.defaultFormatter": "llvm-vs-code-extensions.vscode-clangd"
+    },
+    "files.associations": {
+        "*.rl": "swift",
+        "*.rl.example": "swift"
+    },
+    "[swift]": {
+        "editor.semanticHighlighting.enabled": false,
+        "editor.formatOnSave": false
+    }
+}

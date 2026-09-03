@@ -1,0 +1,7 @@
+where
+eval counter
+delete 1
+step
+where
+eval counter
+continue

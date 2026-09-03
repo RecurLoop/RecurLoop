@@ -1,0 +1,23 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "Recurloop: program.rl.example",
+            "program": "${command:cmake.launchTargetPath}",
+            "cwd": "${workspaceFolder}",
+            "args": ["--file", "program.rl.example"],
+            "preLaunchTask": "Build Recurloop"
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "Recurloop: interactive",
+            "program": "${command:cmake.launchTargetPath}",
+            "cwd": "${workspaceFolder}",
+            "args": [],
+            "preLaunchTask": "Build Recurloop"
+        }
+    ]
+}

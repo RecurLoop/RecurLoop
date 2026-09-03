@@ -1,0 +1,6 @@
+.aider*
+/build/
+/build-*/
+.debug/
+.tmp/
+program.rl

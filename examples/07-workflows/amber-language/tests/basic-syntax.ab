@@ -1,0 +1,23 @@
+// Original RecurLoop Amber compatibility fixture.
+// This file is intentionally not copied from the Amber documentation.
+
+let engine = "RecurLoop"
+let enabled = 1
+
+let capabilities = [
+    "phrases",
+    "pipelines", // Inline comments are accepted inside array literals.
+    "native-code",
+]
+
+echo("{engine} compatibility fixture")
+
+for capability in capabilities {
+    echo(capability)
+}
+
+if enabled == 1 {
+    echo("language image is active")
+} else {
+    echo("language image is inactive")
+}

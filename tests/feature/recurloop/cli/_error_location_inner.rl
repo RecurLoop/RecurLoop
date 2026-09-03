@@ -1,0 +1,2 @@
+debug ping
+this_does_not_exist
