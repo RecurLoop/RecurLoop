@@ -2,7 +2,7 @@
 set -euo pipefail
 
 if [[ $# -ne 1 ]]; then
-    echo "usage: $0 /absolute/path/to/Recurloop" >&2
+    echo "usage: $0 /absolute/path/to/recurloop" >&2
     exit 2
 fi
 
