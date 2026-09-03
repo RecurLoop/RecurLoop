@@ -130,6 +130,11 @@ jobs:
       contents: write
 
     steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
       - name: Download tested release assets
         uses: actions/download-artifact@v7
         with:
@@ -142,6 +147,7 @@ jobs:
         run: |
           gh release create "${GITHUB_REF_NAME}" \
             dist/* \
+            --repo "${GITHUB_REPOSITORY}" \
             --verify-tag \
             --title "RecurLoop ${GITHUB_REF_NAME}" \
             --generate-notes
