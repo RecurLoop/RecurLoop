@@ -137,6 +137,7 @@ list-examples:
 		'07-workflows/prolog-language' \
 		'07-workflows/haskell-language' \
 		'07-workflows/erlang-language' \
+		'07-workflows/http-language' \
 		'07-workflows/source-debugger'
 
 
@@ -185,6 +186,9 @@ example: $(RECURLOOP)
 			;; \
 		07-workflows/erlang-language) \
 			"examples/07-workflows/erlang-language/run-tests.sh" "$(abspath $(RECURLOOP))" \
+			;; \
+		07-workflows/http-language) \
+			"examples/07-workflows/http-language/run-tests.sh" "$(abspath $(RECURLOOP))" \
 			;; \
 		07-workflows/source-debugger) \
 			"$(RECURLOOP)" \
@@ -286,6 +290,10 @@ examples: $(RECURLOOP)
 	echo; \
 	echo '== Erlang compatibility =='; \
 	"examples/07-workflows/erlang-language/run-tests.sh" "$(abspath $(RECURLOOP))"; \
+	\
+	echo; \
+	echo '== HTTP language =='; \
+	"examples/07-workflows/http-language/run-tests.sh" "$(abspath $(RECURLOOP))"; \
 	\
 	echo; \
 	echo '== Source debugger =='; \
