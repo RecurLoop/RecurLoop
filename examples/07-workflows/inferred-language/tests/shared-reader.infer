@@ -1,0 +1,7 @@
+// Inferred grammar uses the same shared Cursor for lexical mechanics.
+poly fn add_values(a, b) {
+    let result = a + b
+    return result
+}
+
+poly print add_values(20, 22)

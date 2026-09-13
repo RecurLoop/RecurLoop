@@ -18,15 +18,14 @@
 // primarily for deterministic examples and tests.
 // =============================================================================
 
+languagekit_native_begin
 link shared "c"
 
-extern malloc(size:u64) -> u8* abi sysv-amd64
-extern free(pointer:u8*) -> void abi sysv-amd64
-extern memcpy(destination:u8*, source:u8*, bytes:u64) -> u8* abi sysv-amd64
+// LanguageKit supplies shared allocation/text helpers and the SliceLexer used
+// by the source-defined routing syntax inside compiled function bodies.
+
 extern memcmp(left:u8*, right:u8*, bytes:u64) -> i32 abi sysv-amd64
 extern snprintf(buffer:u8*, size:u64, format:u8*, ...) -> i32 abi sysv-amd64
-extern printf(format:u8*, ...) -> i64 abi sysv-amd64
-extern perror(prefix:u8*) -> void abi sysv-amd64
 
 extern socket(domain:i32, kind:i32, protocol:i32) -> i32 abi sysv-amd64
 extern setsockopt(fd:i32, level:i32, option:i32, value:u8*, length:u32) -> i32 abi sysv-amd64
@@ -36,7 +35,6 @@ extern accept(fd:i32, address:u8*, length:u32*) -> i32 abi sysv-amd64
 extern recv(fd:i32, buffer:u8*, length:u64, flags:i32) -> i64 abi sysv-amd64
 extern send(fd:i32, buffer:u8*, length:u64, flags:i32) -> i64 abi sysv-amd64
 extern shutdown(fd:i32, how:i32) -> i32 abi sysv-amd64
-extern close(fd:i32) -> i32 abi sysv-amd64
 extern htons(value:u16) -> u16 abi sysv-amd64
 extern inet_addr(address:u8*) -> u32 abi sysv-amd64
 
@@ -755,151 +753,35 @@ let Http:Server:run = fn (self:Http:Server*) -> i64 {
 }
 
 // =============================================================================
-// Source-defined `http` routing syntax
+// Source-defined `http` routing syntax.
+//
+// The phrase runs as a rewrite inside compiled RecurLoop code. At that point
+// the host has already materialized a context:syntax slice, so LanguageKit's
+// SliceLexer is used instead of a private HTTP scanner.
 // =============================================================================
 
 let HttpSyntax = phrase { dictionary = true }
-
-let HttpSyntax:is_space = fn (value:u8) -> i64 {
-    return value == 32 || value == 9 || value == 10 || value == 13
-}
-
-let HttpSyntax:trim_left = fn (source:u8*, start:i64, finish:i64) -> i64 {
-    var i = start
-    while i < finish && HttpSyntax:is_space(source[i]) { i += 1 }
-    return i
-}
-
-let HttpSyntax:trim_right = fn (source:u8*, start:i64, finish:i64) -> i64 {
-    var i = finish
-    while i > start && HttpSyntax:is_space(source[i - 1]) { i -= 1 }
-    return i
-}
-
-let HttpSyntax:emit_slice = fn (state:Context*, source:u8*, start:i64, finish:i64) -> void {
-    if finish > start { context:syntax:emit(state, source, start, finish - start) }
-}
 
 let HttpSyntax:error = fn (state:Context*, message:u8*) -> void {
     context:diagnostic:error(state, message)
 }
 
-let HttpSyntax:block_end = fn (source:u8*, open:i64, finish:i64) -> i64 {
-    var depth = 1
-    var i = open + 1
-    var quote:u8 = 0
-    while i < finish {
-        let c = source[i]
-        if quote != 0 {
-            if c == 92 { i += 2 }
-            else {
-                if c == quote { quote = 0 }
-                i += 1
-            }
-        } else {
-            if c == 34 || c == 39 { quote = c; i += 1 }
-            else if c == 47 && i + 1 < finish && source[i + 1] == 47 {
-                i += 2
-                while i < finish && source[i] != 10 { i += 1 }
-            } else if c == 123 { depth += 1; i += 1 }
-            else if c == 125 {
-                depth -= 1
-                if depth == 0 { return i }
-                i += 1
-            } else { i += 1 }
-        }
-    }
-    return -1
+let HttpSyntax:emit_raw = fn (
+    state:Context*, source:u8*, start:i64, finish:i64
+) -> void {
+    if finish > start { context:syntax:emit(state, source, start, finish - start) }
 }
 
-let HttpSyntax:is_digit = fn (value:u8) -> i64 { return value >= 48 && value <= 57 }
-
-let HttpSyntax:parse_port = fn (source:u8*, start:i64, finish:i64, next:i64*) -> i64 {
-    var i = HttpSyntax:trim_left(source, start, finish)
-    if i >= finish || !HttpSyntax:is_digit(source[i]) { return -1 }
-    var port = 0
-    while i < finish && HttpSyntax:is_digit(source[i]) {
-        port = port * 10 + source[i] - 48
-        i += 1
-    }
-    next[0] = i
-    return port
-}
-
-let HttpSyntax:skip_quoted = fn (source:u8*, start:i64, finish:i64) -> i64 {
-    if start >= finish || (source[start] != 34 && source[start] != 39) { return -1 }
-    let quote = source[start]
-    var i = start + 1
-    while i < finish {
-        if source[i] == 92 { i += 2 }
-        else {
-            if source[i] == quote { return i + 1 }
-            i += 1
-        }
-    }
-    return -1
-}
-
-let HttpSyntax:word_equal = fn (source:u8*, start:i64, finish:i64, text:u8*) -> i64 {
-    let length = Http:strlen(text)
-    if finish - start != length { return 0 }
-    return memcmp(&source[start], text, length) == 0
-}
-
-let HttpSyntax:emit_route_line = fn (state:Context*, source:u8*, start:i64, finish:i64) -> void {
-    let s = HttpSyntax:trim_left(source, start, finish)
-    let e = HttpSyntax:trim_right(source, s, finish)
-    if s >= e { return }
-    if source[s] == 47 && s + 1 < e && source[s + 1] == 47 { return }
-
-    var i = s
-    while i < e && !HttpSyntax:is_space(source[i]) { i += 1 }
-    let method_end = i
-    if method_end == s { HttpSyntax:error(state, "http route expects METHOD \"/path\" -> handler"); return }
-    i = HttpSyntax:trim_left(source, i, e)
-    if i >= e || source[i] != 34 { HttpSyntax:error(state, "http route path must be a quoted string"); return }
-    let path_end = HttpSyntax:skip_quoted(source, i, e)
-    if path_end < 0 { HttpSyntax:error(state, "http route path string is not closed"); return }
-    let path_start = i
-    i = HttpSyntax:trim_left(source, path_end, e)
-    if i + 1 >= e || source[i] != 45 || source[i + 1] != 62 {
-        HttpSyntax:error(state, "http route expects -> before the handler")
-        return
-    }
-    i = HttpSyntax:trim_left(source, i + 2, e)
-    let handler_end = HttpSyntax:trim_right(source, i, e)
-    if i >= handler_end { HttpSyntax:error(state, "http route needs a handler function"); return }
-
+let HttpSyntax:emit_route = fn (
+    state:Context*, method:u8*, source:u8*, path_start:i64, path_end:i64, handler:u8*
+) -> void {
     context:syntax:emit(state, "__http_server.route(\"")
-    HttpSyntax:emit_slice(state, source, s, method_end)
+    context:syntax:emit(state, method)
     context:syntax:emit(state, "\", ")
-    HttpSyntax:emit_slice(state, source, path_start, path_end)
+    HttpSyntax:emit_raw(state, source, path_start, path_end)
     context:syntax:emit(state, ", ")
-    HttpSyntax:emit_slice(state, source, i, handler_end)
+    context:syntax:emit(state, handler)
     context:syntax:emit(state, ")\n")
-}
-
-let HttpSyntax:emit_routes = fn (state:Context*, source:u8*, start:i64, finish:i64) -> void {
-    var line_start = start
-    var i = start
-    var quote:u8 = 0
-    while i <= finish {
-        var split = i == finish
-        if i < finish {
-            if quote != 0 {
-                if source[i] == 92 { i += 1 }
-                else if source[i] == quote { quote = 0 }
-            } else {
-                if source[i] == 34 || source[i] == 39 { quote = source[i] }
-                else if source[i] == 10 { split = 1 }
-            }
-        }
-        if split {
-            HttpSyntax:emit_route_line(state, source, line_start, i)
-            line_start = i + 1
-        }
-        i += 1
-    }
 }
 
 let http = phrase {
@@ -908,30 +790,34 @@ let http = phrase {
     action = fn (state:Context*, called:Phrase*) -> void {
         let source = context:syntax:data(state)
         let bytes = context:syntax:bytes(state)
-        var i = HttpSyntax:trim_left(source, 0, bytes)
-        var once = 0
+        let reader = LanguageKit:SliceReader:new(state, source, bytes, 136)
+        if !reader { HttpSyntax:error(state, "http could not allocate syntax reader"); return }
+        defer LanguageKit:SliceReader:destroy(reader)
 
-        if i + 4 <= bytes && memcmp(&source[i], "once", 4) == 0 && (i + 4 == bytes || HttpSyntax:is_space(source[i + 4])) {
-            once = 1
-            i = HttpSyntax:trim_left(source, i + 4, bytes)
-        }
+        var once = 0
+        if LanguageKit:SliceReader:match(reader, "once") { once = 1 }
 
         var address_start = -1
         var address_end = -1
-        if i < bytes && source[i] == 34 {
-            address_start = i
-            address_end = HttpSyntax:skip_quoted(source, i, bytes)
-            if address_end < 0 { HttpSyntax:error(state, "http address string is not closed"); return }
-            i = HttpSyntax:trim_left(source, address_end, bytes)
+        LanguageKit:SliceReader:skip_trivia(reader)
+        let address_token_start = reader.position
+        if LanguageKit:SliceReader:kind_of(reader) == 3 {
+            address_start = address_token_start
+            address_end = reader.position
+            LanguageKit:SliceReader:consume(reader)
         }
 
-        var after_port:i64 = 0
-        let port = HttpSyntax:parse_port(source, i, bytes, &after_port)
-        if port <= 0 || port > 65535 { HttpSyntax:error(state, "http expects a TCP port from 1 to 65535"); return }
-        i = HttpSyntax:trim_left(source, after_port, bytes)
-        if i >= bytes || source[i] != 123 { HttpSyntax:error(state, "http expects a route block"); return }
-        let close_index = HttpSyntax:block_end(source, i, bytes)
-        if close_index < 0 { HttpSyntax:error(state, "http route block is not closed"); return }
+        if LanguageKit:SliceReader:kind_of(reader) != 2 {
+            HttpSyntax:error(state, "http expects a TCP port from 1 to 65535")
+            return
+        }
+        let port = LanguageKit:SliceReader:number_of(reader)
+        LanguageKit:SliceReader:consume(reader)
+        if port <= 0 || port > 65535 {
+            HttpSyntax:error(state, "http expects a TCP port from 1 to 65535")
+            return
+        }
+        if !LanguageKit:SliceReader:expect(reader, "{", "http expects a route block") { return }
 
         context:syntax:emit(state, "if 1 {\n")
         context:syntax:emit(state, "let __http_server = Http:Server:new_on(")
@@ -941,16 +827,50 @@ let http = phrase {
         snprintf(port_text, 32, "%ld", port)
         context:syntax:emit(state, port_text)
         context:syntax:emit(state, ", ")
-        if address_start >= 0 { HttpSyntax:emit_slice(state, source, address_start, address_end) }
+        if address_start >= 0 { HttpSyntax:emit_raw(state, source, address_start, address_end) }
         else { context:syntax:emit(state, "\"0.0.0.0\"") }
         context:syntax:emit(state, ")\n")
         context:syntax:emit(state, "defer Http:Server:destroy(__http_server)\n")
-        HttpSyntax:emit_routes(state, source, i + 1, close_index)
+
+        var closed = 0
+        while !closed && LanguageKit:SliceReader:kind_of(reader) != 0 {
+            if LanguageKit:SliceReader:match(reader, "}") { closed = 1 }
+            else {
+                let method = LanguageKit:SliceReader:take_identifier(reader)
+                if !method {
+                    HttpSyntax:error(state, "http route expects METHOD \"/path\" -> handler")
+                    return
+                }
+                defer free(method)
+
+                LanguageKit:SliceReader:skip_trivia(reader)
+                let path_start = reader.position
+                if LanguageKit:SliceReader:kind_of(reader) != 3 {
+                    HttpSyntax:error(state, "http route path must be a quoted string")
+                    return
+                }
+                let path_end = reader.position
+                let path_value = LanguageKit:SliceReader:take_text(reader)
+                if path_value { free(path_value) }
+
+                if !LanguageKit:SliceReader:expect(reader, "->", "http route expects -> before the handler") { return }
+                let handler = LanguageKit:SliceReader:take_identifier(reader)
+                if !handler {
+                    HttpSyntax:error(state, "http route needs a handler function")
+                    return
+                }
+                HttpSyntax:emit_route(state, method, source, path_start, path_end, handler)
+                free(handler)
+            }
+        }
+        if !closed { HttpSyntax:error(state, "http route block is not closed"); return }
+
         if once { context:syntax:emit(state, "__http_server.serve_once()\n") }
         else { context:syntax:emit(state, "__http_server.run()\n") }
         context:syntax:emit(state, "}\n")
-        context:syntax:advance(state, close_index + 1)
+        context:syntax:advance(state, reader.position)
     }
 }
 
+languagekit_native_end
 engine export "/tmp/recurloop-http-library.rli"

@@ -60,18 +60,19 @@
 //   Bash grammar. PS1 command substitution is handled by the interactive core.
 //
 // Build reusable language image:
-//   Recurloop --file examples/07-workflows/shell-language/library.rl
+//   Recurloop --file examples/07-workflows/language-kit/library.rl
+//   Recurloop --import /tmp/recurloop-language-kit.rli --file examples/07-workflows/shell-language/library.rl
 //
 // The build writes:
 //   /tmp/recurloop-shell-library.rli
 // ============================================================================
 
+languagekit_native_begin
+
 link shared "c"
-extern malloc(size:u64) -> u8* abi sysv-amd64
-extern realloc(pointer:u8*, size:u64) -> u8* abi sysv-amd64
-extern free(pointer:u8*) -> void abi sysv-amd64
-extern memcpy(destination:u8*, source:u8*, bytes:u64) -> u8* abi sysv-amd64
-extern printf(format:u8*, ...) -> i64 abi sysv-amd64
+
+// LanguageKit supplies allocation/text primitives, the shared symbol universe,
+// cross-language bindings, and the merged top-level dispatcher.
 extern fflush(stream:u8*) -> i32 abi sysv-amd64
 extern fopen(path:u8*, mode:u8*) -> u8* abi sysv-amd64
 extern fclose(stream:u8*) -> i64 abi sysv-amd64
@@ -80,10 +81,8 @@ extern fread(pointer:u8*, size:u64, count:u64, stream:u8*) -> u64 abi sysv-amd64
 extern fork() -> i32 abi sysv-amd64
 extern pipe(fds:i32*) -> i32 abi sysv-amd64
 extern dup2(oldfd:i32, newfd:i32) -> i32 abi sysv-amd64
-extern close(fd:i32) -> i32 abi sysv-amd64
 extern open(path:u8*, flags:i32, ...) -> i32 abi sysv-amd64
 extern execvp(file:u8*, argv:u8**) -> i32 abi sysv-amd64
-extern perror(prefix:u8*) -> void abi sysv-amd64
 extern waitpid(pid:i32, status:i32*, options:i32) -> i32 abi sysv-amd64
 extern _exit(status:i32) -> void abi sysv-amd64
 extern read(fd:i32, buffer:u8*, count:u64) -> i64 abi sysv-amd64
@@ -95,6 +94,7 @@ extern unsetenv(name:u8*) -> i32 abi sysv-amd64
 
 let Shell = phrase { dictionary = true permanent = true }
 let Shell:Internal = phrase { dictionary = true serializable = false }
+let Shell:Hooks = phrase { dictionary = true permanent = true }
 
 // The core interactive reader prefers the process environment's PS1 and uses
 // this language value as a fallback when the environment does not define it.
@@ -1119,21 +1119,11 @@ let Shell:state_number = fn (text:u8*) -> i64 {
 }
 
 let Shell:state_set = fn (state:Context*, name:u8*, value:i64) -> i64 {
-    let text = Shell:i64_to_text(value)
-    if !text { return 0 }
-    defer free(text)
-    if context:value:contains(state, name) {
-        return context:value:assign:text(state, name, text)
-    }
-    return context:value:define:text(state, name, text)
+    return LanguageKit:state_set(state, name, value)
 }
 
 let Shell:state_get = fn (state:Context*, name:u8*) -> i64 {
-    if !context:value:contains(state, name) { return 0 }
-    let text = context:value:format(state, name)
-    if !text { return 0 }
-    defer free(text)
-    return Shell:state_number(text)
+    return LanguageKit:state_get(state, name)
 }
 
 let Shell:active_build = fn (state:Context*) -> Shell:Build* {
@@ -1145,24 +1135,15 @@ let Shell:active_parallel = fn (state:Context*) -> Shell:Parallel* {
 }
 
 let Shell:store_status = fn (state:Context*, value:i64) -> i64 {
-    if context:value:contains(state, "status") {
-        return context:value:assign:integer(state, "status", value)
-    }
-    return context:value:define:integer(state, "status", value)
+    return LanguageKit:publish_integer(state, "status", value)
 }
 
 let Shell:store_capture = fn (state:Context*, value:u8*) -> i64 {
-    if context:value:contains(state, "captured") {
-        return context:value:assign:text(state, "captured", value)
-    }
-    return context:value:define:text(state, "captured", value)
+    return LanguageKit:publish_text(state, "captured", value)
 }
 
 let Shell:state_set_text = fn (state:Context*, name:u8*, value:u8*) -> i64 {
-    if context:value:contains(state, name) {
-        return context:value:assign:text(state, name, value)
-    }
-    return context:value:define:text(state, name, value)
+    return LanguageKit:publish_text(state, name, value)
 }
 
 let Shell:source_line_end = fn (state:Context*, start:i64) -> i64 {
@@ -1170,13 +1151,13 @@ let Shell:source_line_end = fn (state:Context*, start:i64) -> i64 {
     var quote = 0
     var done = 0
     while !done {
-        let ch = context:source:peek(state, finish)
+        let ch = LanguageKit:Source:peek(state, finish)
         if ch == 0 || ch == 10 || ch == 13 {
             done = 1
         } else if quote != 0 {
             if ch == 92 {
                 finish += 1
-                if context:source:peek(state, finish) != 0 { finish += 1 }
+                if LanguageKit:Source:peek(state, finish) != 0 { finish += 1 }
             } else if ch == quote {
                 quote = 0
                 finish += 1
@@ -1325,8 +1306,8 @@ let Shell:Internal:token_byte = phrase {
             context:diagnostic:error(state, "shell phrase state is unavailable")
             return
         }
-        let byte = cast(u8, context:source:peek(state, 0))
-        context:source:advance(state, 1)
+        let byte = LanguageKit:Source:peek(state, 0)
+        LanguageKit:Source:advance(state, 1)
         build.append_byte(byte)
     }
 }
@@ -1350,8 +1331,8 @@ let Shell:Internal:token_escape_byte = phrase {
             context:diagnostic:error(state, "shell phrase state is unavailable")
             return
         }
-        let byte = cast(u8, context:source:peek(state, 0))
-        context:source:advance(state, 1)
+        let byte = LanguageKit:Source:peek(state, 0)
+        LanguageKit:Source:advance(state, 1)
         build.append_byte(byte)
     }
 }
@@ -1362,8 +1343,8 @@ let Shell:Internal:token_expression_byte = phrase {
         if context:syntax:active(state) { context:syntax:copy(state, 1); return }
         let build = Shell:active_build(state)
         if !build { context:diagnostic:error(state, "shell interpolation state is unavailable"); return }
-        let byte = cast(u8, context:source:peek(state, 0))
-        context:source:advance(state, 1)
+        let byte = LanguageKit:Source:peek(state, 0)
+        LanguageKit:Source:advance(state, 1)
         build.expression.append_byte(byte)
     }
 }
@@ -1597,6 +1578,15 @@ let Shell:Internal:token_nested_close = phrase {
     }
 }
 
+let Shell:dispatch_hook = fn (state:Context*, name:u8*) -> void {
+    let shell = context:phrase:find(state, "Shell")
+    if !shell { return }
+    let hooks = context:phrase:find:exact(state, shell, "Hooks")
+    if !hooks { return }
+    let hook = context:phrase:find:exact(state, hooks, name)
+    if hook { context:phrase:dispatch(state, hook) }
+}
+
 let Shell:finish_top_command = fn (state:Context*) -> void {
     let build = Shell:active_build(state)
     if !build { context:diagnostic:error(state, "shell phrase state is unavailable"); return }
@@ -1613,6 +1603,8 @@ let Shell:finish_top_command = fn (state:Context*) -> void {
     if assignment_kind != 0 {
         assignment_name = context:value:format(state, "__shell_assignment_name")
     }
+
+    Shell:dispatch_hook(state, "before_run")
 
     if build.capture {
         if Shell:active_parallel(state) {
@@ -1655,6 +1647,8 @@ let Shell:finish_top_command = fn (state:Context*) -> void {
             }
         }
     }
+
+    Shell:dispatch_hook(state, "after_run")
 
     if assignment_name { free(assignment_name) }
     Shell:state_set(state, "__shell_assignment_kind", 0)
@@ -1813,20 +1807,43 @@ let Shell:top_command = phrase {
     }
 }
 
-let install_shell_fallback = phrase {
+let LanguageKit:Fallbacks:Shell = phrase {
     type = <phrase-types:elaborate>
+    permanent = true
     action = fn (state:Context*, called:Phrase*) -> void {
+        // Amber deliberately requires explicit `$ ... $` commands. When its
+        // extension is loaded, the generic shell catch-all must not steal
+        // otherwise unknown Amber/RecurLoop forms. Explicit `shell ` / `run`
+        // / `capture` remain available.
+        let probe = LanguageKit:registry_entry(state, "Fallbacks", "Shell")
+        if context:phrase:find(state, "Amber") && LanguageKit:preferred_probe(state) != probe { return }
         let shell = context:phrase:find(state, "Shell")
-        let top_command = context:phrase:find:exact(state, shell, "top_command")
-        let fallback = context:phrase:define:alias(
-            state, "", top_command
-        )
-        if !fallback {
-            context:diagnostic:error(state, "could not install the shell command fallback")
-        }
+        let top = context:phrase:find:exact(state, shell, "top_command")
+        var extent = LanguageKit:Source:line_extent(state)
+        if extent <= 0 { extent = 1 }
+        LanguageKit:offer_form(state, top, probe, extent, 0)
     }
 }
-install_shell_fallback
+
+// Explicit shell selector always chooses the shell command grammar, even when
+// another root phrase has the same command name or Amber has disabled the
+// generic shell fallback.
+let Shell:explicit_form = phrase {
+    type = <phrase-types:elaborate>
+    permanent = true
+    action = fn (state:Context*, called:Phrase*) -> void {
+        if LanguageKit:selector_block_present(state) {
+            LanguageKit:execute_preferred_block(
+                state, LanguageKit:registry_entry(state, "Fallbacks", "Shell"), 0
+            )
+            return
+        }
+        let shell = context:phrase:find(state, "Shell")
+        context:phrase:dispatch(state, context:phrase:find:exact(state, shell, "top_command"))
+    }
+}
+let "shell " = <Shell:explicit_form>
+let LanguageKit:Selectors:"shell " = <Shell:explicit_form>
 
 let capture = phrase {
     type = <phrase-types:elaborate>
@@ -2003,11 +2020,6 @@ install_shell_assignments
 
 // The image contains only phrase graphs, compiled actions and stable native
 // symbol names. No parser state or process-local pointer is exported.
-set malloc.serializable = false
-set realloc.serializable = false
-set free.serializable = false
-set memcpy.serializable = false
-set printf.serializable = false
 set fflush.serializable = false
 set fopen.serializable = false
 set fclose.serializable = false
@@ -2027,6 +2039,6 @@ set getcwd.serializable = false
 set getenv.serializable = false
 set setenv.serializable = false
 set unsetenv.serializable = false
-set install_shell_fallback.serializable = false
 set install_shell_assignments.serializable = false
+languagekit_native_end
 engine export "/tmp/recurloop-shell-library.rli"

@@ -7,7 +7,10 @@
 #include <recurloop/SyntaxExtension.hpp>
 
 #include <compiler/DynamicLinker.hpp>
+#include <compiler/JitLinker.hpp>
 #include <compiler/LanguageState.hpp>
+
+#include "FunctionsInternal.hpp"
 #include <context/Context.hpp>
 #include <lexicon/Lexicon.hpp>
 #include <radix/Checkpoint.hpp>
@@ -37,6 +40,10 @@ namespace recurloop {
     constexpr std::string_view ReadPhrase{"context:phrase:read"};
     constexpr std::string_view ChildPhrase{"context:phrase:child"};
     constexpr std::string_view SourceEnsure{"context:source:ensure"};
+    constexpr std::string_view SourceRefill{"context:source:refill"};
+    constexpr std::string_view SourceHook{"context:source:hook"};
+    constexpr std::string_view SourceProbeLongest{"context:source:probe:longest"};
+    constexpr std::string_view SourceHookMarker{"\0source-hook", 12};
     constexpr std::string_view SourceData{"context:source:data"};
     constexpr std::string_view SourceBytes{"context:source:bytes"};
     constexpr std::string_view SourcePeek{"context:source:peek"};
@@ -84,6 +91,8 @@ namespace recurloop {
     constexpr std::string_view TypeDeclareStructure{"context:type:structure:declare"};
     constexpr std::string_view TypeCompleteStructure{"context:type:structure:complete"};
     constexpr std::string_view TypeFunction{"context:type:function"};
+    constexpr std::string_view FunctionCompile{"context:function:compile"};
+    constexpr std::string_view FunctionAddress{"context:function:address"};
 
     template <typename Result, typename Operation>
     Result checked(context::Context *context, Result failure, Operation &&operation) noexcept {
@@ -164,6 +173,23 @@ namespace recurloop {
       while (context.source.buffer.bits / Byte::length < requested && context.source.more)
         context::Source::load(context, false);
       return context.source.buffer.bits / Byte::length;
+    }
+
+    // Streaming-oriented variant used by source-defined parsers.  Unlike the
+    // legacy ensure API this compacts the already-consumed prefix whenever more
+    // input must be loaded, so a left-to-right parser does not retain the whole
+    // translation unit in Source::Buffer::str.
+    std::uint64_t sourceAvailableSliding(context::Context &context, std::uint64_t requested) {
+      while (context.source.buffer.bits / Byte::length < requested && context.source.more)
+        context::Source::load(context, true);
+      return context.source.buffer.bits / Byte::length;
+    }
+
+    lexicon::Phrase sourceHookMarker(context::Context &context) {
+      lexicon::Phrase root = context.lexicon.phrase();
+      lexicon::Match match = root.matchExact(
+          Byte(const_cast<char *>(SourceHookMarker.data())), 0, SourceHookMarker.size() * Byte::length, populated());
+      return match.isNull() ? lexicon::Phrase(&context.lexicon) : match.getPhrase();
     }
 
     std::uint64_t findPhrase(context::Context *context, std::uint64_t ownerAddress, const std::uint8_t *text,
@@ -735,14 +761,24 @@ namespace recurloop {
         if (owner.isNull() || !owner.containsSubdictionary())
           THROW(, "context phrase child requires a dictionary owner")
         auto filter = [](radix::Node *, radix::Node *candidate) { return !candidate->isEmpty(); };
-        lexicon::Dictionary cursor;
-        if (afterAddress == 0) {
-          cursor = owner.fore(filter);
-        } else {
-          lexicon::Phrase after = phraseAt(value, afterAddress);
-          if (after.isNull() || after.getParent().getAddress() != owner.getAddress())
-            THROW(, "context phrase child cursor does not belong to the dictionary owner")
-          cursor = lexicon::Dictionary(after.getNode()).next(filter);
+        lexicon::Dictionary cursor = owner.fore(filter);
+        if (afterAddress != 0) {
+          // Parent metadata is optional for serialized phrases, so it cannot be
+          // used to validate an iteration cursor after an engine-image round
+          // trip. Validate by walking this owner's dictionary instead. This
+          // also makes child iteration safe for source-defined registries whose
+          // entries are restored without explicit parent metadata.
+          bool found = false;
+          while (!cursor.isNull()) {
+            lexicon::Phrase candidate = cursor.getPhrase();
+            if (!candidate.isNull() && candidate.getAddress() == afterAddress) {
+              found = true;
+              cursor = cursor.next(filter);
+              break;
+            }
+            cursor = cursor.next(filter);
+          }
+          if (!found) THROW(, "context phrase child cursor does not belong to the dictionary owner")
         }
         if (cursor.isNull()) return std::uint64_t{0};
         lexicon::Phrase child = cursor.getPhrase();
@@ -756,6 +792,33 @@ namespace recurloop {
 
     extern "C" std::uint64_t contextSourceEnsure(context::Context *context, std::uint64_t bytes) noexcept {
       return checked(context, std::uint64_t{0}, [&](context::Context &value) { return sourceAvailable(value, bytes); });
+    }
+
+    extern "C" std::uint64_t contextSourceRefill(context::Context *context, std::uint64_t bytes) noexcept {
+      return checked(context, std::uint64_t{0},
+                     [&](context::Context &value) { return sourceAvailableSliding(value, bytes); });
+    }
+
+    // Install a serializable top-level source pre-dispatch hook. The hidden
+    // root marker stores the hook as a phrase prototype rather than a raw
+    // address so engine-image relocation keeps the reference valid. The main
+    // source loop invokes this hook only while lookup is at the lexicon root;
+    // if the hook consumes no input, ordinary RecurLoop lookup continues.
+    extern "C" std::uint64_t contextSourceHook(context::Context *context, std::uint64_t hookAddress) noexcept {
+      return checked(context, std::uint64_t{0}, [&](context::Context &value) {
+        lexicon::Phrase hook = phraseAt(value, hookAddress);
+        if (hook.isNull() || !hook.isElaboratable())
+          THROW(, "context source hook requires an elaboratable phrase")
+
+        lexicon::Phrase marker = sourceHookMarker(value);
+        if (marker.isNull()) {
+          lexicon::Phrase root = value.lexicon.phrase();
+          marker = root.append(std::string(SourceHookMarker)).make().setPrototype(hook).save();
+        } else {
+          marker.setPrototype(hook).setSerializable(true).save();
+        }
+        return static_cast<std::uint64_t>(hook.getAddress());
+      });
     }
 
     extern "C" const std::uint8_t *contextSourceData(context::Context *context) noexcept {
@@ -795,6 +858,41 @@ namespace recurloop {
         value.lookup.stack.clear();
         context::Lookup::in(value, root);
         return static_cast<std::uint64_t>(root.getAddress());
+      });
+    }
+
+    // Non-consuming longest-prefix probe over the live source stream. Unlike
+    // context:source:match:longest this may refill the source buffer but never
+    // advances Source::position or changes the lookup dictionary. It mirrors
+    // the executable-phrase filter used by the main source loop, which makes
+    // it suitable for deterministic ambiguity resolution before elaboration.
+    extern "C" std::uint64_t contextSourceProbeLongest(context::Context *context,
+                                                        std::uint64_t ownerAddress) noexcept {
+      return checked(context, std::uint64_t{0}, [&](context::Context &value) {
+        lexicon::Phrase owner = ownerAt(value, ownerAddress);
+        if (owner.isNull() || !owner.containsSubdictionary()) return std::uint64_t{0};
+
+        lexicon::Dictionary dictionary = owner.getSubdictionary();
+        auto filter = [](radix::Node *, radix::Match *candidate) {
+          if (candidate == nullptr) return false;
+          lexicon::Phrase phrase = lexicon::Dictionary(*candidate).getPhrase();
+          return !phrase.isNull() && phrase.isElaboratable();
+        };
+
+        lexicon::Match match(&value.lexicon);
+        while (true) {
+          if (value.source.buffer.bits == 0 && value.source.more) context::Source::load(value, false);
+          Byte key(value.source.buffer.str.data());
+          match = dictionary.matchLongest(key, value.source.buffer.offset, value.source.buffer.bits, filter);
+          if (!match.wantsMore() || !value.source.more) break;
+          const Size before = value.source.buffer.bits;
+          context::Source::load(value, false);
+          if (value.source.buffer.bits <= before) break;
+        }
+
+        if (match.isNull()) return std::uint64_t{0};
+        lexicon::Phrase phrase = match.getPhrase();
+        return phrase.isNull() ? std::uint64_t{0} : static_cast<std::uint64_t>(phrase.getAddress());
       });
     }
 
@@ -1052,6 +1150,63 @@ namespace recurloop {
         if (name == nullptr) THROW(, "context integer assignment received a null name")
         value.values().assign(reinterpret_cast<const char *>(name), context::Value(integer));
         return std::uint64_t{1};
+      });
+    }
+
+    extern "C" std::uint64_t contextFunctionCompile(context::Context *context, const std::uint8_t *signature,
+                                                          const std::uint8_t *body,
+                                                          const std::uint8_t *symbol) noexcept {
+      if (signature == nullptr || body == nullptr || symbol == nullptr) return 0;
+      return checked(context, std::uint64_t{0}, [&](context::Context &value) {
+        const std::string signatureSource(reinterpret_cast<const char *>(signature));
+        const std::string bodySource(reinterpret_cast<const char *>(body));
+        const std::string functionSymbol(reinterpret_cast<const char *>(symbol));
+        if (functionSymbol.empty()) THROW(, "context function compile received an empty symbol")
+
+        const SourceLocation origin{value.source.path, value.source.line, value.source.position};
+        function_internal::FunctionDefinition definition = function_internal::parseSignature(
+            value, signatureSource, functionSymbol, false, origin.path, origin.line, origin.column);
+        definition.function.name = functionSymbol;
+        definition.function.signature.symbol = functionSymbol;
+        definition.scope = functionSymbol;
+        definition.sourcePath = origin.path;
+        definition.sourceText = bodySource;
+        definition.sourceLine = origin.line;
+        definition.sourceColumn = origin.column;
+
+        const std::vector<function_internal::Statement> statements =
+            function_internal::parseBody(value, bodySource, functionSymbol, origin.path, origin.line, origin.column);
+        function_internal::compileFunctionDefinition(value, std::move(definition), statements, functionSymbol);
+
+        const std::optional<compiler::Module> module = value.language().findModule(functionSymbol);
+        if (!module) THROW(, "context function compile did not produce a native module for '" << functionSymbol << "'")
+        const compiler::Module linked = value.language().composeModule(*module);
+        const compiler::JitImage image = compiler::JitLinker::link(
+            linked, value.runtime, [&](std::string_view dependency) -> std::optional<std::uintptr_t> {
+              return compiler::DynamicLinker::instance().resolveFromDefault(dependency);
+            });
+        const std::uintptr_t entry = image.address(functionSymbol);
+        if (entry == 0) THROW(, "context function compile could not resolve native entry for '" << functionSymbol << "'")
+        return static_cast<std::uint64_t>(entry);
+      });
+    }
+
+    extern "C" std::uint64_t contextFunctionAddress(context::Context *context,
+                                                          const std::uint8_t *symbol) noexcept {
+      if (symbol == nullptr) return 0;
+      return checked(context, std::uint64_t{0}, [&](context::Context &value) {
+        const std::string functionSymbol(reinterpret_cast<const char *>(symbol));
+        if (functionSymbol.empty()) THROW(, "context function address received an empty symbol")
+        const std::optional<compiler::Module> module = value.language().findModule(functionSymbol);
+        if (!module) THROW(, "context function address could not find native module for '" << functionSymbol << "'")
+        const compiler::Module linked = value.language().composeModule(*module);
+        const compiler::JitImage image = compiler::JitLinker::link(
+            linked, value.runtime, [&](std::string_view dependency) -> std::optional<std::uintptr_t> {
+              return compiler::DynamicLinker::instance().resolveFromDefault(dependency);
+            });
+        const std::uintptr_t entry = image.address(functionSymbol);
+        if (entry == 0) THROW(, "context function address could not resolve native entry for '" << functionSymbol << "'")
+        return static_cast<std::uint64_t>(entry);
       });
     }
 
@@ -1486,6 +1641,12 @@ namespace recurloop {
 
     declareHostFunction(context, SourceEnsure, "context:source:ensure", {contextPointer, u64}, u64,
                         reinterpret_cast<std::uintptr_t>(&contextSourceEnsure));
+    declareHostFunction(context, SourceRefill, "context:source:refill", {contextPointer, u64}, u64,
+                        reinterpret_cast<std::uintptr_t>(&contextSourceRefill));
+    declareHostFunction(context, SourceHook, "context:source:hook", {contextPointer, u64}, u64,
+                        reinterpret_cast<std::uintptr_t>(&contextSourceHook));
+    declareHostFunction(context, SourceProbeLongest, "context:source:probe:longest", {contextPointer, u64}, u64,
+                        reinterpret_cast<std::uintptr_t>(&contextSourceProbeLongest));
     declareHostFunction(context, SourceData, "context:source:data", {contextPointer}, bytePointer,
                         reinterpret_cast<std::uintptr_t>(&contextSourceData));
     declareHostFunction(context, SourceBytes, "context:source:bytes", {contextPointer}, u64,
@@ -1668,6 +1829,12 @@ namespace recurloop {
     declareHostFunction(context, "context:type:structure:complete:aligned", "context:type:structure:complete:aligned",
                         {contextPointer, u64, u64, u64}, u64,
                         reinterpret_cast<std::uintptr_t>(&contextTypeCompleteStructureAligned));
+    declareHostFunction(context, FunctionCompile, "context:function:compile",
+                        {contextPointer, bytePointer, bytePointer, bytePointer}, u64,
+                        reinterpret_cast<std::uintptr_t>(&contextFunctionCompile));
+    declareHostFunction(context, FunctionAddress, "context:function:address",
+                        {contextPointer, bytePointer}, u64,
+                        reinterpret_cast<std::uintptr_t>(&contextFunctionAddress));
     declareHostFunction(context, TypeFunction, "context:type:function", {contextPointer, u64, u64, bytePointer, u64},
                         u64, reinterpret_cast<std::uintptr_t>(&contextTypeFunction));
     declareHostFunction(context, "context:type:function:fixed", "context:type:function:fixed",

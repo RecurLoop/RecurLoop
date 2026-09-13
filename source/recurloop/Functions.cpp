@@ -521,6 +521,46 @@ namespace recurloop {
       definition.function.signature.symbol = hint;
       definition.function.imported = false;
       context.language().declareFunction(definition.function);
+
+        // Register Owner:method functions as record methods.
+        //
+        // Functions::define() already does this for ordinary `fn`, but
+        // context:function:compile -> compileFunctionDefinition() must do it too.
+      const std::size_t separator = hint.rfind(':');
+      if (separator != std::string::npos &&
+          !definition.function.parameterTypes.empty()) {
+
+        compiler::TypeDescriptor receiver =
+            context.language().types.get(
+                definition.function.parameterTypes.front());
+
+        if (receiver.kind == compiler::TypeKind::Pointer)
+          receiver =
+              context.language().types.get(receiver.element);
+
+        const std::string owner = hint.substr(0, separator);
+        const std::string method = hint.substr(separator + 1);
+
+        if (receiver.kind == compiler::TypeKind::Structure &&
+            receiver.name == owner &&
+            std::none_of(
+                receiver.methods.begin(),
+                receiver.methods.end(),
+                [&](const compiler::TypeMethod &candidate) {
+                  return candidate.name == method &&
+                        candidate.signature.parameters ==
+                            definition.function.signature.parameters &&
+                        candidate.signature.variadic ==
+                            definition.function.signature.variadic;
+                })) {
+
+          context.language().types.addMethod(
+              receiver.id,
+              method,
+              definition.function.signature);
+        }
+      }
+
       rememberFunctionSource(context, definition);
 
       const std::string previousOverride = context.exec.definitionSymbolOverride;

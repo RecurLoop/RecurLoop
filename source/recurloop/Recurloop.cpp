@@ -13,6 +13,7 @@
 
   #include <cerrno>
   #include <cstring>
+  #include <string_view>
 
 namespace recurloop {
   void Recurloop::initializeConfig(int argc, char **argv) {
@@ -152,6 +153,34 @@ namespace recurloop {
     }
   }
 
+  namespace {
+    constexpr std::string_view SourceHookMarker{"\0source-hook", 12};
+
+    lexicon::Phrase sourceHook(context::Context &context) {
+      lexicon::Phrase root = context.lexicon.phrase();
+      lexicon::Match match = root.matchExact(
+          Byte(const_cast<char *>(SourceHookMarker.data())), 0, SourceHookMarker.size() * Byte::length,
+          [](radix::Node *, radix::Match *candidate) { return !lexicon::Dictionary(*candidate).getPhrase().isNull(); });
+      if (match.isNull()) return lexicon::Phrase(&context.lexicon);
+      lexicon::Phrase marker = match.getPhrase();
+      if (!marker.containsPrototype()) return lexicon::Phrase(&context.lexicon);
+      return marker.getPrototype();
+    }
+
+    bool runSourceHook(context::Context &context) {
+      lexicon::Phrase root = context.lexicon.phrase();
+      if (context::Lookup::current(context).getAddress() != root.getAddress()) return false;
+
+      lexicon::Phrase hook = sourceHook(context);
+      if (hook.isNull() || !hook.isElaboratable()) return false;
+
+      const Size line = context.source.line;
+      const Size position = context.source.position;
+      hook.elaborate(context);
+      return context.source.line != line || context.source.position != position;
+    }
+  } // namespace
+
   static void handleUndefinedPhrase(context::Context &context) {
     constexpr std::size_t maxLen = 50;
     const std::string &bufferStr = context.source.buffer.str;
@@ -191,6 +220,7 @@ namespace recurloop {
       try {
         if (context.source.buffer.bits > 0) {
           const DebugLocation debugLocation{context.source.path, context.source.line, context.source.position};
+          if (runSourceHook(context)) continue;
           lexicon::Dictionary dictionary = context::Lookup::current(context).getSubdictionary();
           lexicon::Phrase matched = context::Source::matchLongest(context, dictionary, filter, true);
 

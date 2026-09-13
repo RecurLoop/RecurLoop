@@ -1,0 +1,13 @@
+recurloop var seed = 7
+
+poly fn inferred_step(x) {
+    return x * 3
+}
+
+poly fn call_shared(x) {
+    return inferred_step(x) + 1
+}
+
+poly print call_shared(seed)
+poly specializations inferred_step
+poly specializations call_shared

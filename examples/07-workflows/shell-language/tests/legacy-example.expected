@@ -1,0 +1,11 @@
+RecurLoop imported shell library example
+run imported from .rli: OK
+captured: three
+environment: enabled
+pipeline/redirection from .rli: OK
+capture from .rli:              OK
+directory scope from .rli:      OK
+environment scope from .rli:    OK
+parallel jobs from .rli:        OK
+typed RecurLoop + shell DSL:     OK
+all imported shell library checks passed

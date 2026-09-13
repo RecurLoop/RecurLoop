@@ -1,0 +1,17 @@
+poly fn max_value(a, b) {
+    if a > b {
+        return a
+    } else {
+        return b
+    }
+}
+
+poly fn twice(x) {
+    let first = x + x
+    return first
+}
+
+poly print max_value(9, 4)
+poly print twice(21)
+poly specializations max_value
+poly specializations twice

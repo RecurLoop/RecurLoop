@@ -1,0 +1,8 @@
+poly fn visible(a) {
+    return a
+}
+
+inferred_assert function visible
+inferred_assert variable a
+inferred_assert grammar visible
+recurloop print "inferred phrases visible"

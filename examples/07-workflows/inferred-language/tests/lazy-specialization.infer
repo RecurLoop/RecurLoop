@@ -1,0 +1,11 @@
+poly fn combine(a, b) {
+    return a + b
+}
+
+// Definition alone does not materialize a typed body.
+poly specializations combine
+
+poly print combine(20, 22)
+poly print combine(1, 2)
+poly print combine("Recur", "Loop")
+poly specializations combine

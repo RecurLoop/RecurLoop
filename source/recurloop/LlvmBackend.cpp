@@ -43,6 +43,28 @@
 
 namespace recurloop::function_internal {
   namespace {
+    void initializeLlvmTargets() {
+      static const bool initialized = [] {
+#if RECURLOOP_LLVM_INITIALIZE_ALL_TARGETS
+        llvm::InitializeAllTargetInfos();
+        llvm::InitializeAllTargets();
+        llvm::InitializeAllTargetMCs();
+        llvm::InitializeAllAsmParsers();
+        llvm::InitializeAllAsmPrinters();
+#else
+        // The normal build links only LLVM's host backend. Keep initialization
+        // in lock-step with CMake so TargetSelect.h does not reference every
+        // backend present in the pinned prebuilt LLVM archive.
+        if (llvm::InitializeNativeTarget())
+          fail({}, 0, "LLVM native target is unavailable");
+        if (llvm::InitializeNativeTargetAsmPrinter())
+          fail({}, 0, "LLVM native target asm printer is unavailable");
+#endif
+        return true;
+      }();
+      (void)initialized;
+    }
+
     struct Emitted {
       llvm::Value *value = nullptr;
       compiler::TypeId type = compiler::InvalidType;
@@ -77,17 +99,18 @@ namespace recurloop::function_internal {
         initializeTargets();
         if (triple.empty()) triple = llvm::sys::getDefaultTargetTriple();
         triple = llvm::Triple::normalize(triple);
-        module.setTargetTriple(triple);
+        const llvm::Triple llvmTriple(triple);
+        module.setTargetTriple(llvmTriple);
 
         std::string targetError;
-        const llvm::Target *target = llvm::TargetRegistry::lookupTarget(triple, targetError);
+        const llvm::Target *target = llvm::TargetRegistry::lookupTarget(llvmTriple, targetError);
         if (target == nullptr) fail({}, 0, "LLVM target '" + triple + "' is unavailable: " + targetError);
         llvm::TargetOptions options;
         const llvm::CodeGenOptLevel codegenLevel = RECURLOOP_LLVM_OPT_LEVEL == 0   ? llvm::CodeGenOptLevel::None
                                                    : RECURLOOP_LLVM_OPT_LEVEL == 1 ? llvm::CodeGenOptLevel::Less
                                                    : RECURLOOP_LLVM_OPT_LEVEL == 2 ? llvm::CodeGenOptLevel::Default
                                                                                    : llvm::CodeGenOptLevel::Aggressive;
-        machine.reset(target->createTargetMachine(triple, cpu, features, options, llvm::Reloc::PIC_,
+        machine.reset(target->createTargetMachine(llvmTriple, cpu, features, options, llvm::Reloc::PIC_,
                                                   llvm::CodeModel::Small, codegenLevel));
         if (!machine) fail({}, 0, "LLVM could not create a target machine for '" + triple + "'");
         module.setDataLayout(machine->createDataLayout());
@@ -120,17 +143,7 @@ namespace recurloop::function_internal {
       }
 
     private:
-      static void initializeTargets() {
-        static const bool initialized = [] {
-          llvm::InitializeAllTargetInfos();
-          llvm::InitializeAllTargets();
-          llvm::InitializeAllTargetMCs();
-          llvm::InitializeAllAsmParsers();
-          llvm::InitializeAllAsmPrinters();
-          return true;
-        }();
-        (void)initialized;
-      }
+      static void initializeTargets() { initializeLlvmTargets(); }
 
       llvm::Type *type(compiler::TypeId id) {
         const compiler::TypeDescriptor descriptor = context.language().types.get(id);
@@ -488,7 +501,7 @@ namespace recurloop::function_internal {
         case Expression::Kind::Integer: return coerce(integer(value), expected, value.offset);
         case Expression::Kind::Real: return coerce(real(value), expected, value.offset);
         case Expression::Kind::String:
-          return coerce({builder.CreateGlobalStringPtr(value.text), bytePointer}, expected, value.offset);
+          return coerce({builder.CreateGlobalString(value.text), bytePointer}, expected, value.offset);
         case Expression::Kind::BitString: return coerce(bitString(value), expected, value.offset);
         case Expression::Kind::FunctionLiteral: return coerce(functionLiteral(value, expected), expected, value.offset);
         case Expression::Kind::Variable: return coerce(variableValue(value, expected), expected, value.offset);
@@ -1136,22 +1149,15 @@ namespace recurloop::function_internal {
   LlvmPhraseModule generateLlvmPhraseModule(context::Context &context, std::string_view symbol,
                                             std::span<const LlvmPhraseCall> calls) {
     if (symbol.empty()) fail({}, 0, "LLVM compiled phrase requires a symbol");
-    static const bool initialized = [] {
-      llvm::InitializeAllTargetInfos();
-      llvm::InitializeAllTargets();
-      llvm::InitializeAllTargetMCs();
-      llvm::InitializeAllAsmParsers();
-      llvm::InitializeAllAsmPrinters();
-      return true;
-    }();
-    (void)initialized;
+    initializeLlvmTargets();
 
     llvm::LLVMContext llvmContext;
     llvm::Module module("recurloop-phrase", llvmContext);
     const std::string triple = llvm::Triple::normalize(llvm::sys::getDefaultTargetTriple());
-    module.setTargetTriple(triple);
+    const llvm::Triple llvmTriple(triple);
+    module.setTargetTriple(llvmTriple);
     std::string targetError;
-    const llvm::Target *target = llvm::TargetRegistry::lookupTarget(triple, targetError);
+    const llvm::Target *target = llvm::TargetRegistry::lookupTarget(llvmTriple, targetError);
     if (target == nullptr) fail({}, 0, "LLVM host target is unavailable: " + targetError);
     llvm::TargetOptions options;
     const llvm::CodeGenOptLevel codegenLevel = RECURLOOP_LLVM_OPT_LEVEL == 0   ? llvm::CodeGenOptLevel::None
@@ -1159,7 +1165,7 @@ namespace recurloop::function_internal {
                                                : RECURLOOP_LLVM_OPT_LEVEL == 2 ? llvm::CodeGenOptLevel::Default
                                                                                : llvm::CodeGenOptLevel::Aggressive;
     std::unique_ptr<llvm::TargetMachine> machine(target->createTargetMachine(
-        triple, "generic", {}, options, llvm::Reloc::PIC_, llvm::CodeModel::Small, codegenLevel));
+        llvmTriple, "generic", {}, options, llvm::Reloc::PIC_, llvm::CodeModel::Small, codegenLevel));
     if (!machine)
       fail({}, 0, "LLVM could not create a target machine for compiled phrase '" + std::string(symbol) + "'");
     module.setDataLayout(machine->createDataLayout());

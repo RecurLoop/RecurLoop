@@ -5,14 +5,19 @@ source.
 
 The C++ host contains no HTTP parser, router, request model, or socket server.
 The library uses RecurLoop's C FFI for POSIX sockets and exposes a
-source-defined `http` construct for routing.
+source-defined `http` construct for routing. Its embedded routing syntax is
+tokenized by `LanguageKit:SliceReader`, so HTTP no longer carries a private
+quote/comment/operator scanner.
 
 ## Quick start
 
 Build the reusable engine image:
 
 ```bash
-recurloop --file examples/07-workflows/http-language/library.rl
+recurloop --file examples/07-workflows/language-kit/library.rl
+recurloop \
+  --import /tmp/recurloop-language-kit.rli \
+  --file examples/07-workflows/http-language/library.rl
 ```
 
 This writes:

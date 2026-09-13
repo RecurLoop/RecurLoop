@@ -1,0 +1,5 @@
+22
+inferred_step specializations=1
+  (integer) -> integer hits=1 compiled=1
+call_shared specializations=1
+  (integer) -> integer hits=1 compiled=1

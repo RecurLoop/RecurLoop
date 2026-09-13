@@ -1,0 +1,3 @@
+async: first + second
+function stage: MIXED CASE
+result object: stdout=partial, exit=7

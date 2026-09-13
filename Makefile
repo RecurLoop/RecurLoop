@@ -8,6 +8,7 @@ CONFIG_DIR ?= $(BUILD_ROOT)/$(BUILD_TYPE)
 DEPS_DIR ?= $(BUILD_ROOT)/_deps
 ENABLE_TESTS ?= ON
 ENABLE_LLVM ?= OFF
+LLVM_LINK_TARGETS ?= native
 
 RECURLOOP := $(CONFIG_DIR)/bin/recurloop
 
@@ -62,6 +63,7 @@ help:
 	@echo '  BUILD_ROOT=build-custom'
 	@echo '  ENABLE_TESTS=OFF'
 	@echo '  ENABLE_LLVM=ON'
+	@echo '  LLVM_LINK_TARGETS=native|all'
 
 
 # ---------------------------------------------------------------------------
@@ -78,6 +80,7 @@ configure:
 		-DCMAKE_MODULE_LINKER_FLAGS=-fuse-ld=lld \
 		-DENABLE_TESTS="$(ENABLE_TESTS)" \
 		-DRECURLOOP_ENABLE_LLVM="$(ENABLE_LLVM)" \
+		-DRECURLOOP_LLVM_LINK_TARGETS="$(LLVM_LINK_TARGETS)" \
 		-DFETCHCONTENT_BASE_DIR="$(abspath $(DEPS_DIR))"
 	cmake -E copy_if_different \
 		"$(CONFIG_DIR)/compile_commands.json" \
@@ -126,17 +129,21 @@ showcase: $(RECURLOOP)
 # ---------------------------------------------------------------------------
 
 list-examples:
-	@find examples -name main.rl -printf '%h\n' \
+	@find examples \
+		-path 'examples/07-workflows' -prune -o \
+		-name main.rl -printf '%h\n' \
 		| sed 's|^examples/||' \
 		| sort
 	@printf '%s\n' \
 		'07-workflows/reusable-language-image' \
 		'07-workflows/reusable-syntax-image' \
+		'07-workflows/language-kit' \
 		'07-workflows/shell-language' \
 		'07-workflows/amber-language' \
 		'07-workflows/prolog-language' \
 		'07-workflows/haskell-language' \
 		'07-workflows/erlang-language' \
+		'07-workflows/inferred-language' \
 		'07-workflows/http-language' \
 		'07-workflows/source-debugger'
 
@@ -149,6 +156,10 @@ example: $(RECURLOOP)
 
 	@if test -f "examples/$(EXAMPLE)/main.rl"; then \
 		"$(RECURLOOP)" --file "examples/$(EXAMPLE)/main.rl"; \
+	elif test -x "examples/$(EXAMPLE)/run-showcase.sh"; then \
+		"examples/$(EXAMPLE)/run-showcase.sh" "$(abspath $(RECURLOOP))"; \
+	elif test -x "examples/$(EXAMPLE)/run-tests.sh"; then \
+		"examples/$(EXAMPLE)/run-tests.sh" "$(abspath $(RECURLOOP))"; \
 	else \
 		case "$(EXAMPLE)" in \
 		07-workflows/reusable-language-image) \
@@ -202,12 +213,9 @@ example: $(RECURLOOP)
 	fi
 
 
-# Keep successful low-level examples quiet, but always show which case is
-# running and replay captured stdout/stderr if a case fails.
-#
-# Workflow regression runners are intentionally NOT redirected to /dev/null:
-# they already emit concise "[language] ... ok" status lines and useful
-# diagnostics/diffs on failure.
+# Core examples are kept quiet on success because many of them intentionally
+# print user-facing output. Workflow runners stay visible: they already emit
+# concise per-case status lines and detailed diagnostics/diffs on failure.
 examples: $(RECURLOOP)
 	@set -euo pipefail; \
 	run_quiet() { \
@@ -215,7 +223,7 @@ examples: $(RECURLOOP)
 		shift; \
 		local output; \
 		output="$$(mktemp)"; \
-		printf '%s\n' "$$label"; \
+		printf '    %s\n' "$$label"; \
 		if "$$@" >"$$output" 2>&1; then \
 			rm -f "$$output"; \
 		else \
@@ -229,91 +237,107 @@ examples: $(RECURLOOP)
 		fi; \
 	}; \
 	\
-	mapfile -t files < <(find examples -name main.rl -print | sort); \
+	mapfile -t files < <( \
+		find examples \
+			-path 'examples/07-workflows' -prune -o \
+			-name main.rl -print \
+			| sort \
+	); \
 	printf '== Core examples (%d) ==\n' "$${#files[@]}"; \
 	for i in "$${!files[@]}"; do \
-		run_quiet \
-			"$$(printf '[%02d/%02d] %s' "$$((i + 1))" "$${#files[@]}" "$${files[$$i]}")" \
-			"$(RECURLOOP)" --file "$${files[$$i]}"; \
+		printf '[core %02d/%02d] %s\n' \
+			"$$((i + 1))" \
+			"$${#files[@]}" \
+			"$${files[$$i]}"; \
+		output="$$(mktemp)"; \
+		if "$(RECURLOOP)" --file "$${files[$$i]}" >"$$output" 2>&1; then \
+			rm -f "$$output"; \
+		else \
+			status=$$?; \
+			printf '\nFAILED: %s (exit %d)\n' "$${files[$$i]}" "$$status" >&2; \
+			printf '%s\n' '----- captured output -----' >&2; \
+			cat "$$output" >&2; \
+			printf '%s\n\n' '---------------------------' >&2; \
+			rm -f "$$output"; \
+			exit "$$status"; \
+		fi; \
 	done; \
 	\
+	workflows=( \
+		reusable-language-image \
+		reusable-syntax-image \
+		language-kit \
+		shell-language \
+		inferred-language \
+		http-language \
+		source-debugger \
+		amber-language \
+		prolog-language \
+		haskell-language \
+		erlang-language \
+	); \
 	echo; \
-	echo '== Reusable language image =='; \
-	run_quiet \
-		'[workflow] reusable-language-image: build' \
-		"$(RECURLOOP)" \
-			--file examples/07-workflows/reusable-language-image/build.rl; \
-	run_quiet \
-		'[workflow] reusable-language-image: use' \
-		"$(RECURLOOP)" \
-			--import /tmp/recurloop-phrase-language.rli \
-			--file examples/07-workflows/reusable-language-image/use.rl; \
-	\
-	echo; \
-	echo '== Reusable syntax image =='; \
-	run_quiet \
-		'[workflow] reusable-syntax-image: build' \
-		"$(RECURLOOP)" \
-			--file examples/07-workflows/reusable-syntax-image/build.rl; \
-	run_quiet \
-		'[workflow] reusable-syntax-image: use' \
-		"$(RECURLOOP)" \
-			--import /tmp/recurloop-phrase-syntax.rli \
-			--file examples/07-workflows/reusable-syntax-image/use.rl; \
-	\
-	echo; \
-	echo '== Shell language =='; \
-	run_quiet \
-		'[workflow] shell-language: build image' \
-		"$(RECURLOOP)" \
-			--file examples/07-workflows/shell-language/library.rl; \
-	for file in top_level.rl pipeline.rl functions.rl example.rl; do \
-		run_quiet \
-			"[workflow] shell-language: $$file" \
-			"$(RECURLOOP)" \
-				--import /tmp/recurloop-shell-library.rli \
-				--file "examples/07-workflows/shell-language/$$file"; \
+	printf '== Workflows (%d) ==\n' "$${#workflows[@]}"; \
+	for i in "$${!workflows[@]}"; do \
+		workflow="$${workflows[$$i]}"; \
+		echo; \
+		printf '[workflow %02d/%02d] %s\n' \
+			"$$((i + 1))" \
+			"$${#workflows[@]}" \
+			"$$workflow"; \
+		case "$$workflow" in \
+		reusable-language-image) \
+			run_quiet \
+				'build.rl' \
+				"$(RECURLOOP)" \
+					--file examples/07-workflows/reusable-language-image/build.rl; \
+			run_quiet \
+				'use.rl' \
+				"$(RECURLOOP)" \
+					--import /tmp/recurloop-phrase-language.rli \
+					--file examples/07-workflows/reusable-language-image/use.rl; \
+			;; \
+		reusable-syntax-image) \
+			run_quiet \
+				'build.rl' \
+				"$(RECURLOOP)" \
+					--file examples/07-workflows/reusable-syntax-image/build.rl; \
+			run_quiet \
+				'use.rl' \
+				"$(RECURLOOP)" \
+					--import /tmp/recurloop-phrase-syntax.rli \
+					--file examples/07-workflows/reusable-syntax-image/use.rl; \
+			;; \
+		source-debugger) \
+			output="$$(mktemp)"; \
+			printf '    debugger.rl\n'; \
+			if "$(RECURLOOP)" \
+				--file examples/07-workflows/source-debugger/debugger.rl \
+				</dev/null >"$$output" 2>&1; then \
+				rm -f "$$output"; \
+				echo '    [source-debugger] ok'; \
+			else \
+				status=$$?; \
+				printf '\nFAILED: source-debugger (exit %d)\n' "$$status" >&2; \
+				cat "$$output" >&2; \
+				rm -f "$$output"; \
+				exit "$$status"; \
+			fi; \
+			;; \
+		*) \
+			runner="examples/07-workflows/$$workflow/run-tests.sh"; \
+			if test ! -x "$$runner"; then \
+				echo "missing or non-executable workflow runner: $$runner" >&2; \
+				exit 1; \
+			fi; \
+			"$$runner" "$(abspath $(RECURLOOP))"; \
+			;; \
+		esac; \
 	done; \
-	\
-	echo; \
-	echo '== Amber compatibility =='; \
-	"examples/07-workflows/amber-language/run-tests.sh" "$(abspath $(RECURLOOP))"; \
-	\
-	echo; \
-	echo '== Prolog compatibility =='; \
-	"examples/07-workflows/prolog-language/run-tests.sh" "$(abspath $(RECURLOOP))"; \
-	\
-	echo; \
-	echo '== Haskell compatibility =='; \
-	"examples/07-workflows/haskell-language/run-tests.sh" "$(abspath $(RECURLOOP))"; \
-	\
-	echo; \
-	echo '== Erlang compatibility =='; \
-	"examples/07-workflows/erlang-language/run-tests.sh" "$(abspath $(RECURLOOP))"; \
-	\
-	echo; \
-	echo '== HTTP language =='; \
-	"examples/07-workflows/http-language/run-tests.sh" "$(abspath $(RECURLOOP))"; \
-	\
-	echo; \
-	echo '== Source debugger =='; \
-	debug_output="$$(mktemp)"; \
-	if "$(RECURLOOP)" \
-		--file examples/07-workflows/source-debugger/debugger.rl \
-		</dev/null >"$$debug_output" 2>&1; then \
-		echo '[workflow] source-debugger: ok'; \
-		rm -f "$$debug_output"; \
-	else \
-		status=$$?; \
-		echo "[workflow] source-debugger: FAILED (exit $$status)" >&2; \
-		cat "$$debug_output" >&2; \
-		rm -f "$$debug_output"; \
-		exit "$$status"; \
-	fi; \
 	\
 	echo; \
 	echo 'Debugger executable controller: checked by make feature when ptrace is available.'; \
-	echo 'All non-interactive examples passed.'
+	echo 'All non-interactive examples and workflows passed.'
 
 
 # ---------------------------------------------------------------------------

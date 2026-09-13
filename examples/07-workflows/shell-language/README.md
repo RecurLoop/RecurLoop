@@ -3,7 +3,10 @@
 Build the reusable language image:
 
 ```bash
-build/Debug/bin/recurloop --file examples/07-workflows/shell-language/library.rl
+build/Debug/bin/recurloop --file examples/07-workflows/language-kit/library.rl
+build/Debug/bin/recurloop \
+  --import /tmp/recurloop-language-kit.rli \
+  --file examples/07-workflows/shell-language/library.rl
 ```
 
 Import the image and start interactive input:
@@ -21,7 +24,8 @@ $ print 6 * 7
 42
 ```
 
-An otherwise unknown top-level line enters the shell phrase dictionary;
+LanguageKit owns the shared top-level fallback dispatcher. An otherwise unknown
+top-level line is offered to the Shell fallback and enters the shell phrase dictionary;
 ordinary RecurLoop phrases retain longest-prefix priority. Dispatch then moves
 between phrase dictionaries for an unquoted word, single and double quotes,
 escapes, interpolation, pipelines and redirection. Those phrase actions build
