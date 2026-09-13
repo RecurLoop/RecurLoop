@@ -124,11 +124,12 @@ namespace recurloop {
 
     const std::string body = source(phrase);
     const std::string path = owner.source.path.empty() ? "<lexicon>" : owner.source.path;
-    auto result = std::async(std::launch::async, [body, path]() {
+    const std::vector<std::uint8_t> languageImage = EngineImage::encode(owner);
+    auto result = std::async(std::launch::async, [body, path, languageImage]() {
                     char argument[] = "Recurloop";
                     char *arguments[] = {argument};
                     Recurloop worker;
-                    worker.initialize(1, arguments);
+                    worker.initializeEmbedded(1, arguments, languageImage);
                     context::Context &context = worker.getContext();
                     const Size checkpoint = context.lexicon.checkpoint().getAddress();
                     executeSource(context, body, path, 1, 1);

@@ -144,7 +144,9 @@ namespace recurloop {
                                                       const std::vector<Statement> &body, std::string hint = {});
     lexicon::Phrase compileActionDefinition(context::Context &context, FunctionDefinition definition,
                                             const std::vector<Statement> &body, std::string hint = {});
+    void registerCompilerActions(context::Context &context);
     void setupCompilerSyntax(context::Context &context);
+    void registerStatementActions(context::Context &context);
     void setupStatementSyntax(context::Context &context, lexicon::Phrase grammar);
     void bindSyntaxPrototypes(context::Context &context);
 

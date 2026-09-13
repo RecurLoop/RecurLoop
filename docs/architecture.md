@@ -17,9 +17,11 @@ utilities → radix → lexicon → context → compiler → recurloop → CLI
 5. Scoped dictionaries and value scopes are restored when their owning block
    ends.
 
-There is no independent fixed grammar above this process. Built-in syntax is a
-set of phrases installed by `recurloop::Language`; source-defined phrases use
-the same lookup and dispatch path.
+There is no independent fixed grammar above this process. The final executable
+restores its standard language from the embedded `core.rli`; source-defined
+phrases and the standard language use the same lookup and dispatch path. The
+legacy `recurloop::Language` builder exists only as a private clean-build tool
+while the remaining language subsystems migrate to source libraries.
 
 ## Layers
 
@@ -44,8 +46,8 @@ constructs phrases while preserving the metadata layout.
 
 `source/context` owns one execution state: configuration, input, streams,
 lexicon, runtime values, JIT memory, compiler workspace, lookup state, and
-staging/reference stacks. Process-local compilation futures are kept outside
-the serializable phrase graph.
+staging/reference stacks. Process-local compilation futures and the stable
+Host ABI action registry are kept outside the serializable phrase graph.
 
 ### Compiler
 
@@ -54,11 +56,12 @@ sections, symbols, relocations, ELF readers/writers, archive loading, static
 linking, dynamic linking, and JIT linking. `LanguageState` stores types,
 functions, native modules, link inputs, and output policy in the lexicon.
 
-### RecurLoop language layer
+### RecurLoop runtime layer
 
-`source/recurloop` installs core phrases and implements expressions, blocks,
-functions, type syntax, syntax extensions, the assembler, engine images,
-translation units, output directives, and the debugger.
+`source/recurloop` contains the runtime/image bridge plus language subsystems
+that have not yet migrated out of the private clean-build compatibility builder.
+The installed executable itself starts from Host ABI registration plus the
+embedded `core.rli`; it does not install the compatibility language in C++.
 
 ## Native module flow
 

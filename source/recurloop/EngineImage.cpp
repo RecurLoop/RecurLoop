@@ -969,8 +969,7 @@ namespace recurloop {
       // excluded from .rli images. Recreate the names used by the restored
       // image after the lexicon replacement.
       context.actions().restore(registeredActions);
-      context.actions().typePhrases();
-      context::Values::setup(root);
+        context::Values::setup(root);
       compiler::LanguageState::setup(root);
       context.lookup = {};
       context.staging = {};

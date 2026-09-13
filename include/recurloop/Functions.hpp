@@ -24,6 +24,7 @@ namespace recurloop {
   public:
     Functions() = delete;
 
+    static void registerActions(context::Context &context);
     static void setup(context::Context &context);
     static void finalizeSyntax(context::Context &context);
     static void forward(context::Context &context, lexicon::Phrase &invoked);

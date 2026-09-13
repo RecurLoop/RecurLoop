@@ -1338,6 +1338,47 @@ namespace recurloop {
       }
     } // namespace
 
+    void registerCompilerActions(context::Context &context) {
+      const auto action = [&](std::string name, lexicon::Phrase::Action implementation) {
+        context.actions().define(std::move(name), implementation);
+      };
+      action("fn.operator.infer-left", inferLeft);
+      action("fn.operator.infer-integer", inferInteger);
+      action("fn.operator.emit-positive", emitPositive);
+      action("fn.operator.emit-negative", emitNegative);
+      action("fn.operator.emit-not", emitNot);
+      action("fn.operator.emit-add", emitAdd);
+      action("fn.operator.emit-subtract", emitSubtract);
+      action("fn.operator.emit-multiply", emitMultiply);
+      action("fn.operator.emit-divide", emitDivide);
+      action("fn.operator.emit-modulo", emitModulo);
+      action("fn.operator.emit-equal", emitEqual);
+      action("fn.operator.emit-not-equal", emitNotEqual);
+      action("fn.operator.emit-less", emitLess);
+      action("fn.operator.emit-less-equal", emitLessEqual);
+      action("fn.operator.emit-greater", emitGreater);
+      action("fn.operator.emit-greater-equal", emitGreaterEqual);
+      action("fn.operator.emit-and", emitAnd);
+      action("fn.operator.emit-or", emitOr);
+      action("fn.intrinsic.compile", compileIntrinsic);
+      action("fn.statement.emit-variable", emitVariableStatement);
+      action("fn.statement.emit-assignment", emitAssignmentStatement);
+      action("fn.statement.emit-conditional", emitConditionalStatement);
+      action("fn.statement.emit-loop", emitLoopStatement);
+      action("fn.statement.emit-break", emitBreakStatement);
+      action("fn.statement.emit-continue", emitContinueStatement);
+      action("fn.statement.emit-return", emitReturnStatement);
+      action("fn.statement.emit-defer", emitDeferStatement);
+      action("fn.statement.emit-expression", emitExpressionStatement);
+      action("fn.assignment.emit-move", emitAssignmentMove);
+      action("fn.assignment.emit-add", emitAssignmentAdd);
+      action("fn.assignment.emit-subtract", emitAssignmentSubtract);
+      action("fn.assignment.emit-multiply", emitAssignmentMultiply);
+      action("fn.assignment.emit-divide", emitAssignmentDivide);
+      action("fn.assignment.emit-modulo", emitAssignmentModulo);
+
+    }
+
     void setupCompilerSyntax(context::Context &context) {
       const auto action = [&](std::string name, lexicon::Phrase::Action implementation) {
         context.actions().define(std::move(name), implementation);

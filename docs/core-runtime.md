@@ -66,11 +66,27 @@ State selection happens before the first source input. Removed transitional
 options (`--bootstrap`, `--language-image`, `--engine-image`) are rejected with
 a diagnostic rather than retained as aliases.
 
-## Migration boundary
+## Host ABI boundary
+
+The final runtime does not call `Language::setup()` and does not construct a
+temporary compatibility lexicon. Startup is:
+
+```text
+empty kernel
+    -> register process-local Host ABI actions
+    -> restore embedded core.rli
+    -> bind process-local ContextAPI/native symbols
+    -> process CLI operations
+```
+
+Stable action-name bindings are kernel state, not hidden phrases in the radix
+lexicon and not serialized `.rli` data. `--reset` replaces the language graph
+while restoring only the baseline Host ABI action set.
 
 The private clean-build builder still contains compatibility C++ language
-subsystems that have not yet moved to source libraries. They are not the final
-runtime startup path: the installed executable restores `core.rli`.
+subsystems because a completely clean checkout has no previous `core.rli` yet.
+That builder is the remaining migration boundary; it is not used by the final
+runtime or translation-unit workers.
 
 Each remaining subsystem is migrated by adding its source implementation to the
 core build, verifying tests/examples/image round trips, then deleting the old

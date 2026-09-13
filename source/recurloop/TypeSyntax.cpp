@@ -132,11 +132,15 @@ namespace recurloop {
     }
   } // namespace
 
-  void TypeSyntax::setup(context::Context &context) {
+  void TypeSyntax::registerActions(context::Context &context) {
     context.actions().define("type-syntax.function", parseFunction);
     context.actions().define("type-syntax.pointer", parsePointer);
     context.actions().define("type-syntax.array", parseArray);
 
+  }
+
+  void TypeSyntax::setup(context::Context &context) {
+    registerActions(context);
     lexicon::Phrase root = context.lexicon.phrase();
     lexicon::Phrase data = lexicon::phrase::type::getData(root);
     lexicon::Phrase callable = lexicon::phrase::type::getCallable(root);

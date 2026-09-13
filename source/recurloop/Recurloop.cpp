@@ -5,6 +5,8 @@
   #include <recurloop/Debugger.hpp>
   #include <recurloop/Execution.hpp>
   #include <recurloop/EngineImage.hpp>
+  #include <recurloop/HostAbi.hpp>
+  #include <recurloop/ContextApi.hpp>
   #include <recurloop/EmbeddedCoreLayers.hpp>
   #include <recurloop/TranslationUnits.hpp>
 
@@ -357,7 +359,7 @@ namespace recurloop {
     context.exec.hasPendingPhraseRewritable = false;
     context.exec.invoked = nullptr;
     initializeRoot();
-    context.actions().restore(hostActions);
+    context.actions().replace(hostActions);
   }
 
   void Recurloop::processStartupOperations() {
@@ -389,13 +391,17 @@ namespace recurloop {
   Recurloop &Recurloop::initializeEmbedded(int argc, char **argv, std::span<const std::uint8_t> coreImage) {
     initializeBase(argc, argv);
 
-    // Until every remaining compatibility subsystem has migrated to source,
-    // use it once to register the process-local host ABI and native symbols.
-    // The language graph itself is then discarded; the runtime starts from
-    // the embedded core image, not from Language::setup().
-    installCompatibilityLanguage();
-    resetToKernel();
+    // Final runtime startup does not construct the compatibility language.
+    // Stable C++ action names are process-local Host ABI, while the complete
+    // language graph comes from the embedded core image.
+    HostAbi::registerActions(context);
+    hostActions = context.actions().snapshot();
     EngineImage::decode(context, coreImage);
+
+    // Host functions are process-local addresses and are intentionally not
+    // serialized in .rli. Rebind them against the restored typed language.
+    ContextApi::setup(context);
+
     processStartupOperations();
     return *this;
   }

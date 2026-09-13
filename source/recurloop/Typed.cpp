@@ -540,25 +540,7 @@ namespace recurloop {
     std::memset(storage.toPtr(), 0, sizeof(std::uintptr_t));
   }
 
-  void Typed::setup(context::Context &context) {
-    lexicon::Phrase root = context.lexicon.phrase();
-    lexicon::Phrase grammar =
-        root.append(Byte(const_cast<char *>(TypedGrammarName.data())), 0, TypedGrammarName.size() * Byte::length)
-            .make()
-            .enableSubdictionary()
-            .setType(lexicon::phrase::type::getData(root))
-            .save();
-    lexicon::Phrase symbols =
-        grammar.append("symbols").make().enableSubdictionary().setType(lexicon::phrase::type::getData(root)).save();
-    for (std::string_view symbol : {"...", "->", "(", ")", ",", ":", "]", "="})
-      symbols.append(std::string(symbol))
-          .make()
-          .setPrototype(LanguageGrammar::ensureMarker(root, symbol))
-          .setType(lexicon::phrase::type::getData(root))
-          .save();
-    for (std::string_view keyword : {"abi", "packed", "align", "down", "up", "caller", "callee"})
-      LanguageGrammar::ensureMarker(root, keyword);
-
+  void Typed::registerActions(context::Context &context) {
     context.actions().define("typed.abi", declareConvention);
     context.actions().define("typed.module", configureModule);
     context.actions().define("typed.link", configureLink);
@@ -591,6 +573,28 @@ namespace recurloop {
     context.actions().define("typed.link.library", linkLibrary);
     context.actions().define("typed.link.shared", linkShared);
     context.actions().define("typed.link.clear", linkClear);
+  }
+
+  void Typed::setup(context::Context &context) {
+    lexicon::Phrase root = context.lexicon.phrase();
+    lexicon::Phrase grammar =
+        root.append(Byte(const_cast<char *>(TypedGrammarName.data())), 0, TypedGrammarName.size() * Byte::length)
+            .make()
+            .enableSubdictionary()
+            .setType(lexicon::phrase::type::getData(root))
+            .save();
+    lexicon::Phrase symbols =
+        grammar.append("symbols").make().enableSubdictionary().setType(lexicon::phrase::type::getData(root)).save();
+    for (std::string_view symbol : {"...", "->", "(", ")", ",", ":", "]", "="})
+      symbols.append(std::string(symbol))
+          .make()
+          .setPrototype(LanguageGrammar::ensureMarker(root, symbol))
+          .setType(lexicon::phrase::type::getData(root))
+          .save();
+    for (std::string_view keyword : {"abi", "packed", "align", "down", "up", "caller", "callee"})
+      LanguageGrammar::ensureMarker(root, keyword);
+
+    registerActions(context);
     const auto bind = [&](std::string key, lexicon::Phrase::Action action, bool dictionary = false) {
       lexicon::Draft draft =
           root.append(std::move(key)).make(action).setType(lexicon::phrase::type::getElaborate(root));

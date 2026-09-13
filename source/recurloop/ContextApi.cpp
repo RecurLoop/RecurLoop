@@ -1380,12 +1380,23 @@ namespace recurloop {
     void declareHostFunction(context::Context &context, std::string_view name, std::string_view symbol,
                              std::initializer_list<compiler::TypeId> parameters, compiler::TypeId result,
                              std::uintptr_t address) {
+      compiler::DynamicLinker::instance().registerSymbol(std::string(symbol), address);
+
       compiler::LanguageState language = context.language();
+      const std::vector<compiler::TypeId> parameterTypes(parameters);
+      for (const compiler::TypedFunction &existing : language.findFunctions(name)) {
+        if (existing.signature.symbol != symbol) continue;
+        if (existing.parameterTypes != parameterTypes || existing.resultType != result ||
+            existing.signature.variadic)
+          THROW(, "host ABI declaration mismatch for '" << symbol << "'")
+        return;
+      }
+
       compiler::TypedFunction function;
       function.name = std::string(name);
       function.signature.symbol = std::string(symbol);
       function.signature.convention = language.convention("sysv-amd64");
-      function.parameterTypes.assign(parameters.begin(), parameters.end());
+      function.parameterTypes = parameterTypes;
       for (compiler::TypeId parameter : function.parameterTypes)
         function.signature.parameters.push_back(language.types.abiType(parameter));
       function.resultType = result;
@@ -1400,7 +1411,6 @@ namespace recurloop {
           language.types.addMethod(receiver.id, function.name.substr(separator + 1), function.signature);
       }
       language.declareFunction(std::move(function));
-      compiler::DynamicLinker::instance().registerSymbol(std::string(symbol), address);
     }
   } // namespace
 

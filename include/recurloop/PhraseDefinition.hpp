@@ -11,6 +11,7 @@ namespace recurloop {
   class PhraseDefinition {
   public:
     PhraseDefinition() = delete;
+    static void registerActions(context::Context &context);
     static void setup(context::Context &context);
     static void define(context::Context &context, lexicon::Phrase &invoked);
     static bool mutate(context::Context &context);

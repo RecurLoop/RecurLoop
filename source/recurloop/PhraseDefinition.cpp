@@ -415,7 +415,7 @@ namespace recurloop {
     }
   } // namespace
 
-  void PhraseDefinition::setup(context::Context &context) {
+  void PhraseDefinition::registerActions(context::Context &context) {
     context.actions().define("phrase.field.dictionary", fieldDictionary);
     context.actions().define("phrase.field.serializable", fieldSerializable);
     context.actions().define("phrase.field.permanent", fieldPermanent);
@@ -427,6 +427,10 @@ namespace recurloop {
     context.actions().define("phrase.field.action", fieldAction);
     context.actions().define("phrase.field.parent", fieldParent);
 
+  }
+
+  void PhraseDefinition::setup(context::Context &context) {
+    registerActions(context);
     lexicon::Phrase root = context.lexicon.phrase();
     lexicon::Phrase callable = lexicon::phrase::type::getCallable(root);
     for (std::string_view token : {"=", ",", ";", "none"}) LanguageGrammar::ensureMarker(root, token);

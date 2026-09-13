@@ -212,7 +212,6 @@ namespace recurloop {
     Debugger::registerActions(context);
     Engine::registerActions(context);
     setup_phrase_types(context, root);
-    context.actions().typePhrases();
     compiler::LanguageState::setup(root);
     setupContextTypes(context);
     ContextApi::setup(context);

@@ -1,6 +1,6 @@
 #pragma once
 
-#include <lexicon/Lexicon.hpp>
+#include <lexicon/Phrase.hpp>
 
 #include <string>
 #include <string_view>
@@ -8,13 +8,19 @@
 #include <vector>
 
 namespace context {
-  // Stable names are the relocation boundary between persisted language
-  // images and process-local C++ function addresses.
+  using Action = lexicon::Phrase::Action;
+
+  struct ActionRegistry {
+    std::vector<std::pair<std::string, Action>> entries;
+  };
+
+  // Process-local registry that binds stable persisted action names to C++
+  // function pointers. It is kernel state, not part of the language lexicon.
   class Actions {
   public:
-    using Action = lexicon::Phrase::Action;
+    using Action = context::Action;
 
-    explicit Actions(lexicon::Lexicon &lexicon) : lexicon(lexicon) {}
+    explicit Actions(ActionRegistry &registry) : registry(registry) {}
 
     void define(std::string name, Action action);
     Action get(std::string_view name) const;
@@ -22,10 +28,10 @@ namespace context {
     bool contains(std::string_view name) const;
     std::vector<std::pair<std::string, Action>> snapshot() const;
     void restore(const std::vector<std::pair<std::string, Action>> &entries);
-    void typePhrases();
+    void replace(const std::vector<std::pair<std::string, Action>> &entries);
+
 
   private:
-    lexicon::Phrase registry(bool create) const;
-    lexicon::Lexicon &lexicon;
+    ActionRegistry &registry;
   };
 } // namespace context

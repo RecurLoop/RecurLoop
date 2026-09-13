@@ -267,7 +267,7 @@ namespace recurloop {
     }
   }
 
-  void Expressions::setup(context::Context &context) {
+  void Expressions::registerActions(context::Context &context) {
     context.actions().define("expressions.operator.prefix-positive", internal::prefixPositive);
     context.actions().define("expressions.operator.prefix-negative", internal::prefixNegative);
     context.actions().define("expressions.operator.prefix-not", internal::prefixLogicalNot);
@@ -305,6 +305,10 @@ namespace recurloop {
     context.actions().define("expressions.assign-bound", internal::assignBound);
     context.actions().define("expressions.print", print);
     context.actions().define("expressions.assert", assertTrue);
+  }
+
+  void Expressions::setup(context::Context &context) {
+    registerActions(context);
     lexicon::Phrase root = context.lexicon.phrase();
     internal::setupExpressionGrammar(root);
     PhraseNames::setup(context);

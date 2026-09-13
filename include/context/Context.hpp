@@ -42,7 +42,7 @@ namespace context {
     }
 
     Actions actions() {
-      return Actions(lexicon);
+      return Actions(actionRegistry);
     }
 
     Config config;
@@ -59,6 +59,10 @@ namespace context {
     Lookup lookup;
     Staging staging;
     Reference reference;
+
+    // Stable process-local Host ABI action bindings. This state is never
+    // serialized into language images and survives lexicon replacement.
+    ActionRegistry actionRegistry;
 
     // Process-local futures. The phrase graph and source descriptor remain
     // serializable; only in-flight compilation state lives here.

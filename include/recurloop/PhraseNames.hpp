@@ -22,6 +22,7 @@ namespace recurloop {
   public:
     PhraseNames() = delete;
 
+    static void registerActions(context::Context &context);
     static void setup(context::Context &context);
     static ParsedPhraseName parseAssignment(context::Context &context, bool allowEmpty = false,
                                             bool allowMissingOperation = false);

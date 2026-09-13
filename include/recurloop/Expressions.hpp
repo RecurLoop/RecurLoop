@@ -25,6 +25,7 @@ namespace recurloop {
   public:
     Expressions() = delete;
 
+    static void registerActions(context::Context &context);
     static void setup(context::Context &context);
     static context::Value evaluate(context::Context &context, std::string_view source);
     static context::Value evaluate(context::Context &context, std::string_view source, SourceLocation origin);

@@ -697,7 +697,13 @@ recurloop --reset --import core.rli --file libraries/recurloop/core.rl
 the bootstrap for the next one. There is no public `--bootstrap`,
 `--language-image`, `--engine-image`, `--core`, or `--no-core` mode.
 
-The migration keeps reducing the private compatibility builder subsystem by
-subsystem. The runtime interface is already the target interface: embedded core
-by default, `--reset` for a clean language state, `--import` for images, and
-`--file`/`--string`/stdin for source.
+The final runtime no longer constructs the compatibility language at startup.
+It registers process-local Host ABI action names, restores the embedded core
+image, and then binds ContextAPI/native addresses against that restored state.
+The Host ABI registry is kernel state rather than hidden lexicon data, so
+`--reset` replaces the language without serializing or reconstructing those
+bindings.
+
+The remaining migration is confined to the private clean-build builder. Its C++
+language subsystems are removed one by one as equivalent source modules become
+part of `core.rli`.

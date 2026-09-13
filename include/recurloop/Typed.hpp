@@ -7,6 +7,7 @@ namespace recurloop {
   class Typed {
   public:
     Typed() = delete;
+    static void registerActions(context::Context &context);
     static void setup(context::Context &context);
     static void declareConvention(context::Context &context, lexicon::Phrase &invoked);
     static void configureModule(context::Context &context, lexicon::Phrase &invoked);

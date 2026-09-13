@@ -693,6 +693,26 @@ namespace recurloop {
       }
     } // namespace
 
+    void registerStatementActions(context::Context &context) {
+      context.actions().define("fn.statement.parse-variable", parseVariableSyntax);
+      context.actions().define("fn.statement.parse-assignment", parseAssignmentSyntax);
+      context.actions().define("fn.statement.parse-conditional", parseConditionalSyntax);
+      context.actions().define("fn.statement.parse-loop", parseLoopSyntax);
+      context.actions().define("fn.statement.parse-control", parseControlSyntax);
+      context.actions().define("fn.statement.parse-return", parseReturnSyntax);
+      context.actions().define("fn.statement.parse-defer", parseDeferSyntax);
+      context.actions().define("fn.primary.group", parseGroupedSyntax);
+      context.actions().define("fn.primary.block", parseValueBlockSyntax);
+      context.actions().define("fn.primary.function", parseFunctionLiteralSyntax);
+      context.actions().define("fn.primary.conditional", parseConditionalExpressionSyntax);
+      context.actions().define("fn.primary.cast", parseCastSyntax);
+      context.actions().define("fn.postfix.index", parseIndexSyntax);
+      context.actions().define("fn.postfix.member", parseMemberSyntax);
+      context.actions().define("fn.postfix.propagate", parsePropagationSyntax);
+      context.actions().define("fn.postfix.call", parseCallSyntax);
+
+    }
+
     void setupStatementSyntax(context::Context &context, lexicon::Phrase grammar) {
       context.actions().define("fn.statement.parse-variable", parseVariableSyntax);
       context.actions().define("fn.statement.parse-assignment", parseAssignmentSyntax);

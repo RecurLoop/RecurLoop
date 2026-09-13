@@ -29,6 +29,7 @@ namespace recurloop {
 
     TypeSyntax() = delete;
 
+    static void registerActions(context::Context &context);
     static void setup(context::Context &context);
     static compiler::TypeId parse(context::Context &context, Cursor &cursor, std::string scope = {});
   };

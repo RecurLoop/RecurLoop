@@ -475,10 +475,16 @@ namespace recurloop {
     context.exec.pendingFunctionVariant.clear();
   }
 
-  void Functions::setup(context::Context &context) {
+  void Functions::registerActions(context::Context &context) {
     context.actions().define("fn.forward", forward);
     context.actions().define("fn.define", define);
     context.actions().define("fn.bound-action", invokeBoundAction);
+    function_internal::registerStatementActions(context);
+    function_internal::registerCompilerActions(context);
+  }
+
+  void Functions::setup(context::Context &context) {
+    registerActions(context);
     lexicon::Phrase root = context.lexicon.phrase();
     LanguageGrammar::ensureMarker(context, "else");
     LanguageGrammar::ensureMarker(context, "cast");
