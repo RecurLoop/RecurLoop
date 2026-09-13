@@ -8,6 +8,7 @@ namespace recurloop {
   public:
     Typed() = delete;
     static void setup(context::Context &context);
+    static void setupBootstrap(context::Context &context);
     static void declareConvention(context::Context &context, lexicon::Phrase &invoked);
     static void configureModule(context::Context &context, lexicon::Phrase &invoked);
     static void configureLink(context::Context &context, lexicon::Phrase &invoked);

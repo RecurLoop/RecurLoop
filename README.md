@@ -651,3 +651,19 @@ The RecurLoop name and logo are governed separately from the source-code
 license. See [`TRADEMARKS.md`](TRADEMARKS.md) for the trademark policy.
 
 Contributions are described in [`CONTRIBUTING.md`](CONTRIBUTING.md).
+
+## Minimal bootstrap and source-defined core
+
+The compatibility language remains the default.  A parallel migration path is
+available with `--bootstrap`: the host installs only the small implementation
+language needed to build source libraries, and `libraries/recurloop/core.rl`
+grows the language from source into `/tmp/recurloop-core.rli`.
+
+```bash
+make minimal-core
+make minimal-core-test
+```
+
+This path is additive: the compatibility C++ language is not removed until the
+source-defined libraries reach feature parity and the complete legacy test and
+example suite stays green.

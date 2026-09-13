@@ -203,6 +203,113 @@ namespace recurloop {
     }
   } // namespace
 
+  void Language::setupBootstrap(context::Context &context) {
+    // The bootstrap language is deliberately small.  It exists only so source
+    // libraries can construct the real RecurLoop language without a second
+    // compiler/IR or the old stack-style stage-0 assembler.
+    //
+    // Surface supplied by the host:
+    //   - typed native declarations (`link`, `extern`, types/records);
+    //   - expressions and local function statements;
+    //   - `fn`, `if`, `while`, `let`, `phrase`;
+    //   - phrase references `<...>`;
+    //   - `include` and `engine:{export,import,define}`;
+    //   - ContextAPI native functions.
+    // Everything else is expected to be installed by source libraries.
+    // clang-format off
+    lexicon::Phrase root = context::Lookup::current(context);
+    lexicon::Phrase undefined(root.getLexicon());
+
+    register_language_actions(context);
+    Engine::registerActions(context);
+    setup_phrase_types(context, root);
+    context.actions().typePhrases();
+    compiler::LanguageState::setup(root);
+    setupContextTypes(context);
+    ContextApi::setup(context);
+    TypeSyntax::setup(context);
+    Typed::setupBootstrap(context);
+    Expressions::setupBootstrap(context);
+    Functions::setup(context);
+    PhraseDefinition::setup(context);
+    lexicon::Phrase phrase = root;
+
+    WHITESPACES(action_ignore);
+    PHRASE("include", Engine::includeSource);
+
+    PHRASE("//", context::Lookup::enter, .setSuccessor(PARENT), {
+      PHRASE("", action_progress_byte);
+      PHRASE("\\\n", action_ignore);
+      PHRASE("\n", context::Lookup::leave);
+    });
+
+    PHRASE("/*", context::Lookup::enter, .setSuccessor(PARENT), {
+      PHRASE("", action_progress_byte);
+      PHRASE("\\*", action_ignore);
+      PHRASE("*/", context::Lookup::leave);
+    });
+
+    PHRASE("engine", context::Lookup::enter, , { WHITESPACES(action_ignore) PHRASE(":", action_ignore);
+      PHRASE("export", Engine::exportImage, .setType(lexicon::phrase::type::getScopedCallable(PARENT)));
+      PHRASE("import", Engine::importImage, .setType(lexicon::phrase::type::getCallable(PARENT)));
+      PHRASE("define", Engine::define, .setType(lexicon::phrase::type::getCallable(PARENT)));
+    });
+
+    lexicon::Phrase let = PHRASE("let", action_let_enter, , {
+      PHRASE("=", action_let_equals, , {
+        WHITESPACES(action_ignore)
+        lexicon::Phrase let_commit = PHRASE("", context::Lookup::enter, , {
+          PHRASE("", action_anonymous_let_commit);
+        });
+        PHRASE("", context::Lookup::enter, .setPrototype(root).setSuccessor(let_commit));
+      });
+    });
+    compiler::LanguageState::bind(let);
+    PHRASE("phrase", PhraseDefinition::define);
+
+    PHRASE("<", action_reference_enter, , {
+      WHITESPACES(action_ignore);
+      lexicon::Phrase colon = PHRASE(":", action_reference_colon, .setSuccessor(PARENT));
+      lexicon::Phrase apostrophe = PHRASE("'", context::Lookup::enter, .setSuccessor(PARENT), {
+        PHRASE("", action_pass_byte);
+        PHRASE("${", NameInterpolation::append);
+        PHRASE("\\", action_pass_byte);
+        PHRASE("\\r", action_pass_carriage_return);
+        PHRASE("\\n", action_pass_line_feed);
+        PHRASE("\\t", action_pass_horizontal_tab);
+        PHRASE("\\v", action_pass_vertical_tab);
+        PHRASE("'", context::Lookup::leave);
+      });
+      lexicon::Phrase quotation = PHRASE("\"", context::Lookup::enter, .setSuccessor(PARENT), {
+        PHRASE("", action_pass_byte);
+        PHRASE("${", NameInterpolation::append);
+        PHRASE("\\", action_pass_byte);
+        PHRASE("\\r", action_pass_carriage_return);
+        PHRASE("\\n", action_pass_line_feed);
+        PHRASE("\\t", action_pass_horizontal_tab);
+        PHRASE("\\v", action_pass_vertical_tab);
+        PHRASE("\"", context::Lookup::leave);
+      });
+      PHRASE("", context::Lookup::enter, .setSuccessor(PARENT), {
+        WHITESPACES(action_reference_whitespaces);
+        PHRASE("", action_pass_byte);
+        PHRASE("${", NameInterpolation::append);
+        PHRASE("\\", action_pass_byte);
+        PHRASE(">", action_reference_commit);
+        PHRASE(":", colon, .setSuccessor(undefined));
+        PHRASE("\"", quotation, .setSuccessor(undefined));
+        PHRASE("'", apostrophe, .setSuccessor(undefined));
+        PHRASE("\\r", action_pass_carriage_return);
+        PHRASE("\\n", action_pass_line_feed);
+        PHRASE("\\t", action_pass_horizontal_tab);
+        PHRASE("\\v", action_pass_vertical_tab);
+      });
+    });
+
+    Functions::finalizeSyntax(context);
+    // clang-format on
+  }
+
   void Language::setup(context::Context &context) {
     // clang-format off
     lexicon::Phrase root = context::Lookup::current(context);

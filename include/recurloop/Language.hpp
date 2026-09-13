@@ -45,5 +45,6 @@ namespace recurloop {
     Language() = delete;
 
     static void setup(context::Context &context);
+    static void setupBootstrap(context::Context &context);
   };
 } // namespace recurloop

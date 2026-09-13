@@ -653,4 +653,63 @@ namespace recurloop {
     bind("method", declareMethod);
     bind("pointer", declarePointer);
   }
+  void Typed::setupBootstrap(context::Context &context) {
+    // The bootstrap only needs native linking and external declarations.
+    // Records, methods, modules, ABI-definition commands and pointer aliases
+    // are language-library concerns and stay out of the bootstrap surface.
+    lexicon::Phrase root = context.lexicon.phrase();
+    lexicon::Phrase grammar =
+        root.append(Byte(const_cast<char *>(TypedGrammarName.data())), 0, TypedGrammarName.size() * Byte::length)
+            .make()
+            .enableSubdictionary()
+            .setType(lexicon::phrase::type::getData(root))
+            .save();
+    lexicon::Phrase symbols =
+        grammar.append("symbols").make().enableSubdictionary().setType(lexicon::phrase::type::getData(root)).save();
+    for (std::string_view symbol : {"...", "->", "(", ")", ",", ":", "]", "="})
+      symbols.append(std::string(symbol))
+          .make()
+          .setPrototype(LanguageGrammar::ensureMarker(root, symbol))
+          .setType(lexicon::phrase::type::getData(root))
+          .save();
+    for (std::string_view keyword : {"abi", "packed", "align", "down", "up", "caller", "callee"})
+      LanguageGrammar::ensureMarker(root, keyword);
+
+    context.actions().define("typed.link", configureLink);
+    context.actions().define("typed.extern", declareExternal);
+    context.actions().define("typed.external-unavailable", externalUnavailable);
+    context.actions().define("typed.link.object", linkObject);
+    context.actions().define("typed.link.archive", linkArchive);
+    context.actions().define("typed.link.path", linkPath);
+    context.actions().define("typed.link.library", linkLibrary);
+    context.actions().define("typed.link.shared", linkShared);
+    context.actions().define("typed.link.clear", linkClear);
+
+    const auto bind = [&](std::string key, lexicon::Phrase::Action action, bool dictionary = false) {
+      lexicon::Draft draft =
+          root.append(std::move(key)).make(action).setType(lexicon::phrase::type::getElaborate(root));
+      if (dictionary) draft.enableSubdictionary();
+      lexicon::Phrase phrase = draft.save();
+      compiler::LanguageState::bind(phrase);
+      return phrase;
+    };
+    const auto command = [&](lexicon::Phrase &owner, std::string key, lexicon::Phrase::Action action) {
+      lexicon::Phrase marker = LanguageGrammar::ensureMarker(root, key);
+      return owner.append(std::move(key))
+          .make(action)
+          .setType(lexicon::phrase::type::getCallable(root))
+          .setPrototype(marker)
+          .save();
+    };
+
+    lexicon::Phrase link = bind("link", configureLink, true);
+    command(link, "object", linkObject);
+    command(link, "archive", linkArchive);
+    command(link, "path", linkPath);
+    command(link, "library", linkLibrary);
+    command(link, "shared", linkShared);
+    command(link, "clear", linkClear);
+    bind("extern", declareExternal);
+  }
+
 } // namespace recurloop

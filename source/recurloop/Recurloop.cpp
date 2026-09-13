@@ -316,7 +316,17 @@ namespace recurloop {
     context.actions().define("lookup.enter", context::Lookup::enter);
     context::Lookup::enter(context, root);
 
-    Language::setup(context);
+    bool bootstrapLanguage = false;
+    if (context.exec.args.index < context.exec.args.count &&
+        std::string_view(context.exec.args.ptr[context.exec.args.index]) == "--bootstrap") {
+      bootstrapLanguage = true;
+      ++context.exec.args.index;
+    }
+
+    if (bootstrapLanguage)
+      Language::setupBootstrap(context);
+    else
+      Language::setup(context);
 
     while (context.exec.args.index < context.exec.args.count &&
            (std::string_view(context.exec.args.ptr[context.exec.args.index]) == "--import" ||

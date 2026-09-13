@@ -11,6 +11,7 @@ static void printHelp(const char *program) {
                "  -v, --version         Show version information and exit\n"
                "  -f, --file <path>     Read source code from file\n"
                "  -s, --string <code>   Read source code from command line\n"
+               "  --bootstrap           Start with the small host bootstrap language\n"
                "  --import <path>       Import an engine image before sources\n"
                "  --engine-image <path> Compatibility alias for --import\n"
                "  -                     Read source code from standard input\n"

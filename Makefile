@@ -32,6 +32,8 @@ ARGS ?= --file program.rl.example
 	test \
 	unit \
 	feature \
+	minimal-core \
+	minimal-core-test \
 	clean
 
 
@@ -48,6 +50,8 @@ help:
 	@echo '  make examples                      Validate every example and workflow'
 	@echo '  make test | unit | feature         Run tests'
 	@echo '  make showcase                      Run the complete language tour'
+	@echo '  make minimal-core                  Build source-defined core with --bootstrap'
+	@echo '  make minimal-core-test             Build and test the source-defined core'
 	@echo
 	@echo 'Debug is the default build type for build, run, examples, and tests.'
 	@echo 'To use Release with LLVM:'
@@ -336,8 +340,22 @@ examples: $(RECURLOOP)
 	done; \
 	\
 	echo; \
+	echo '== Source-defined core =='; \
+	libraries/recurloop/run-tests.sh "$(abspath $(RECURLOOP))"; \
+	echo; \
 	echo 'Debugger executable controller: checked by make feature when ptrace is available.'; \
-	echo 'All non-interactive examples and workflows passed.'
+	echo 'All non-interactive examples, workflows, and source-defined core tests passed.'
+
+
+# ---------------------------------------------------------------------------
+# Source-defined core
+# ---------------------------------------------------------------------------
+
+minimal-core: $(RECURLOOP)
+	@libraries/recurloop/build-core.sh "$(abspath $(RECURLOOP))" /tmp/recurloop-core.rli
+
+minimal-core-test: $(RECURLOOP)
+	@libraries/recurloop/run-tests.sh "$(abspath $(RECURLOOP))"
 
 
 # ---------------------------------------------------------------------------
