@@ -667,3 +667,20 @@ make minimal-core-test
 This path is additive: the compatibility C++ language is not removed until the
 source-defined libraries reach feature parity and the complete legacy test and
 example suite stays green.
+
+### Source-defined core migration
+
+The compatibility language remains the default. A small fixed bootstrap can build
+`libraries/recurloop/core.rl` into `/tmp/recurloop-core.rli`, and the resulting
+language can be started without installing the legacy language first:
+
+```sh
+make minimal-core
+build/Debug/bin/recurloop --language-image /tmp/recurloop-core.rli --file program.rl
+make core-parity
+```
+
+`make core-parity` compares selected semantics through the compatibility and
+source-defined paths. Legacy C++ language components are removed only after the
+corresponding library surface reaches parity.
+

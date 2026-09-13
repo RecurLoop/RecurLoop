@@ -7,7 +7,7 @@ BUILD_ROOT ?= build
 CONFIG_DIR ?= $(BUILD_ROOT)/$(BUILD_TYPE)
 DEPS_DIR ?= $(BUILD_ROOT)/_deps
 ENABLE_TESTS ?= ON
-ENABLE_LLVM ?= OFF
+ENABLE_LLVM ?= $(if $(filter Release,$(BUILD_TYPE)),ON,OFF)
 LLVM_LINK_TARGETS ?= native
 
 RECURLOOP := $(CONFIG_DIR)/bin/recurloop
@@ -32,8 +32,10 @@ ARGS ?= --file program.rl.example
 	test \
 	unit \
 	feature \
+	ensure-tests \
 	minimal-core \
 	minimal-core-test \
+	core-parity \
 	clean
 
 
@@ -52,6 +54,7 @@ help:
 	@echo '  make showcase                      Run the complete language tour'
 	@echo '  make minimal-core                  Build source-defined core with --bootstrap'
 	@echo '  make minimal-core-test             Build and test the source-defined core'
+	@echo '  make core-parity                   Compare legacy and source-core semantics'
 	@echo
 	@echo 'Debug is the default build type for build, run, examples, and tests.'
 	@echo 'To use Release with LLVM:'
@@ -357,19 +360,33 @@ minimal-core: $(RECURLOOP)
 minimal-core-test: $(RECURLOOP)
 	@libraries/recurloop/run-tests.sh "$(abspath $(RECURLOOP))"
 
+core-parity: $(RECURLOOP)
+	@libraries/recurloop/run-parity.sh "$(abspath $(RECURLOOP))" /tmp/recurloop-core.rli
+
 
 # ---------------------------------------------------------------------------
 # Tests
 # ---------------------------------------------------------------------------
 
-test: $(RECURLOOP)
+# CTest may retain registrations for unit executables even when an existing
+# build directory was previously configured with tests disabled. Reconfigure
+# and build `all` before every test command so registered tests always exist.
+ensure-tests:
+	@$(MAKE) build \
+		BUILD_TYPE="$(BUILD_TYPE)" \
+		BUILD_ROOT="$(BUILD_ROOT)" \
+		ENABLE_TESTS=ON \
+		ENABLE_LLVM="$(ENABLE_LLVM)" \
+		LLVM_LINK_TARGETS="$(LLVM_LINK_TARGETS)"
+
+test: ensure-tests
 	ctest \
 		--test-dir "$(CONFIG_DIR)" \
 		--output-on-failure \
 		--parallel
 
 
-unit: $(RECURLOOP)
+unit: ensure-tests
 	ctest \
 		--test-dir "$(CONFIG_DIR)" \
 		-R '\[Unit\]' \
@@ -377,7 +394,7 @@ unit: $(RECURLOOP)
 		--parallel
 
 
-feature: $(RECURLOOP)
+feature: ensure-tests
 	ctest \
 		--test-dir "$(CONFIG_DIR)" \
 		-R '\[Feature\]' \

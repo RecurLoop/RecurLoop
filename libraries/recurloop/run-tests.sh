@@ -15,7 +15,7 @@ RECURLOOP=$(readlink -f "$RECURLOOP")
 run_ok() {
     local name=$1
     local actual="$TMP/$name.out"
-    "$RECURLOOP" --bootstrap --import "$IMAGE" --file "$DIR/tests/$name.rl" >"$actual"
+    "$RECURLOOP" --language-image "$IMAGE" --file "$DIR/tests/$name.rl" >"$actual"
     diff -u "$DIR/tests/$name.expected" "$actual"
     printf '[minimal-core] %-20s ok\n' "$name"
 }
@@ -34,8 +34,13 @@ do
     run_ok "$name"
 done
 
-# Also prove that the produced image is usable from the ordinary compatibility
-# startup path; importing the image replaces the language lexicon.
+# Prove that the image is independently usable without installing the legacy
+# language first. --language-image starts from the fixed bootstrap only.
+"$RECURLOOP" --language-image "$IMAGE" --file "$DIR/tests/functions-control.rl" >"$TMP/image.out"
+diff -u "$DIR/tests/functions-control.expected" "$TMP/image.out"
+printf '[minimal-core] %-20s ok\n' 'language-image'
+
+# Keep compatibility import covered while the old default language still exists.
 "$RECURLOOP" --import "$IMAGE" --file "$DIR/tests/functions-control.rl" >"$TMP/compat.out"
 diff -u "$DIR/tests/functions-control.expected" "$TMP/compat.out"
 printf '[minimal-core] %-20s ok\n' 'compat-import'

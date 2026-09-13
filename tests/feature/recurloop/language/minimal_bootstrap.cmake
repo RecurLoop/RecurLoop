@@ -19,7 +19,7 @@ if (NOT EXISTS "${IMAGE}")
 endif()
 
 execute_process(
-    COMMAND "${PROGRAM}" --bootstrap --import "${IMAGE}" --file "${TEST_SOURCE}"
+    COMMAND "${PROGRAM}" --language-image "${IMAGE}" --file "${TEST_SOURCE}"
     WORKING_DIRECTORY "${REPOSITORY_ROOT}"
     RESULT_VARIABLE run_rc
     OUTPUT_VARIABLE actual
@@ -30,6 +30,21 @@ endif()
 file(READ "${EXPECTED_FILE}" expected)
 if (NOT actual STREQUAL expected)
     message(FATAL_ERROR "source-defined core output mismatch\nexpected:\n${expected}\nactual:\n${actual}")
+endif()
+
+# The language image path must not install the legacy language.  A phrase that
+# exists only in compatibility startup must still be unavailable after restore.
+execute_process(
+    COMMAND "${PROGRAM}" --language-image "${IMAGE}" --string "print 1"
+    WORKING_DIRECTORY "${REPOSITORY_ROOT}"
+    RESULT_VARIABLE legacy_rc
+    OUTPUT_QUIET
+    ERROR_VARIABLE legacy_err)
+if (legacy_rc EQUAL 0)
+    message(FATAL_ERROR "language-image startup unexpectedly installed legacy 'print'")
+endif()
+if (NOT legacy_err MATCHES "unknown source form|undefined phrase")
+    message(FATAL_ERROR "language-image rejected legacy 'print' for an unexpected reason: ${legacy_err}")
 endif()
 
 # Keep the bootstrap surface intentionally small: these ordinary-language

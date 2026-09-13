@@ -316,22 +316,38 @@ namespace recurloop {
     context.actions().define("lookup.enter", context::Lookup::enter);
     context::Lookup::enter(context, root);
 
-    bool bootstrapLanguage = false;
-    if (context.exec.args.index < context.exec.args.count &&
-        std::string_view(context.exec.args.ptr[context.exec.args.index]) == "--bootstrap") {
-      bootstrapLanguage = true;
-      ++context.exec.args.index;
+    enum class StartupLanguage { Compatibility, Bootstrap, Image };
+    StartupLanguage startupLanguage = StartupLanguage::Compatibility;
+    std::string languageImage;
+
+    if (context.exec.args.index < context.exec.args.count) {
+      const std::string_view option(context.exec.args.ptr[context.exec.args.index]);
+      if (option == "--bootstrap") {
+        startupLanguage = StartupLanguage::Bootstrap;
+        ++context.exec.args.index;
+      } else if (option == "--language-image") {
+        startupLanguage = StartupLanguage::Image;
+        if (++context.exec.args.index >= context.exec.args.count) THROW(, "--language-image requires a path")
+        languageImage = context.exec.args.ptr[context.exec.args.index++];
+      }
     }
 
-    if (bootstrapLanguage)
-      Language::setupBootstrap(context);
-    else
+    // A source-defined language image is restored on top of the small fixed
+    // bootstrap, never on top of the compatibility language.  The bootstrap
+    // supplies only the native actions/ABI that the serialized language was
+    // built against; the imported image supplies the actual language surface.
+    if (startupLanguage == StartupLanguage::Compatibility) {
       Language::setup(context);
+    } else {
+      Language::setupBootstrap(context);
+      if (startupLanguage == StartupLanguage::Image) EngineImage::load(context, languageImage);
+    }
 
     while (context.exec.args.index < context.exec.args.count &&
            (std::string_view(context.exec.args.ptr[context.exec.args.index]) == "--import" ||
             std::string_view(context.exec.args.ptr[context.exec.args.index]) == "--engine-image")) {
-      if (++context.exec.args.index >= context.exec.args.count) THROW(, "--import requires a path")
+      const std::string_view option(context.exec.args.ptr[context.exec.args.index++]);
+      if (context.exec.args.index >= context.exec.args.count) THROW(, option << " requires a path")
       EngineImage::load(context, context.exec.args.ptr[context.exec.args.index++]);
     }
 
