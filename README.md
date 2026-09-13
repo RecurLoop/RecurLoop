@@ -678,9 +678,8 @@ language can be started without installing the legacy language first:
 make minimal-core
 build/Debug/bin/recurloop --language-image /tmp/recurloop-core.rli --file program.rl
 make core-parity
+make bootstrap-contract
 ```
 
-`make core-parity` compares selected semantics through the compatibility and
-source-defined paths. Legacy C++ language components are removed only after the
-corresponding library surface reaches parity.
+`make core-parity` compares exit status/stdout/stderr across eight selected areas, including four real getting-started examples. `make bootstrap-contract` verifies that the fixed `BootstrapLanguage` surface stays separate from the compatibility language. Legacy C++ language components are removed only after the corresponding library surface reaches parity.
 

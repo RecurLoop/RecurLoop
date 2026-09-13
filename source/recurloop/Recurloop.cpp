@@ -2,6 +2,7 @@
   #define __RECURLOOP_RECURLOOP_CPP
   #include <recurloop/Recurloop.hpp>
   #include <recurloop/Assembler.hpp>
+  #include <recurloop/BootstrapLanguage.hpp>
   #include <recurloop/Debugger.hpp>
   #include <recurloop/Execution.hpp>
   #include <recurloop/EngineImage.hpp>
@@ -339,7 +340,7 @@ namespace recurloop {
     if (startupLanguage == StartupLanguage::Compatibility) {
       Language::setup(context);
     } else {
-      Language::setupBootstrap(context);
+      BootstrapLanguage::setup(context);
       if (startupLanguage == StartupLanguage::Image) EngineImage::load(context, languageImage);
     }
 

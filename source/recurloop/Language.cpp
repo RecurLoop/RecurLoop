@@ -3,6 +3,7 @@
   #include "LanguageInternal.hpp"
 
   #include <recurloop/BitString.hpp>
+  #include <recurloop/BootstrapLanguage.hpp>
   #include <recurloop/Blocks.hpp>
   #include <recurloop/ControlFlow.hpp>
   #include <recurloop/ContextApi.hpp>
@@ -203,7 +204,7 @@ namespace recurloop {
     }
   } // namespace
 
-  void Language::setupBootstrap(context::Context &context) {
+  void BootstrapLanguage::setup(context::Context &context) {
     // The bootstrap language is deliberately small.  It exists only so source
     // libraries can construct the real RecurLoop language without a second
     // compiler/IR or the old stack-style stage-0 assembler.

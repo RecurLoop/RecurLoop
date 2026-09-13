@@ -3,7 +3,6 @@ recur {
         if value <= 1 { return 1 }
         return value * factorial(value - 1)
     }
-
     fn sum_to(value:i64) -> i64 {
         var current = value
         var total = 0
@@ -13,7 +12,9 @@ recur {
         }
         return total
     }
-
-    if factorial(6) != 720 { return 11 }
-    if sum_to(10) != 55 { return 12 }
+    const first = factorial(6)
+    const second = sum_to(10)
+    if first != 720 || second != 55 { return 1 }
+    printf("factorial(6) = %lld\n", first)
+    printf("sum_to(10) = %lld\n", second)
 }

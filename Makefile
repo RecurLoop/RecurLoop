@@ -36,6 +36,7 @@ ARGS ?= --file program.rl.example
 	minimal-core \
 	minimal-core-test \
 	core-parity \
+	bootstrap-contract \
 	clean
 
 
@@ -55,6 +56,7 @@ help:
 	@echo '  make minimal-core                  Build source-defined core with --bootstrap'
 	@echo '  make minimal-core-test             Build and test the source-defined core'
 	@echo '  make core-parity                   Compare legacy and source-core semantics'
+	@echo '  make bootstrap-contract             Verify the fixed host bootstrap surface'
 	@echo
 	@echo 'Debug is the default build type for build, run, examples, and tests.'
 	@echo 'To use Release with LLVM:'
@@ -362,6 +364,9 @@ minimal-core-test: $(RECURLOOP)
 
 core-parity: $(RECURLOOP)
 	@libraries/recurloop/run-parity.sh "$(abspath $(RECURLOOP))" /tmp/recurloop-core.rli
+
+bootstrap-contract: $(RECURLOOP)
+	@libraries/recurloop/check-bootstrap.sh "$(abspath $(RECURLOOP))"
 
 
 # ---------------------------------------------------------------------------

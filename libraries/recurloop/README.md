@@ -27,6 +27,7 @@ Build and verify:
 make minimal-core
 make minimal-core-test
 make core-parity
+make bootstrap-contract
 ```
 
 After the image exists, run it without installing the compatibility language:
@@ -38,8 +39,7 @@ build/Debug/bin/recurloop --language-image /tmp/recurloop-core.rli \
 
 `--language-image` starts from the fixed bootstrap ABI and restores the source-defined
 language image directly. It does not call the normal compatibility `Language::setup`.
-The parity target currently compares functions/recursion, ordinary control flow, and
-records/methods through both the legacy and source-defined paths.
+The parity target currently covers eight areas. Four use the real getting-started examples as the compatibility reference: functions/recursion, ordinary control flow, records/methods, and lifetime/null. Focused cases additionally cover defer ordering, function values, pointer/null expressions, and native extern interop. See `PARITY.md`.
 
 or directly:
 
@@ -49,7 +49,7 @@ build/Debug/bin/recurloop --bootstrap --import /tmp/recurloop-core.rli \
   --file libraries/recurloop/tests/functions-control.rl
 ```
 
-The old language remains the default compatibility path.  It should only be
+The fixed host surface is owned by `BootstrapLanguage::setup()` and is tested independently by `make bootstrap-contract`. The old language remains the default compatibility path.  It should only be
 removed feature-by-feature after `core-parity`, the old complete test suite, and
 all examples remain green.  The overlay applier supports explicit file deletion,
 but no C++ language implementation is removed before that condition is met.
