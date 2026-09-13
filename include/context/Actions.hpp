@@ -4,6 +4,8 @@
 
 #include <string>
 #include <string_view>
+#include <utility>
+#include <vector>
 
 namespace context {
   // Stable names are the relocation boundary between persisted language
@@ -18,6 +20,8 @@ namespace context {
     Action get(std::string_view name) const;
     std::string name(Action action) const;
     bool contains(std::string_view name) const;
+    std::vector<std::pair<std::string, Action>> snapshot() const;
+    void restore(const std::vector<std::pair<std::string, Action>> &entries);
     void typePhrases();
 
   private:

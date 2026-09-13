@@ -1,4 +1,5 @@
 #include <recurloop/Recurloop.hpp>
+#include <recurloop/EmbeddedCore.hpp>
 
 static void printHelp(const char *program) {
   std::cout << "Recurloop\n\n"
@@ -11,11 +12,8 @@ static void printHelp(const char *program) {
                "  -v, --version         Show version information and exit\n"
                "  -f, --file <path>     Read source code from file\n"
                "  -s, --string <code>   Read source code from command line\n"
-               "  --bootstrap           Start with the small host bootstrap language\n"
-               "  --language-image <path>\n"
-               "                        Start from bootstrap and restore this language image\n"
-               "  --import <path>       Import an engine image before sources\n"
-               "  --engine-image <path> Compatibility alias for --import\n"
+               "  --reset               Reset language state to the empty host kernel\n"
+               "  --import <path>       Import an engine image before source input\n"
                "  -                     Read source code from standard input\n"
                "                        (interactive line editing on a terminal)\n";
 }
@@ -74,7 +72,7 @@ int main(int argc, char *argv[]) {
   int result = 0;
 
   try {
-    result = recurloop::Recurloop().initialize(argc, argv).execute();
+    result = recurloop::Recurloop().initializeEmbedded(argc, argv, recurloop::embedded::coreImage()).execute();
   } catch (const Exception &error) {
     result = error.status();
     std::cerr << RED_TEXT;

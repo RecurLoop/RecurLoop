@@ -66,6 +66,7 @@ if(ENABLE_TESTS_FEATURE)
         add_test(NAME "[Feature] ${test_name}"
             COMMAND "${CMAKE_COMMAND}"
                 "-DPROGRAM=$<TARGET_FILE:Recurloop>"
+                "-DCORE_IMAGE=${RECURLOOP_CORE_IMAGE}"
                 "-DLLVM_BACKEND=${RECURLOOP_ENABLE_LLVM}"
                 -P "${feature_test}")
     endforeach()

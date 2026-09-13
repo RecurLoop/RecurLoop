@@ -25,15 +25,15 @@ endif()
 set(RECURLOOP_INCLUDE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/include")
 set(RECURLOOP_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/source")
 
-# Embed source-defined compatibility libraries so the installed executable does
-# not depend on the source tree at runtime. The .rl file remains the single
-# editable source of the migrated language subsystem.
-file(READ "${CMAKE_CURRENT_SOURCE_DIR}/libraries/recurloop/compat/control-flow.rl"
-     RECURLOOP_COMPAT_CONTROL_FLOW_SOURCE)
+# Embed source-defined core layers needed by the private clean-build builder.
+# The final executable embeds the resulting core.rli and does not depend on the
+# source tree at runtime.
+file(READ "${CMAKE_CURRENT_SOURCE_DIR}/libraries/recurloop/core/control-flow.rl"
+     RECURLOOP_CORE_CONTROL_FLOW_SOURCE)
 file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/generated/recurloop")
 configure_file(
-    "${CMAKE_CURRENT_SOURCE_DIR}/cmake/EmbeddedCompatibilityLibraries.hpp.in"
-    "${CMAKE_CURRENT_BINARY_DIR}/generated/recurloop/EmbeddedCompatibilityLibraries.hpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/cmake/EmbeddedCoreLayers.hpp.in"
+    "${CMAKE_CURRENT_BINARY_DIR}/generated/recurloop/EmbeddedCoreLayers.hpp"
     @ONLY)
 
 if(NOT DEFINED CMAKE_ARCHIVE_OUTPUT_DIRECTORY)
@@ -83,10 +83,52 @@ add_library(RecurloopLib STATIC ${recurloop_sources})
 target_include_directories(RecurloopLib PRIVATE "${RECURLOOP_INCLUDE_DIR}" "${RECURLOOP_SOURCE_DIR}" "${CMAKE_CURRENT_BINARY_DIR}/generated")
 set_target_properties(RecurloopLib PROPERTIES FOLDER "Libraries")
 
-add_executable(Recurloop "${RECURLOOP_SOURCE_DIR}/main.cpp")
+# The private builder exists only to create the first core image from a clean
+# checkout. It is not installed and has no special public CLI surface.
+add_executable(RecurloopCoreBuilder "${RECURLOOP_SOURCE_DIR}/core_builder_main.cpp")
+target_include_directories(RecurloopCoreBuilder PRIVATE "${RECURLOOP_INCLUDE_DIR}" "${RECURLOOP_SOURCE_DIR}")
+set_target_properties(RecurloopCoreBuilder PROPERTIES
+    OUTPUT_NAME recurloop-core-builder
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/tools"
+    FOLDER "Build tools")
+target_link_libraries(RecurloopCoreBuilder PRIVATE RecurloopLib)
+
+set(RECURLOOP_CORE_BUILD_DIR "${CMAKE_CURRENT_BINARY_DIR}/generated/core")
+set(RECURLOOP_CORE_IMAGE "${RECURLOOP_CORE_BUILD_DIR}/core.rli")
+set(RECURLOOP_EMBEDDED_CORE_CPP "${CMAKE_CURRENT_BINARY_DIR}/generated/recurloop/EmbeddedCore.cpp")
+file(MAKE_DIRECTORY "${RECURLOOP_CORE_BUILD_DIR}")
+
+add_custom_command(
+    OUTPUT "${RECURLOOP_CORE_IMAGE}"
+    COMMAND "${CMAKE_COMMAND}" -E rm -f "${RECURLOOP_CORE_IMAGE}"
+    COMMAND "$<TARGET_FILE:RecurloopCoreBuilder>"
+            --file "${CMAKE_CURRENT_SOURCE_DIR}/libraries/recurloop/core.rl"
+    WORKING_DIRECTORY "${RECURLOOP_CORE_BUILD_DIR}"
+    DEPENDS
+        RecurloopCoreBuilder
+        "${CMAKE_CURRENT_SOURCE_DIR}/libraries/recurloop/core.rl"
+        "${CMAKE_CURRENT_SOURCE_DIR}/libraries/recurloop/core/control-flow.rl"
+    COMMENT "Building core.rli"
+    VERBATIM)
+
+add_custom_command(
+    OUTPUT "${RECURLOOP_EMBEDDED_CORE_CPP}"
+    COMMAND "${CMAKE_COMMAND}"
+            "-DINPUT=${RECURLOOP_CORE_IMAGE}"
+            "-DOUTPUT=${RECURLOOP_EMBEDDED_CORE_CPP}"
+            -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/EmbedCoreImage.cmake"
+    DEPENDS "${RECURLOOP_CORE_IMAGE}" "${CMAKE_CURRENT_SOURCE_DIR}/cmake/EmbedCoreImage.cmake"
+    COMMENT "Embedding core.rli"
+    VERBATIM)
+
+add_custom_target(RecurloopCoreImage DEPENDS "${RECURLOOP_CORE_IMAGE}")
+
+add_executable(Recurloop
+    "${RECURLOOP_SOURCE_DIR}/main.cpp"
+    "${RECURLOOP_EMBEDDED_CORE_CPP}")
 target_include_directories(Recurloop PRIVATE "${RECURLOOP_INCLUDE_DIR}" "${RECURLOOP_SOURCE_DIR}")
-set_target_properties(Recurloop PROPERTIES OUTPUT_NAME recurloop)
-set_target_properties(Recurloop PROPERTIES FOLDER "Executables")
+set_target_properties(Recurloop PROPERTIES OUTPUT_NAME recurloop FOLDER "Executables")
+target_link_libraries(Recurloop PRIVATE RecurloopLib)
 install(TARGETS Recurloop RUNTIME DESTINATION bin)
 
 target_link_libraries(RadixLib PRIVATE UtilitiesLib)
@@ -94,7 +136,6 @@ target_link_libraries(LexiconLib PRIVATE RadixLib)
 target_link_libraries(ContextLib PRIVATE LexiconLib)
 target_link_libraries(CompilerLib PRIVATE UtilitiesLib LexiconLib)
 target_link_libraries(RecurloopLib PRIVATE ContextLib CompilerLib)
-target_link_libraries(Recurloop PRIVATE RecurloopLib)
 
 if(RECURLOOP_ENABLE_LLVM)
     target_compile_definitions(RecurloopLib PRIVATE

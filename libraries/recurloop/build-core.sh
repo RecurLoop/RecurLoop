@@ -3,15 +3,19 @@ set -euo pipefail
 
 RECURLOOP=${1:-build/Debug/bin/recurloop}
 DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
-IMAGE=${2:-/tmp/recurloop-core.rli}
+IMAGE=${2:-core.rli}
+TMP=$(mktemp -d)
+trap 'rm -rf "$TMP"' EXIT
 
 [[ -x "$RECURLOOP" ]] || { echo "recurloop executable not found: $RECURLOOP" >&2; exit 2; }
 RECURLOOP=$(readlink -f "$RECURLOOP")
+IMAGE=$(readlink -m "$IMAGE")
+mkdir -p "$(dirname -- "$IMAGE")"
 
-rm -f /tmp/recurloop-core.rli "$IMAGE"
-"$RECURLOOP" --bootstrap --file "$DIR/core.rl"
-[[ -s /tmp/recurloop-core.rli ]] || { echo 'source-defined core image was not created' >&2; exit 1; }
-if [[ "$IMAGE" != /tmp/recurloop-core.rli ]]; then
-    cp /tmp/recurloop-core.rli "$IMAGE"
-fi
+(
+    cd "$TMP"
+    "$RECURLOOP" --file "$DIR/core.rl"
+)
+[[ -s "$TMP/core.rli" ]] || { echo 'core.rl did not create core.rli' >&2; exit 1; }
+mv "$TMP/core.rli" "$IMAGE"
 printf '%s\n' "$IMAGE"

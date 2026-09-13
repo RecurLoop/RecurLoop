@@ -2,11 +2,10 @@
   #define __RECURLOOP_RECURLOOP_CPP
   #include <recurloop/Recurloop.hpp>
   #include <recurloop/Assembler.hpp>
-  #include <recurloop/BootstrapLanguage.hpp>
   #include <recurloop/Debugger.hpp>
   #include <recurloop/Execution.hpp>
   #include <recurloop/EngineImage.hpp>
-  #include <recurloop/EmbeddedCompatibilityLibraries.hpp>
+  #include <recurloop/EmbeddedCoreLayers.hpp>
   #include <recurloop/TranslationUnits.hpp>
 
   #include <sys/mman.h>
@@ -299,16 +298,8 @@ namespace recurloop {
     } while (true);
   }
 
-  Recurloop &Recurloop::initialize(int argc, char **argv) {
-    initializeConfig(argc, argv);
-    initializeLexicon();
-    initializeRuntime();
-    initializeWorkspace();
-    context.translationUnits = std::make_shared<TranslationUnitRegistry>(context);
-
-    // Prepare Language
+  void Recurloop::initializeRoot() {
     lexicon::Phrase undefined(&context.lexicon);
-
     lexicon::Phrase root = context.lexicon.make(context::Lookup::enter)
                                .setType(undefined)
                                .enableSubdictionary()
@@ -316,74 +307,96 @@ namespace recurloop {
                                .save();
     root.setSuccessor(root).save();
     context.actions().define("lookup.enter", context::Lookup::enter);
+    context.lookup = {};
+    context.staging = {};
+    context.reference = {};
     context::Lookup::enter(context, root);
+    context::Staging::push(context, root);
+    context::Reference::in(context, root);
+  }
 
-    enum class StartupLanguage { Compatibility, Bootstrap, Image };
-    StartupLanguage startupLanguage = StartupLanguage::Compatibility;
-    std::string languageImage;
+  void Recurloop::initializeBase(int argc, char **argv) {
+    initializeConfig(argc, argv);
+    initializeLexicon();
+    initializeRuntime();
+    initializeWorkspace();
+    context.translationUnits = std::make_shared<TranslationUnitRegistry>(context);
+    initializeRoot();
+  }
 
-    if (context.exec.args.index < context.exec.args.count) {
+  void Recurloop::installCompatibilityLanguage() {
+    Language::setup(context);
+
+    // Control flow has already migrated out of C++. Keep the compatibility
+    // builder complete by loading the source implementation before snapshots
+    // or tests are executed.
+    lexicon::Phrase root = context.lexicon.phrase();
+    context.lookup = {};
+    context.staging = {};
+    context.reference = {};
+    context::Lookup::in(context, root);
+    context::Staging::push(context, root);
+    context::Reference::in(context, root);
+    executeSource(context, embedded::CoreControlFlow, "<embedded:core/control-flow.rl>", 1);
+    context.workspace.key.clear();
+    hostActions = context.actions().snapshot();
+  }
+
+  void Recurloop::resetToKernel() {
+    context.lexicon.clear();
+    context.workspace.key.clear();
+    context.workspace.code.clear();
+    context.exec.pendingException = nullptr;
+    context.exec.pendingNativeEntry = 0;
+    context.exec.pendingNativeSymbol.clear();
+    context.exec.definitionSymbolOverride.clear();
+    context.exec.pendingFunctionVariant.clear();
+    context.exec.pendingPhrasePayload.clear();
+    context.exec.hasPendingPhraseSerializable = false;
+    context.exec.hasPendingPhrasePermanent = false;
+    context.exec.hasPendingPhraseRewritable = false;
+    context.exec.invoked = nullptr;
+    initializeRoot();
+    context.actions().restore(hostActions);
+  }
+
+  void Recurloop::processStartupOperations() {
+    while (context.exec.args.index < context.exec.args.count) {
       const std::string_view option(context.exec.args.ptr[context.exec.args.index]);
-      if (option == "--bootstrap") {
-        startupLanguage = StartupLanguage::Bootstrap;
+      if (option == "--reset") {
         ++context.exec.args.index;
-      } else if (option == "--language-image") {
-        startupLanguage = StartupLanguage::Image;
-        if (++context.exec.args.index >= context.exec.args.count) THROW(, "--language-image requires a path")
-        languageImage = context.exec.args.ptr[context.exec.args.index++];
+        resetToKernel();
+        continue;
       }
+      if (option == "--import") {
+        if (++context.exec.args.index >= context.exec.args.count) THROW(, "--import requires a path")
+        EngineImage::load(context, context.exec.args.ptr[context.exec.args.index++]);
+        continue;
+      }
+      if (option == "--bootstrap" || option == "--language-image" || option == "--engine-image")
+        THROW(, "option '" << option << "' was removed; use --reset and --import")
+      break;
     }
+  }
 
-    // A source-defined language image is restored on top of the small fixed
-    // bootstrap, never on top of the compatibility language.  The bootstrap
-    // supplies only the native actions/ABI that the serialized language was
-    // built against; the imported image supplies the actual language surface.
-    if (startupLanguage == StartupLanguage::Compatibility) {
-      Language::setup(context);
-    } else {
-      BootstrapLanguage::setup(context);
-      if (startupLanguage == StartupLanguage::Image) EngineImage::load(context, languageImage);
-    }
+  Recurloop &Recurloop::initialize(int argc, char **argv) {
+    initializeBase(argc, argv);
+    installCompatibilityLanguage();
+    processStartupOperations();
+    return *this;
+  }
 
-    const auto resetRootContext = [&]() {
-      root = context.lexicon.phrase();
-      context.lookup = {};
-      context.staging = {};
-      context.reference = {};
-      context::Lookup::in(context, root);
-      context::Staging::push(context, root);
-      context::Reference::in(context, root);
-    };
+  Recurloop &Recurloop::initializeEmbedded(int argc, char **argv, std::span<const std::uint8_t> coreImage) {
+    initializeBase(argc, argv);
 
-    const bool startsWithImport =
-        context.exec.args.index < context.exec.args.count &&
-        (std::string_view(context.exec.args.ptr[context.exec.args.index]) == "--import" ||
-         std::string_view(context.exec.args.ptr[context.exec.args.index]) == "--engine-image");
-
-    if (startupLanguage == StartupLanguage::Compatibility && !startsWithImport) {
-      // Compatibility-only syntax that has already migrated out of C++ is
-      // installed from source when creating a fresh compatibility language.
-      // Full engine images already contain this source-defined surface, so an
-      // import restores it directly without recompiling the library under the
-      // imported syntax.
-      resetRootContext();
-      executeSource(context, embedded::CompatibilityControlFlow, "<embedded:compat/control-flow.rl>", 1);
-      // Source-defined compatibility actions compile through the ordinary
-      // language pipeline. Keep that compilation from leaking parser scratch
-      // state into the user program (the old C++ setup left this empty).
-      context.workspace.key.clear();
-    }
-
-    while (context.exec.args.index < context.exec.args.count &&
-           (std::string_view(context.exec.args.ptr[context.exec.args.index]) == "--import" ||
-            std::string_view(context.exec.args.ptr[context.exec.args.index]) == "--engine-image")) {
-      const std::string_view option(context.exec.args.ptr[context.exec.args.index++]);
-      if (context.exec.args.index >= context.exec.args.count) THROW(, option << " requires a path")
-      EngineImage::load(context, context.exec.args.ptr[context.exec.args.index++]);
-    }
-
-    if (context.staging.stack.empty()) resetRootContext();
-
+    // Until every remaining compatibility subsystem has migrated to source,
+    // use it once to register the process-local host ABI and native symbols.
+    // The language graph itself is then discarded; the runtime starts from
+    // the embedded core image, not from Language::setup().
+    installCompatibilityLanguage();
+    resetToKernel();
+    EngineImage::decode(context, coreImage);
+    processStartupOperations();
     return *this;
   }
 

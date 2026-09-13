@@ -1,0 +1,8 @@
+if(NOT DEFINED INPUT OR NOT DEFINED OUTPUT)
+    message(FATAL_ERROR "EmbedCoreImage.cmake requires INPUT and OUTPUT")
+endif()
+file(READ "${INPUT}" CORE_HEX HEX)
+string(LENGTH "${CORE_HEX}" CORE_HEX_LENGTH)
+math(EXPR CORE_BYTES "${CORE_HEX_LENGTH} / 2")
+string(REGEX REPLACE "([0-9A-Fa-f][0-9A-Fa-f])" "0x\\1," CORE_DATA "${CORE_HEX}")
+file(WRITE "${OUTPUT}" "#include <recurloop/EmbeddedCore.hpp>\n\n#include <array>\n\nnamespace recurloop::embedded {\n  namespace {\n    constexpr std::array<std::uint8_t, ${CORE_BYTES}> CoreBytes = {${CORE_DATA}};\n  }\n\n  std::span<const std::uint8_t> coreImage() { return CoreBytes; }\n}\n")

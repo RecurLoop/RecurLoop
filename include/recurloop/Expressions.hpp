@@ -26,7 +26,6 @@ namespace recurloop {
     Expressions() = delete;
 
     static void setup(context::Context &context);
-    static void setupBootstrap(context::Context &context);
     static context::Value evaluate(context::Context &context, std::string_view source);
     static context::Value evaluate(context::Context &context, std::string_view source, SourceLocation origin);
     static bool isBuiltin(context::Context &context, std::string_view name);

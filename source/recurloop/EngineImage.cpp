@@ -830,7 +830,9 @@ namespace recurloop {
         }
       }
 
+      const auto registeredActions = context.actions().snapshot();
       std::unordered_map<std::string, lexicon::Phrase::Action> actionPointers;
+      for (const auto &[name, pointer] : registeredActions) actionPointers.emplace(name, pointer);
       const auto preserveActions = [&](const std::vector<Record> &source) {
         for (const Record &record : source) {
           if (record.action && !record.actionName.empty())
@@ -963,6 +965,11 @@ namespace recurloop {
       }
 
       root.load();
+      // The action registry is process-local kernel state and is intentionally
+      // excluded from .rli images. Recreate the names used by the restored
+      // image after the lexicon replacement.
+      context.actions().restore(registeredActions);
+      context.actions().typePhrases();
       context::Values::setup(root);
       compiler::LanguageState::setup(root);
       context.lookup = {};

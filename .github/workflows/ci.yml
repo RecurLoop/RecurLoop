@@ -56,6 +56,9 @@ jobs:
       - name: Run all examples
         run: make examples BUILD_TYPE=Release
 
+      - name: Verify embedded/external core parity
+        run: make core-parity BUILD_TYPE=Release
+
       - name: Show built version
         run: build/Release/bin/recurloop --version
 

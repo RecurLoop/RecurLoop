@@ -1,11 +1,12 @@
-// RecurLoop source-defined core.
-// Build with: recurloop --bootstrap --file libraries/recurloop/core.rl
+// Canonical core image export.
 //
-// The fixed host bootstrap is intentionally small. These libraries grow the
-// language left-to-right and export a reusable engine image.
-include "bootstrap/seed.rl"
-include "core/10-support.rl"
-include "core/20-language-support.rl"
-include "core/30-records.rl"
-include "core/40-functions.rl"
-include "core/50-program.rl"
+// A clean build creates the first image with the private core builder. The
+// final recurloop executable embeds that image, so running this file with the
+// normal executable snapshots the currently embedded core again:
+//
+//   recurloop --file libraries/recurloop/core.rl
+//
+// The same file also closes the self-hosting loop explicitly:
+//
+//   recurloop --reset --import core.rli --file libraries/recurloop/core.rl
+engine export "core.rli"

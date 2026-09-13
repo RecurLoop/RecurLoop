@@ -321,51 +321,5 @@ namespace recurloop {
     bind("assert", assertTrue);
   }
 
-  void Expressions::setupBootstrap(context::Context &context) {
-    // Bootstrap needs the expression grammar and values for native function
-    // bodies, but it deliberately does not expose top-level var/const/set/
-    // print/assert commands.
-    context.actions().define("expressions.operator.prefix-positive", internal::prefixPositive);
-    context.actions().define("expressions.operator.prefix-negative", internal::prefixNegative);
-    context.actions().define("expressions.operator.prefix-not", internal::prefixLogicalNot);
-    context.actions().define("expressions.operator.infix-or", internal::infixLogicalOr);
-    context.actions().define("expressions.operator.infix-and", internal::infixLogicalAnd);
-    context.actions().define("expressions.operator.infix-equal", internal::infixEqual);
-    context.actions().define("expressions.operator.infix-not-equal", internal::infixNotEqual);
-    context.actions().define("expressions.operator.infix-less", internal::infixLess);
-    context.actions().define("expressions.operator.infix-less-equal", internal::infixLessEqual);
-    context.actions().define("expressions.operator.infix-greater", internal::infixGreater);
-    context.actions().define("expressions.operator.infix-greater-equal", internal::infixGreaterEqual);
-    context.actions().define("expressions.operator.infix-add", internal::infixAdd);
-    context.actions().define("expressions.operator.infix-subtract", internal::infixSubtract);
-    context.actions().define("expressions.operator.infix-multiply", internal::infixMultiply);
-    context.actions().define("expressions.operator.infix-divide", internal::infixDivide);
-    context.actions().define("expressions.operator.infix-modulo", internal::infixModulo);
-    context.actions().define("expressions.builtin.str", internal::builtinStr);
-    context.actions().define("expressions.builtin.type", internal::builtinType);
-    context.actions().define("expressions.builtin.len", internal::builtinLen);
-    context.actions().define("expressions.builtin.upper", internal::builtinUpper);
-    context.actions().define("expressions.builtin.lower", internal::builtinLower);
-    context.actions().define("expressions.builtin.trim", internal::builtinTrim);
-    context.actions().define("expressions.builtin.contains", internal::builtinContains);
-    context.actions().define("expressions.builtin.starts-with", internal::builtinStartsWith);
-    context.actions().define("expressions.builtin.ends-with", internal::builtinEndsWith);
-    context.actions().define("expressions.builtin.substr", internal::builtinSubstr);
-    context.actions().define("expressions.builtin.replace", internal::builtinReplace);
-    context.actions().define("expressions.builtin.value", internal::builtinValue);
-    context.actions().define("expressions.literal.true", internal::literalTrue);
-    context.actions().define("expressions.literal.false", internal::literalFalse);
-    context.actions().define("expressions.literal.null", internal::literalNull);
-    context.actions().define("expressions.variable", variable);
-    context.actions().define("expressions.constant", constant);
-    context.actions().define("expressions.assign", assign);
-    context.actions().define("expressions.assign-bound", internal::assignBound);
-    context.actions().define("expressions.print", print);
-    context.actions().define("expressions.assert", assertTrue);
-    lexicon::Phrase root = context.lexicon.phrase();
-    internal::setupExpressionGrammar(root);
-    PhraseNames::setup(context);
-    context::Values::setup(root);
-  }
 
 } // namespace recurloop

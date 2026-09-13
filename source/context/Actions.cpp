@@ -29,7 +29,9 @@ namespace context {
     lexicon::Phrase types = exact(root, "phrase-types");
     lexicon::Phrase data = exact(types, "data");
     if (!data.isNull()) draft.setType(data);
-    return draft.save();
+    lexicon::Phrase result = draft.save();
+    result.setSerializable(false).save();
+    return result;
   }
 
   void Actions::define(std::string name, Action action) {
@@ -70,6 +72,22 @@ namespace context {
   bool Actions::contains(std::string_view name) const {
     lexicon::Phrase found = exact(registry(false), name);
     return !found.isNull() && found.containsAction();
+  }
+
+  std::vector<std::pair<std::string, Actions::Action>> Actions::snapshot() const {
+    std::vector<std::pair<std::string, Action>> result;
+    lexicon::Phrase actions = registry(false);
+    if (actions.isNull()) return result;
+    auto populated = [](radix::Node *, radix::Node *candidate) { return !candidate->isEmpty(); };
+    for (lexicon::Dictionary cursor = actions.fore(populated); !cursor.isNull(); cursor = cursor.next(populated)) {
+      lexicon::Phrase phrase = cursor.getPhrase();
+      if (!phrase.isNull() && phrase.containsAction()) result.emplace_back(phrase.getKey(), phrase.getAction());
+    }
+    return result;
+  }
+
+  void Actions::restore(const std::vector<std::pair<std::string, Action>> &entries) {
+    for (const auto &[name, action] : entries) define(name, action);
   }
 
   void Actions::typePhrases() {

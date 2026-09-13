@@ -550,6 +550,9 @@ See [`examples/README.md`](examples/README.md) for the full learning path.
 
 ## Command line
 
+The final executable embeds the standard `core.rli`, so ordinary source files
+need no language/bootstrap flags:
+
 ```text
 Recurloop [options] [file...]
 
@@ -557,10 +560,27 @@ Recurloop [options] [file...]
   -v, --version         Show version and exit
   -f, --file <path>     Read source from a file
   -s, --string <code>   Read source from the command line
-  --import <path>       Import an engine image before sources
-  --engine-image <path> Compatibility alias for --import
+  --import <path>       Import an additional engine image
+  --reset               Clear the embedded language back to the host kernel
   -                     Read standard input; interactive on a terminal
 ```
+
+Normal execution starts from the embedded core:
+
+```bash
+recurloop --file program.rl
+recurloop --import shell.rli --file program.rl
+```
+
+To start from an empty language state and explicitly choose the image to load:
+
+```bash
+recurloop --reset --import core.rli --file program.rl
+```
+
+`--reset` and `--import` are state-selection operations and must appear before
+the first source input. Engine images do not contain a special `root`, `core`,
+or `bootstrap` kind; an image is simply imported into the current state.
 
 With no arguments, RecurLoop starts the interactive standard-input mode.
 
@@ -652,34 +672,32 @@ license. See [`TRADEMARKS.md`](TRADEMARKS.md) for the trademark policy.
 
 Contributions are described in [`CONTRIBUTING.md`](CONTRIBUTING.md).
 
-## Minimal bootstrap and source-defined core
+## Core image and self-hosted rebuild
 
-The compatibility language remains the default.  A parallel migration path is
-available with `--bootstrap`: the host installs only the small implementation
-language needed to build source libraries, and `libraries/recurloop/core.rl`
-grows the language from source into `/tmp/recurloop-core.rli`.
+`core.rli` is the standard RecurLoop language image. A clean build creates it
+once with a private, non-installed builder, embeds those exact bytes in the
+final `recurloop` executable, and then uses the embedded image for ordinary
+execution.
+
+```text
+C++ host -> private core builder -> core.rl -> core.rli -> embed -> recurloop
+```
+
+The public rebuild path uses the final executable itself:
 
 ```bash
-make minimal-core
-make minimal-core-test
+make core
+
+# Equivalent explicit forms:
+recurloop --file libraries/recurloop/core.rl
+recurloop --reset --import core.rli --file libraries/recurloop/core.rl
 ```
 
-This path is additive: the compatibility C++ language is not removed until the
-source-defined libraries reach feature parity and the complete legacy test and
-example suite stays green.
+`libraries/recurloop/core.rl` exports `core.rli`, so an existing core image is
+the bootstrap for the next one. There is no public `--bootstrap`,
+`--language-image`, `--engine-image`, `--core`, or `--no-core` mode.
 
-### Source-defined core migration
-
-The compatibility language remains the default. A small fixed bootstrap can build
-`libraries/recurloop/core.rl` into `/tmp/recurloop-core.rli`, and the resulting
-language can be started without installing the legacy language first:
-
-```sh
-make minimal-core
-build/Debug/bin/recurloop --language-image /tmp/recurloop-core.rli --file program.rl
-make core-parity
-make bootstrap-contract
-```
-
-`make core-parity` compares exit status/stdout/stderr across eight selected areas, including four real getting-started examples. `make bootstrap-contract` verifies that the fixed `BootstrapLanguage` surface stays separate from the compatibility language. Legacy C++ language components are removed only after the corresponding library surface reaches parity.
-
+The migration keeps reducing the private compatibility builder subsystem by
+subsystem. The runtime interface is already the target interface: embedded core
+by default, `--reset` for a clean language state, `--import` for images, and
+`--file`/`--string`/stdin for source.
