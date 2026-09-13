@@ -25,6 +25,17 @@ endif()
 set(RECURLOOP_INCLUDE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/include")
 set(RECURLOOP_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/source")
 
+# Embed source-defined compatibility libraries so the installed executable does
+# not depend on the source tree at runtime. The .rl file remains the single
+# editable source of the migrated language subsystem.
+file(READ "${CMAKE_CURRENT_SOURCE_DIR}/libraries/recurloop/compat/control-flow.rl"
+     RECURLOOP_COMPAT_CONTROL_FLOW_SOURCE)
+file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/generated/recurloop")
+configure_file(
+    "${CMAKE_CURRENT_SOURCE_DIR}/cmake/EmbeddedCompatibilityLibraries.hpp.in"
+    "${CMAKE_CURRENT_BINARY_DIR}/generated/recurloop/EmbeddedCompatibilityLibraries.hpp"
+    @ONLY)
+
 if(NOT DEFINED CMAKE_ARCHIVE_OUTPUT_DIRECTORY)
     set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib")
 endif()
@@ -69,7 +80,7 @@ if(RECURLOOP_ENABLE_LLVM)
     list(APPEND recurloop_sources "${RECURLOOP_SOURCE_DIR}/recurloop/LlvmBackend.cpp")
 endif()
 add_library(RecurloopLib STATIC ${recurloop_sources})
-target_include_directories(RecurloopLib PRIVATE "${RECURLOOP_INCLUDE_DIR}" "${RECURLOOP_SOURCE_DIR}")
+target_include_directories(RecurloopLib PRIVATE "${RECURLOOP_INCLUDE_DIR}" "${RECURLOOP_SOURCE_DIR}" "${CMAKE_CURRENT_BINARY_DIR}/generated")
 set_target_properties(RecurloopLib PROPERTIES FOLDER "Libraries")
 
 add_executable(Recurloop "${RECURLOOP_SOURCE_DIR}/main.cpp")

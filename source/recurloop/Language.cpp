@@ -5,7 +5,6 @@
   #include <recurloop/BitString.hpp>
   #include <recurloop/BootstrapLanguage.hpp>
   #include <recurloop/Blocks.hpp>
-  #include <recurloop/ControlFlow.hpp>
   #include <recurloop/ContextApi.hpp>
   #include <recurloop/Engine.hpp>
   #include <recurloop/Expressions.hpp>
@@ -327,7 +326,6 @@ namespace recurloop {
     TypeSyntax::setup(context);
     Typed::setup(context);
     Expressions::setup(context);
-    ControlFlow::setup(context);
     Functions::setup(context);
     PhraseDefinition::setup(context);
     lexicon::Phrase phrase = root;

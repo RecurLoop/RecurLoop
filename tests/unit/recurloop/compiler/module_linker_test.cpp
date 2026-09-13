@@ -233,6 +233,8 @@ TEST(TypeSystemTesting, LaysOutStructuresArraysMethodsAndPointerChains) {
 TEST(LanguageImageTesting, RoundTripsTypesFunctionsConventionsAndNativeActions) {
   LanguageHost host;
   compiler::LanguageState language = host.language();
+  const std::vector<std::string> baselineNativeActions =
+      compiler::LanguageImage::decode(compiler::LanguageImage::encode(language)).nativeActions;
   const compiler::TypeId point = language.types.defineStructure(
       "Point", std::array{compiler::FieldDeclaration{"x", language.types.find("i32")},
                           compiler::FieldDeclaration{"next", language.types.pointerTo(language.types.find("u8"))}});
@@ -277,7 +279,9 @@ TEST(LanguageImageTesting, RoundTripsTypesFunctionsConventionsAndNativeActions) 
   EXPECT_EQ(decodedMove->convention.integerRegisters, (std::vector<std::string>{"r10"}));
   EXPECT_EQ(decodedMove->convention.stackAlignment, 32u);
   EXPECT_FALSE(decodedMove->convention.stackGrowsDown);
-  EXPECT_EQ(decoded.nativeActions, (std::vector<std::string>{"move"}));
+  auto expectedNativeActions = baselineNativeActions;
+  expectedNativeActions.push_back("move");
+  EXPECT_EQ(decoded.nativeActions, expectedNativeActions);
 
   compiler::Module embedded;
   compiler::LanguageImage::embed(language, embedded);

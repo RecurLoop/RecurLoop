@@ -50,6 +50,7 @@ namespace recurloop {
     constexpr std::string_view SourceAdvance{"context:source:advance"};
     constexpr std::string_view SourceMatch{"context:source:match"};
     constexpr std::string_view SourceRoot{"context:source:root"};
+    constexpr std::string_view SourceConsume{"context:source:consume"};
     constexpr std::string_view SyntaxDictionary{"context:syntax:dictionary"};
     constexpr std::string_view SyntaxActive{"context:syntax:active"};
     constexpr std::string_view SyntaxData{"context:syntax:data"};
@@ -76,6 +77,7 @@ namespace recurloop {
     constexpr std::string_view DiagnosticErrorAt{"context:diagnostic:error:at"};
     constexpr std::string_view ExpressionFormat{"context:expression:format"};
     constexpr std::string_view ExpressionFormatAt{"context:expression:format:at"};
+    constexpr std::string_view ExpressionBooleanAt{"context:expression:boolean:at"};
     constexpr std::string_view ValueContains{"context:value:contains"};
     constexpr std::string_view ValueFormat{"context:value:format"};
     constexpr std::string_view ValueDefineText{"context:value:define:text"};
@@ -1045,6 +1047,13 @@ namespace recurloop {
       delete block;
     }
 
+    extern "C" std::uint64_t contextSourceConsume(context::Context *context, const std::uint8_t *keyword) noexcept {
+      return checked(context, std::uint64_t{0}, [&](context::Context &value) {
+        if (keyword == nullptr) THROW(, "context source consume received a null spelling")
+        return static_cast<std::uint64_t>(Blocks::consume(value, reinterpret_cast<const char *>(keyword)));
+      });
+    }
+
     extern "C" std::uint64_t contextDiagnosticError(context::Context *context, const std::uint8_t *message) noexcept {
       if (context == nullptr || context->exec.pendingException) return 0;
       try {
@@ -1097,6 +1106,18 @@ namespace recurloop {
                                                          const std::uint8_t *source) noexcept {
       if (source == nullptr) return nullptr;
       return contextExpressionFormat(context, source, 0, std::strlen(reinterpret_cast<const char *>(source)));
+    }
+
+    extern "C" std::uint64_t contextExpressionBooleanAt(context::Context *context, const std::uint8_t *source,
+                                                         const std::uint8_t *path, std::uint64_t line,
+                                                         std::uint64_t column) noexcept {
+      if (source == nullptr) return 0;
+      return checked(context, std::uint64_t{0}, [&](context::Context &value) {
+        const SourceLocation origin{path == nullptr ? value.source.path : reinterpret_cast<const char *>(path), line,
+                                    column};
+        return static_cast<std::uint64_t>(
+            Expressions::evaluate(value, reinterpret_cast<const char *>(source), origin).asBoolean());
+      });
     }
 
     extern "C" std::uint64_t contextValueContains(context::Context *context, const std::uint8_t *name) noexcept {
@@ -1657,6 +1678,8 @@ namespace recurloop {
                         reinterpret_cast<std::uintptr_t>(&contextSourceAdvance));
     declareHostFunction(context, SourceRoot, "context:source:root", {contextPointer}, u64,
                         reinterpret_cast<std::uintptr_t>(&contextSourceRoot));
+    declareHostFunction(context, SourceConsume, "context:source:consume", {contextPointer, bytePointer}, u64,
+                        reinterpret_cast<std::uintptr_t>(&contextSourceConsume));
     declareHostFunction(context, SourceMatch, "context:source:match", {contextPointer, u64, u64}, u64,
                         reinterpret_cast<std::uintptr_t>(&contextSourceMatch));
     declareHostFunction(context, "context:source:match:exact", "context:source:match:exact", {contextPointer, u64}, u64,
@@ -1766,6 +1789,9 @@ namespace recurloop {
     declareHostFunction(context, ExpressionFormatAt, "context:expression:format:at",
                         {contextPointer, bytePointer, u64, u64, bytePointer, u64, u64}, bytePointer,
                         reinterpret_cast<std::uintptr_t>(&contextExpressionFormatAt));
+    declareHostFunction(context, ExpressionBooleanAt, "context:expression:boolean:at",
+                        {contextPointer, bytePointer, bytePointer, u64, u64}, u64,
+                        reinterpret_cast<std::uintptr_t>(&contextExpressionBooleanAt));
     declareHostFunction(context, ValueContains, "context:value:contains", {contextPointer, bytePointer}, u64,
                         reinterpret_cast<std::uintptr_t>(&contextValueContains));
     declareHostFunction(context, ValueFormat, "context:value:format", {contextPointer, bytePointer}, bytePointer,

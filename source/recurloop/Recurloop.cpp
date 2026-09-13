@@ -6,6 +6,7 @@
   #include <recurloop/Debugger.hpp>
   #include <recurloop/Execution.hpp>
   #include <recurloop/EngineImage.hpp>
+  #include <recurloop/EmbeddedCompatibilityLibraries.hpp>
   #include <recurloop/TranslationUnits.hpp>
 
   #include <sys/mman.h>
@@ -344,6 +345,35 @@ namespace recurloop {
       if (startupLanguage == StartupLanguage::Image) EngineImage::load(context, languageImage);
     }
 
+    const auto resetRootContext = [&]() {
+      root = context.lexicon.phrase();
+      context.lookup = {};
+      context.staging = {};
+      context.reference = {};
+      context::Lookup::in(context, root);
+      context::Staging::push(context, root);
+      context::Reference::in(context, root);
+    };
+
+    const bool startsWithImport =
+        context.exec.args.index < context.exec.args.count &&
+        (std::string_view(context.exec.args.ptr[context.exec.args.index]) == "--import" ||
+         std::string_view(context.exec.args.ptr[context.exec.args.index]) == "--engine-image");
+
+    if (startupLanguage == StartupLanguage::Compatibility && !startsWithImport) {
+      // Compatibility-only syntax that has already migrated out of C++ is
+      // installed from source when creating a fresh compatibility language.
+      // Full engine images already contain this source-defined surface, so an
+      // import restores it directly without recompiling the library under the
+      // imported syntax.
+      resetRootContext();
+      executeSource(context, embedded::CompatibilityControlFlow, "<embedded:compat/control-flow.rl>", 1);
+      // Source-defined compatibility actions compile through the ordinary
+      // language pipeline. Keep that compilation from leaking parser scratch
+      // state into the user program (the old C++ setup left this empty).
+      context.workspace.key.clear();
+    }
+
     while (context.exec.args.index < context.exec.args.count &&
            (std::string_view(context.exec.args.ptr[context.exec.args.index]) == "--import" ||
             std::string_view(context.exec.args.ptr[context.exec.args.index]) == "--engine-image")) {
@@ -352,10 +382,7 @@ namespace recurloop {
       EngineImage::load(context, context.exec.args.ptr[context.exec.args.index++]);
     }
 
-    root = context.lexicon.phrase();
-    context::Lookup::in(context, root);
-    context::Staging::push(context, root);
-    context::Reference::in(context, root);
+    if (context.staging.stack.empty()) resetRootContext();
 
     return *this;
   }
