@@ -59,12 +59,14 @@ namespace compiler {
   class TypeRegistry {
   public:
     explicit TypeRegistry(lexicon::Phrase language);
+    static void setupStorage(lexicon::Phrase root);
     static void setup(lexicon::Phrase root);
 
     TypeId find(std::string_view name) const;
     TypeDescriptor get(TypeId id) const;
     TypeDescriptor get(std::string_view name) const;
 
+    TypeId defineVoid(std::string name = "void");
     TypeId defineInteger(std::string name, std::size_t bits, bool isSigned);
     TypeId defineFloatingPoint(std::string name, std::size_t bits);
     TypeId pointerTo(TypeId pointee);

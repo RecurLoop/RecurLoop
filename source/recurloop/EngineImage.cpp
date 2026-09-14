@@ -1,5 +1,7 @@
 #include <recurloop/EngineImage.hpp>
 
+#include "CoreDefinition.hpp"
+
 #include <context/Context.hpp>
 #include <lexicon/Lexicon.hpp>
 #include <utilities/Exception.hpp>
@@ -1031,8 +1033,31 @@ namespace recurloop {
     return output.str();
   }
 
-  void EngineImage::define(context::Context &context, std::string_view manifest) {
-    restore(context, parseManifest(context, manifest));
+  void EngineImage::define(context::Context &context, std::string_view source, std::string_view sourcePath) {
+    // `engine define` has two source forms:
+    //
+    //  * EngineImage::source() emits the historical numeric manifest used for
+    //    lossless source-image round trips ("phrase <id> parent ...").
+    //  * libraries/recurloop/core.rl uses the semantic source-core format
+    //    ("phrase <label> = <key> in <parent> {").
+    //
+    // Keep the old manifest reader for generated/source images while routing
+    // the human-authored core definition through the semantic bootstrap
+    // parser.  The third token is an unambiguous discriminator between both
+    // grammars and preserves compatibility with source images produced before
+    // the source-defined-core migration.
+    std::istringstream input{std::string(source)};
+    std::string line;
+    for (std::size_t lineNumber = 1; std::getline(input, line); ++lineNumber) {
+      const std::vector<std::string> fields = tokens(line, lineNumber);
+      if (fields.empty()) continue;
+      if ((fields[0] == "phrase" && fields.size() >= 3 && fields[2] == "parent") || fields[0] == "relocate") {
+        restore(context, parseManifest(context, source));
+        return;
+      }
+      break;
+    }
+    internal::CoreDefinition::apply(context, source, sourcePath);
   }
 
   void EngineImage::save(context::Context &context, const std::string &path) {

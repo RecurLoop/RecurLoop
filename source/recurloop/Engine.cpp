@@ -70,7 +70,7 @@ namespace recurloop {
     if (!trim(std::move(block.header)).empty()) THROW(, "engine define must be followed directly by '{'")
     // The restore replaces the lexicon that owns the currently invoked phrase.
     context.exec.invoked = nullptr;
-    EngineImage::define(context, block.body);
+    EngineImage::define(context, block.body, block.path);
   }
 
   void Engine::includeSource(context::Context &context, lexicon::Phrase &) {

@@ -60,7 +60,7 @@ namespace compiler {
       if (phrase.payloadSize() != sizeof(Language)) THROW(, "compiler language phrase has invalid metadata")
       Language result;
       phrase.fetch(0, result);
-      if (result.magic != Language::Magic || result.version != Language::Version)
+      if (result.magic != Language::Magic || result.version != Language::Version || result.reserved != 0)
         THROW(, "compiler language phrase has an unsupported schema")
       return result;
     }
@@ -455,7 +455,7 @@ namespace compiler {
     destination.store(value).save();
   }
 
-  void LanguageState::setup(lexicon::Phrase root) {
+  void LanguageState::setupStorage(lexicon::Phrase root) {
     lexicon::Phrase language = dictionary(root, LanguageDictionaryName);
     if (language.payloadSize() == 0)
       language.store(Language{}).save();
@@ -471,8 +471,13 @@ namespace compiler {
     dictionary(language, LinkArchivesName);
     dictionary(language, LinkPathsName);
     dictionary(language, SharedLibrariesName);
-    TypeRegistry::setup(root);
+    TypeRegistry::setupStorage(root);
+  }
 
+  void LanguageState::setup(lexicon::Phrase root) {
+    setupStorage(root);
+    TypeRegistry::setup(root);
+    lexicon::Phrase language = dictionary(root, LanguageDictionaryName);
     LanguageState state(language);
     if (exact(registry(*root.getLexicon(), ConventionsName, language.getAddress()), "sysv-amd64").isNull()) {
       state.defineConvention(CallingConvention::systemVAMD64());

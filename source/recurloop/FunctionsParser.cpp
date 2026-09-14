@@ -465,8 +465,9 @@ namespace recurloop {
       }
 
       std::unique_ptr<Expression> parseFunctionLiteral(const Token &start) {
-        const std::string symbol = "__recurloop_action_" + std::to_string(context.lexicon.checkpoint().getAddress()) +
-                                   "_" + std::to_string(start.offset);
+        const SourceLocation literalOrigin =
+            sourceLocationAt({sourcePath, sourceLine, sourceColumn}, sourceText, start.offset);
+        const std::string symbol = stableActionSymbol(scope, literalOrigin, "function-literal", sourceText, start.offset);
         FunctionDefinition definition = signature(symbol, false);
         definition.scope = scope;
         lexer.skipNewlines();

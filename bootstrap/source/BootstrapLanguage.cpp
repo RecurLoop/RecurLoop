@@ -1,6 +1,7 @@
 #if !defined(__RECURLOOP_LANGUAGE_CPP)
   #define __RECURLOOP_LANGUAGE_CPP
-  #include "LanguageInternal.hpp"
+  #include "../../source/recurloop/LanguageInternal.hpp"
+  #include <recurloop/bootstrap/BootstrapLanguage.hpp>
 
   #include <recurloop/BitString.hpp>
   #include <recurloop/Blocks.hpp>
@@ -11,6 +12,7 @@
   #include <recurloop/PhraseDefinition.hpp>
   #include <recurloop/PhraseAction.hpp>
   #include <recurloop/Functions.hpp>
+  #include <recurloop/HostAbi.hpp>
   #include <recurloop/LanguageGrammar.hpp>
   #include <recurloop/PhraseNames.hpp>
   #include <recurloop/Typed.hpp>
@@ -29,181 +31,10 @@ namespace recurloop {
   using namespace internal;
 
   namespace {
-    template <typename Owner, typename Member> std::size_t memberOffset(Owner &owner, Member &member) {
-      return static_cast<std::size_t>(reinterpret_cast<std::byte *>(&member) - reinterpret_cast<std::byte *>(&owner));
-    }
-
-    void setupContextTypes(context::Context &context) {
-      compiler::LanguageState language = context.language();
-      compiler::TypeRegistry &types = language.types;
-      const compiler::TypeId u8 = types.find("u8");
-      const compiler::TypeId i32 = types.find("i32");
-      const compiler::TypeId u64 = types.find("u64");
-      const compiler::TypeId bytePointer = types.pointerTo(u8);
-      const compiler::TypeId bytePointerPointer = types.pointerTo(bytePointer);
-
-      const auto opaque = [&](std::string name, std::size_t size, std::size_t alignment) {
-        return types.defineStructureLayout(std::move(name), size, alignment);
-      };
-      const auto layout = [&](std::string name, std::size_t size, std::size_t alignment,
-                              std::initializer_list<compiler::TypeField> fields) {
-        return types.defineStructureLayout(std::move(name), size, alignment, fields);
-      };
-
-      const compiler::TypeId stringType = opaque("CxxString", sizeof(std::string), alignof(std::string));
-      const compiler::TypeId bitString =
-          layout("BitString", sizeof(BitString), alignof(BitString),
-                 {{"data", bytePointer, offsetof(BitString, data)}, {"bits", u64, offsetof(BitString, bits)}});
-      types.pointerTo(bitString);
-      const compiler::TypeId phraseAction = layout(
-          "PhraseAction", sizeof(PhraseAction), alignof(PhraseAction),
-          {{"symbol", bytePointer, offsetof(PhraseAction, symbol)}, {"bytes", u64, offsetof(PhraseAction, bytes)}});
-      types.pointerTo(phraseAction);
-      const compiler::TypeId byteVector =
-          opaque("CxxByteVector", sizeof(std::vector<std::uint8_t>), alignof(std::vector<std::uint8_t>));
-      const compiler::TypeId phraseVector =
-          opaque("CxxPhraseVector", sizeof(std::vector<lexicon::Phrase>), alignof(std::vector<lexicon::Phrase>));
-      const compiler::TypeId nativeSectionVector =
-          opaque("CxxNativeSectionVector", sizeof(std::vector<context::Workspace::NativeSection>),
-                 alignof(std::vector<context::Workspace::NativeSection>));
-      const compiler::TypeId timePoint =
-          opaque("CxxTimePoint", sizeof(decltype(context.exec.start)), alignof(decltype(context.exec.start)));
-      const compiler::TypeId exceptionPointer =
-          opaque("CxxExceptionPointer", sizeof(std::exception_ptr), alignof(std::exception_ptr));
-      const compiler::TypeId appender = opaque("Appender", sizeof(Appender), alignof(Appender));
-      const compiler::TypeId lexicon = opaque("Lexicon", sizeof(lexicon::Lexicon), alignof(lexicon::Lexicon));
-      const compiler::TypeId runtime = opaque("JitMemory", sizeof(JitMemory), alignof(JitMemory));
-      const compiler::TypeId phrase = opaque("Phrase", sizeof(lexicon::Phrase), alignof(lexicon::Phrase));
-      const compiler::TypeId draft = opaque("Draft", sizeof(lexicon::Draft), alignof(lexicon::Draft));
-      const compiler::TypeId sourceBlock = opaque("SourceBlock", sizeof(SourceBlock), alignof(SourceBlock));
-      types.pointerTo(sourceBlock);
-
-      context::Config config;
-      using ConfigSource = decltype(config.source);
-      using ConfigSourceBuffer = decltype(config.source.buffer);
-      using ConfigMemory = context::Config::Memory;
-      using ConfigLexicon = decltype(config.lexicon);
-      using ConfigRuntime = decltype(config.runtime);
-      using ConfigWorkspace = decltype(config.workspace);
-      using ConfigWorkspaceKey = decltype(config.workspace.key);
-      using ConfigWorkspaceCode = decltype(config.workspace.code);
-      using ConfigException = decltype(config.exception);
-      const compiler::TypeId configMemory = layout("ContextMemory", sizeof(ConfigMemory), alignof(ConfigMemory),
-                                                   {{"size", u64, offsetof(ConfigMemory, size)}});
-      const compiler::TypeId configSourceBuffer =
-          layout("ContextConfigSourceBuffer", sizeof(ConfigSourceBuffer), alignof(ConfigSourceBuffer),
-                 {{"size", u64, offsetof(ConfigSourceBuffer, size)}});
-      const compiler::TypeId configSource = layout("ContextConfigSource", sizeof(ConfigSource), alignof(ConfigSource),
-                                                   {{"buffer", configSourceBuffer, offsetof(ConfigSource, buffer)}});
-      const compiler::TypeId configLexicon =
-          layout("ContextConfigLexicon", sizeof(ConfigLexicon), alignof(ConfigLexicon),
-                 {{"memory", configMemory, offsetof(ConfigLexicon, memory)}});
-      const compiler::TypeId configRuntime =
-          layout("ContextConfigRuntime", sizeof(ConfigRuntime), alignof(ConfigRuntime),
-                 {{"memory", configMemory, offsetof(ConfigRuntime, memory)}});
-      const compiler::TypeId configWorkspaceKey =
-          layout("ContextConfigWorkspaceKey", sizeof(ConfigWorkspaceKey), alignof(ConfigWorkspaceKey),
-                 {{"memory", configMemory, offsetof(ConfigWorkspaceKey, memory)}});
-      const compiler::TypeId configWorkspaceCode =
-          layout("ContextConfigWorkspaceCode", sizeof(ConfigWorkspaceCode), alignof(ConfigWorkspaceCode),
-                 {{"memory", configMemory, offsetof(ConfigWorkspaceCode, memory)}});
-      const compiler::TypeId configWorkspace =
-          layout("ContextConfigWorkspace", sizeof(ConfigWorkspace), alignof(ConfigWorkspace),
-                 {{"key", configWorkspaceKey, offsetof(ConfigWorkspace, key)},
-                  {"code", configWorkspaceCode, offsetof(ConfigWorkspace, code)}});
-      const compiler::TypeId configException =
-          layout("ContextConfigException", sizeof(ConfigException), alignof(ConfigException),
-                 {{"continues", u8, offsetof(ConfigException, continues)}});
-      const compiler::TypeId configType =
-          layout("ContextConfig", sizeof(context::Config), alignof(context::Config),
-                 {{"source", configSource, offsetof(context::Config, source)},
-                  {"lexicon", configLexicon, offsetof(context::Config, lexicon)},
-                  {"runtime", configRuntime, offsetof(context::Config, runtime)},
-                  {"workspace", configWorkspace, offsetof(context::Config, workspace)},
-                  {"exception", configException, offsetof(context::Config, exception)}});
-
-      using Arguments = context::Exec::Args;
-      const compiler::TypeId arguments = layout("ContextArguments", sizeof(Arguments), alignof(Arguments),
-                                                {{"index", i32, offsetof(Arguments, index)},
-                                                 {"count", i32, offsetof(Arguments, count)},
-                                                 {"values", bytePointerPointer, offsetof(Arguments, ptr)},
-                                                 {"options", u8, offsetof(Arguments, options)}});
-      const compiler::TypeId phrasePointer = types.pointerTo(phrase);
-      const compiler::TypeId execType =
-          layout("ContextExec", sizeof(context::Exec), alignof(context::Exec),
-                 {{"status", i32, offsetof(context::Exec, status)},
-                  {"invoked", phrasePointer, offsetof(context::Exec, invoked)},
-                  {"start", timePoint, offsetof(context::Exec, start)},
-                  {"args", arguments, offsetof(context::Exec, args)},
-                  {"pendingException", exceptionPointer, offsetof(context::Exec, pendingException)},
-                  {"pendingNativeEntry", u64, offsetof(context::Exec, pendingNativeEntry)},
-                  {"pendingNativeSymbol", stringType, offsetof(context::Exec, pendingNativeSymbol)}});
-
-      context::IOStreams streams;
-      const compiler::TypeId streamsType =
-          layout("ContextIOStreams", sizeof(context::IOStreams), alignof(context::IOStreams),
-                 {{"in", bytePointer, memberOffset(streams, streams.in)},
-                  {"out", bytePointer, memberOffset(streams, streams.out)},
-                  {"err", bytePointer, memberOffset(streams, streams.err)}});
-
-      context::Source source;
-      using SourceBuffer = context::Source::Buffer;
-      const compiler::TypeId sourceBuffer = layout("ContextSourceBuffer", sizeof(SourceBuffer), alignof(SourceBuffer),
-                                                   {{"text", stringType, offsetof(SourceBuffer, str)},
-                                                    {"match", u64, offsetof(SourceBuffer, match)},
-                                                    {"offset", u64, offsetof(SourceBuffer, offset)},
-                                                    {"bits", u64, offsetof(SourceBuffer, bits)}});
-      const compiler::TypeId sourceType = layout("ContextSource", sizeof(context::Source), alignof(context::Source),
-                                                 {{"path", stringType, memberOffset(source, source.path)},
-                                                  {"line", u64, memberOffset(source, source.line)},
-                                                  {"position", u64, memberOffset(source, source.position)},
-                                                  {"more", u8, memberOffset(source, source.more)},
-                                                  {"buffer", sourceBuffer, memberOffset(source, source.buffer)}});
-
-      context::Workspace workspace;
-      const compiler::TypeId workspaceType =
-          layout("ContextWorkspace", sizeof(context::Workspace), alignof(context::Workspace),
-                 {{"key", appender, memberOffset(workspace, workspace.key)},
-                  {"code", appender, memberOffset(workspace, workspace.code)},
-                  {"readOnlyData", byteVector, memberOffset(workspace, workspace.readOnlyData)},
-                  {"data", byteVector, memberOffset(workspace, workspace.data)},
-                  {"bssBytes", u64, memberOffset(workspace, workspace.bssBytes)},
-                  {"customSections", nativeSectionVector, memberOffset(workspace, workspace.customSections)}});
-
-      context::Lookup lookupValue;
-      const compiler::TypeId lookup =
-          layout("ContextLookup", sizeof(context::Lookup), alignof(context::Lookup),
-                 {{"stack", phraseVector, memberOffset(lookupValue, lookupValue.stack)},
-                  {"dictionary", phrase, memberOffset(lookupValue, lookupValue.dictionary)}});
-      context::Staging stagingValue;
-      const compiler::TypeId staging =
-          layout("ContextStaging", sizeof(context::Staging), alignof(context::Staging),
-                 {{"stack", phraseVector, memberOffset(stagingValue, stagingValue.stack)},
-                  {"dictionary", phrase, memberOffset(stagingValue, stagingValue.dictionary)},
-                  {"phrase", draft, memberOffset(stagingValue, stagingValue.phrase)}});
-      context::Reference referenceValue;
-      const compiler::TypeId reference =
-          layout("ContextReference", sizeof(context::Reference), alignof(context::Reference),
-                 {{"dictionary", phrase, memberOffset(referenceValue, referenceValue.dictionary)}});
-
-      context::Context value;
-      const compiler::TypeId contextType = layout("Context", sizeof(context::Context), alignof(context::Context),
-                                                  {{"config", configType, memberOffset(value, value.config)},
-                                                   {"exec", execType, memberOffset(value, value.exec)},
-                                                   {"io", streamsType, memberOffset(value, value.io)},
-                                                   {"source", sourceType, memberOffset(value, value.source)},
-                                                   {"lexicon", lexicon, memberOffset(value, value.lexicon)},
-                                                   {"runtime", runtime, memberOffset(value, value.runtime)},
-                                                   {"workspace", workspaceType, memberOffset(value, value.workspace)},
-                                                   {"lookup", lookup, memberOffset(value, value.lookup)},
-                                                   {"staging", staging, memberOffset(value, value.staging)},
-                                                   {"reference", reference, memberOffset(value, value.reference)}});
-      types.pointerTo(contextType);
-    }
   } // namespace
 
 
-  void Language::setup(context::Context &context) {
+  void bootstrap::Language::setup(context::Context &context) {
     // clang-format off
     lexicon::Phrase root = context::Lookup::current(context);
     lexicon::Phrase undefined(root.getLexicon());
@@ -213,7 +44,7 @@ namespace recurloop {
     Engine::registerActions(context);
     setup_phrase_types(context, root);
     compiler::LanguageState::setup(root);
-    setupContextTypes(context);
+    HostAbi::setupCompilerTypes(context);
     ContextApi::setup(context);
     TypeSyntax::setup(context);
     Typed::setup(context);

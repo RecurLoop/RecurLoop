@@ -7,7 +7,6 @@
   #include <recurloop/EngineImage.hpp>
   #include <recurloop/HostAbi.hpp>
   #include <recurloop/ContextApi.hpp>
-  #include <recurloop/EmbeddedCoreLayers.hpp>
   #include <recurloop/TranslationUnits.hpp>
 
   #include <sys/mman.h>
@@ -326,24 +325,6 @@ namespace recurloop {
     initializeRoot();
   }
 
-  void Recurloop::installCompatibilityLanguage() {
-    Language::setup(context);
-
-    // Control flow has already migrated out of C++. Keep the compatibility
-    // builder complete by loading the source implementation before snapshots
-    // or tests are executed.
-    lexicon::Phrase root = context.lexicon.phrase();
-    context.lookup = {};
-    context.staging = {};
-    context.reference = {};
-    context::Lookup::in(context, root);
-    context::Staging::push(context, root);
-    context::Reference::in(context, root);
-    executeSource(context, embedded::CoreControlFlow, "<embedded:core/control-flow.rl>", 1);
-    context.workspace.key.clear();
-    hostActions = context.actions().snapshot();
-  }
-
   void Recurloop::resetToKernel() {
     context.lexicon.clear();
     context.workspace.key.clear();
@@ -381,13 +362,6 @@ namespace recurloop {
     }
   }
 
-  Recurloop &Recurloop::initialize(int argc, char **argv) {
-    initializeBase(argc, argv);
-    installCompatibilityLanguage();
-    processStartupOperations();
-    return *this;
-  }
-
   Recurloop &Recurloop::initializeEmbedded(int argc, char **argv, std::span<const std::uint8_t> coreImage) {
     initializeBase(argc, argv);
 
@@ -400,7 +374,7 @@ namespace recurloop {
 
     // Host functions are process-local addresses and are intentionally not
     // serialized in .rli. Rebind them against the restored typed language.
-    ContextApi::setup(context);
+    ContextApi::bind(context);
 
     processStartupOperations();
     return *this;

@@ -34,7 +34,7 @@ namespace recurloop {
     static void merge(context::Context &context, std::span<const std::uint8_t> bytes, lexicon::Phrase target);
     static void merge(context::Context &context, lexicon::Phrase source, lexicon::Phrase target);
     static std::string source(context::Context &context);
-    static void define(context::Context &context, std::string_view manifest);
+    static void define(context::Context &context, std::string_view source, std::string_view sourcePath = {});
     static void save(context::Context &context, const std::string &path);
     static void load(context::Context &context, const std::string &path);
   };

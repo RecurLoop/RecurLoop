@@ -37,6 +37,8 @@ namespace recurloop {
     char peek(context::Context &context);
     std::string readLine(context::Context &context);
     std::string trim(std::string value);
+    std::string stableActionSymbol(std::string_view scope, SourceLocation origin, std::string_view signature,
+                                   std::string_view body, std::size_t discriminator = 0);
     [[noreturn]] void fail(std::string_view source, std::size_t offset, const std::string &message);
 
     struct DiagnosticSource {

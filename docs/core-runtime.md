@@ -1,58 +1,104 @@
 # Core image runtime
 
-RecurLoop has one public runtime model.
+RecurLoop has one public runtime model:
 
 ```text
-host kernel -> embedded core.rli -> optional imports -> source
+host kernel -> embedded source-built core.rli -> optional imports -> source
 ```
 
-The final executable automatically restores the embedded standard language:
+The installed executable automatically restores the embedded standard language:
 
 ```sh
 recurloop --file program.rl
 recurloop --import shell.rli --file program.rl
 ```
 
-`--reset` clears the language state back to the empty host kernel while keeping
+`--reset` clears language state back to the empty host kernel while preserving
 the process-local ABI needed to restore engine images:
 
 ```sh
 recurloop --reset --import core.rli --file program.rl
 ```
 
-An `.rli` image has no special root/core/bootstrap kind. Its role comes only
-from the state into which it is imported.
+An `.rli` image has no special root/core/bootstrap kind. Its role comes from the
+state into which it is imported.
 
-## Building core
+## Clean-build bootstrap
 
-`libraries/recurloop/core.rl` exports the current language state as `core.rli`.
-A completely clean project build needs one private bootstrap step because no
-previous image exists yet:
+A completely clean checkout has no previous `core.rli`, so the build contains a
+private, non-installed stage-0 bootstrap. Its C++ language definition lives only
+under `bootstrap/` and is not linked into the production runtime.
 
 ```text
-C++ compatibility builder
-    -> core.rl
-    -> generated/core/core.rli
-    -> embed exact image bytes
-    -> final recurloop
+empty kernel
+  -> bootstrap::Language::setup()          (bootstrap/ only)
+  -> bootstrap-core.rli
 ```
 
-`recurloop-core-builder` is a CMake build tool only. It is not installed and has
-no separate public bootstrap CLI.
+`bootstrap-core.rli` exists only so RecurLoop can read the source definition of
+the same language.
 
-After the final executable exists, rebuilding is self-hosted:
+## Source-defined core
+
+`libraries/recurloop/core.rl` is the canonical language definition. It captures
+one semantic `engine define { ... }` declaration, replaces the current lexicon,
+and rebuilds a fresh core from symbolic source modules under
+`libraries/recurloop/core/`.
+
+The source intentionally does not contain engine-image records such as numeric
+phrase ids, numeric parent/prototype references, or serialized hex payloads.
+Host implementation details such as C++ `sizeof`, `alignof`, `offsetof`, native
+addresses, radix internals, JIT memory, LLVM APIs, and file IO remain Host ABI.
+The source names the host primitives and materializes the language-level graph,
+calling conventions, compiler types, typed host-function declarations, linker
+paths, and compiler settings. C++ supplies only the physical layout facts and
+process-local native implementations required by those source declarations.
+
+After the fresh stage-0 graph exists, source-defined `control-flow.rl` is parsed
+by that newly built language and the result is exported as `source-core.rli`.
+
+## Fixed point
+
+The build requires both of these comparisons to succeed byte-for-byte:
+
+```text
+bootstrap-core.rli == source-core.rli
+source-core.rli    == source-core-2.rli
+```
+
+A one-byte difference fails the build. The source tree is also scanned to reject
+dump-like core declarations before the comparison runs.
+
+Only `source-core.rli` is embedded in the final executable:
+
+```text
+C++ bootstrap
+  -> bootstrap-core.rli
+  -> core.rl
+  -> source-core.rli
+  -> byte-for-byte fixed point
+  -> embed source-core.rli
+  -> final recurloop
+```
+
+The production `RecurloopLib` contains the kernel/runtime/Host ABI and the
+semantic `engine define` interpreter, but not the C++ standard-language setup.
+
+## Self-hosted rebuild
+
+Once the final executable exists, rebuilding core is fully source-driven:
 
 ```sh
 recurloop --file libraries/recurloop/core.rl
 ```
 
-or, explicitly using an external previous image:
+or explicitly from an external prior image:
 
 ```sh
 recurloop --reset --import core.rli --file libraries/recurloop/core.rl
 ```
 
-Both forms are required to reproduce the current core image byte-for-byte.
+Both forms must reproduce the embedded source-built `core.rli` byte-for-byte.
 
 ## Public state operations
 
@@ -68,31 +114,16 @@ a diagnostic rather than retained as aliases.
 
 ## Host ABI boundary
 
-The final runtime does not call `Language::setup()` and does not construct a
-temporary compatibility lexicon. Startup is:
+Production startup is:
 
 ```text
 empty kernel
-    -> register process-local Host ABI actions
-    -> restore embedded core.rli
-    -> bind process-local ContextAPI/native symbols
-    -> process CLI operations
+  -> register process-local Host ABI actions
+  -> restore embedded source-core.rli
+  -> bind process-local ContextAPI/native symbols
+  -> process CLI operations
 ```
 
 Stable action-name bindings are kernel state, not hidden phrases in the radix
 lexicon and not serialized `.rli` data. `--reset` replaces the language graph
 while restoring only the baseline Host ABI action set.
-
-The private clean-build builder still contains compatibility C++ language
-subsystems because a completely clean checkout has no previous `core.rli` yet.
-That builder is the remaining migration boundary; it is not used by the final
-runtime or translation-unit workers.
-
-Each remaining subsystem is migrated by adding its source implementation to the
-core build, verifying tests/examples/image round trips, then deleting the old
-C++ implementation. The target is:
-
-```text
-C++: kernel + host ABI + image/runtime + compiler/native/LLVM primitives
-core.rli: RecurLoop language and language policy
-```

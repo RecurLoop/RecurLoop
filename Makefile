@@ -35,7 +35,6 @@ ARGS ?= --file program.rl.example
 	ensure-tests \
 	core \
 	core-test \
-	core-parity \
 	clean
 
 
@@ -54,7 +53,6 @@ help:
 	@echo '  make showcase                      Run the complete language tour'
 	@echo '  make core                          Rebuild core.rli with the final recurloop binary'
 	@echo '  make core-test                     Verify embedded/reset/import/self-rebuild flow'
-	@echo '  make core-parity                   Compare all real examples across embedded vs imported core'
 	@echo
 	@echo 'Debug is the default build type for build, run, examples, and tests.'
 	@echo 'To use Release with LLVM:'
@@ -359,9 +357,6 @@ core: $(RECURLOOP)
 
 core-test: $(RECURLOOP)
 	@libraries/recurloop/test-core.sh "$(abspath $(RECURLOOP))"
-
-core-parity: $(RECURLOOP)
-	@libraries/recurloop/run-parity.sh "$(abspath $(RECURLOOP))"
 
 
 # ---------------------------------------------------------------------------

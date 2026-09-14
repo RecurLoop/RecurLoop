@@ -1377,6 +1377,8 @@ namespace recurloop {
       return contextTypeFunction(context, firstParameter, result, convention, Variadic ? 1 : 0);
     }
 
+    thread_local bool requireExistingHostDeclarations = false;
+
     void declareHostFunction(context::Context &context, std::string_view name, std::string_view symbol,
                              std::initializer_list<compiler::TypeId> parameters, compiler::TypeId result,
                              std::uintptr_t address) {
@@ -1391,6 +1393,9 @@ namespace recurloop {
           THROW(, "host ABI declaration mismatch for '" << symbol << "'")
         return;
       }
+
+      if (requireExistingHostDeclarations)
+        THROW(, "source core is missing Host ABI declaration '" << symbol << "'")
 
       compiler::TypedFunction function;
       function.name = std::string(name);
@@ -1414,7 +1419,8 @@ namespace recurloop {
     }
   } // namespace
 
-  void ContextApi::setup(context::Context &context) {
+  namespace {
+    void installContextApi(context::Context &context) {
     compiler::LanguageState language = context.language();
     const compiler::TypeId contextPointer = language.types.find("Context*");
     const compiler::TypeId bytePointer = language.types.find("u8*");
@@ -1879,5 +1885,30 @@ namespace recurloop {
     declareHostFunction(context, "context:type:function:variadic", "context:type:function:variadic",
                         {contextPointer, u64, u64, bytePointer}, u64,
                         reinterpret_cast<std::uintptr_t>(&contextTypeFunctionNamed<true>));
+    }
+  } // namespace
+
+  void ContextApi::setup(context::Context &context) {
+    const bool previous = requireExistingHostDeclarations;
+    requireExistingHostDeclarations = false;
+    try {
+      installContextApi(context);
+    } catch (...) {
+      requireExistingHostDeclarations = previous;
+      throw;
+    }
+    requireExistingHostDeclarations = previous;
+  }
+
+  void ContextApi::bind(context::Context &context) {
+    const bool previous = requireExistingHostDeclarations;
+    requireExistingHostDeclarations = true;
+    try {
+      installContextApi(context);
+    } catch (...) {
+      requireExistingHostDeclarations = previous;
+      throw;
+    }
+    requireExistingHostDeclarations = previous;
   }
 } // namespace recurloop

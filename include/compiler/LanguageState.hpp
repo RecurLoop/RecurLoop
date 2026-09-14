@@ -25,6 +25,10 @@ namespace compiler {
 
     std::uint64_t magic = Magic;
     std::uint32_t version = Version;
+    // Persisted language metadata is copied byte-for-byte into engine images.
+    // Keep the trailing word explicit instead of relying on struct padding so
+    // identical source always produces identical images.
+    std::uint32_t reserved = 0;
   };
 
   struct LanguageBinding {
@@ -66,6 +70,7 @@ namespace compiler {
   class LanguageState {
   public:
     explicit LanguageState(lexicon::Phrase language);
+    static void setupStorage(lexicon::Phrase root);
     static void setup(lexicon::Phrase root);
     static LanguageState locate(lexicon::Lexicon &lexicon);
     static LanguageState resolve(lexicon::Lexicon &lexicon, lexicon::Phrase *invoked);

@@ -25,17 +25,6 @@ endif()
 set(RECURLOOP_INCLUDE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/include")
 set(RECURLOOP_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/source")
 
-# Embed source-defined core layers needed by the private clean-build builder.
-# The final executable embeds the resulting core.rli and does not depend on the
-# source tree at runtime.
-file(READ "${CMAKE_CURRENT_SOURCE_DIR}/libraries/recurloop/core/control-flow.rl"
-     RECURLOOP_CORE_CONTROL_FLOW_SOURCE)
-file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/generated/recurloop")
-configure_file(
-    "${CMAKE_CURRENT_SOURCE_DIR}/cmake/EmbeddedCoreLayers.hpp.in"
-    "${CMAKE_CURRENT_BINARY_DIR}/generated/recurloop/EmbeddedCoreLayers.hpp"
-    @ONLY)
-
 if(NOT DEFINED CMAKE_ARCHIVE_OUTPUT_DIRECTORY)
     set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib")
 endif()
@@ -80,55 +69,133 @@ if(RECURLOOP_ENABLE_LLVM)
     list(APPEND recurloop_sources "${RECURLOOP_SOURCE_DIR}/recurloop/LlvmBackend.cpp")
 endif()
 add_library(RecurloopLib STATIC ${recurloop_sources})
-target_include_directories(RecurloopLib PRIVATE "${RECURLOOP_INCLUDE_DIR}" "${RECURLOOP_SOURCE_DIR}" "${CMAKE_CURRENT_BINARY_DIR}/generated")
+target_include_directories(RecurloopLib PRIVATE "${RECURLOOP_INCLUDE_DIR}" "${RECURLOOP_SOURCE_DIR}")
 set_target_properties(RecurloopLib PROPERTIES FOLDER "Libraries")
 
-# The private builder exists only to create the first core image from a clean
-# checkout. It is not installed and has no special public CLI surface.
-add_executable(RecurloopCoreBuilder "${RECURLOOP_SOURCE_DIR}/core_builder_main.cpp")
-target_include_directories(RecurloopCoreBuilder PRIVATE "${RECURLOOP_INCLUDE_DIR}" "${RECURLOOP_SOURCE_DIR}")
+# Bootstrap code is deliberately isolated from the production runtime library.
+# It exists only to create the first stage-0 image from an empty lexicon.
+add_library(RecurloopBootstrapLib STATIC
+    "${CMAKE_CURRENT_SOURCE_DIR}/bootstrap/source/BootstrapLanguage.cpp")
+target_include_directories(RecurloopBootstrapLib PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}/bootstrap/include"
+    "${RECURLOOP_INCLUDE_DIR}"
+    "${RECURLOOP_SOURCE_DIR}")
+target_link_libraries(RecurloopBootstrapLib PRIVATE RecurloopLib)
+set_target_properties(RecurloopBootstrapLib PROPERTIES FOLDER "Bootstrap")
+
+add_executable(RecurloopCoreBuilder "${CMAKE_CURRENT_SOURCE_DIR}/bootstrap/source/main.cpp")
+target_include_directories(RecurloopCoreBuilder PRIVATE
+    "${CMAKE_CURRENT_SOURCE_DIR}/bootstrap/include"
+    "${RECURLOOP_INCLUDE_DIR}"
+    "${RECURLOOP_SOURCE_DIR}")
+target_link_libraries(RecurloopCoreBuilder PRIVATE RecurloopBootstrapLib RecurloopLib)
 set_target_properties(RecurloopCoreBuilder PROPERTIES
     OUTPUT_NAME recurloop-core-builder
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/tools"
     FOLDER "Build tools")
-target_link_libraries(RecurloopCoreBuilder PRIVATE RecurloopLib)
 
-set(RECURLOOP_CORE_BUILD_DIR "${CMAKE_CURRENT_BINARY_DIR}/generated/core")
-set(RECURLOOP_CORE_IMAGE "${RECURLOOP_CORE_BUILD_DIR}/core.rli")
+# The source-core runner has no bootstrap dependency. It starts from a supplied
+# image and executes the checked-in source definition to produce the next image.
+add_executable(RecurloopCoreRunner "${RECURLOOP_SOURCE_DIR}/core_runner_main.cpp")
+target_include_directories(RecurloopCoreRunner PRIVATE "${RECURLOOP_INCLUDE_DIR}" "${RECURLOOP_SOURCE_DIR}")
+target_link_libraries(RecurloopCoreRunner PRIVATE RecurloopLib)
+set_target_properties(RecurloopCoreRunner PROPERTIES
+    OUTPUT_NAME recurloop-core-runner
+    RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/tools"
+    FOLDER "Build tools")
+
+set(RECURLOOP_CORE_ROOT "${CMAKE_CURRENT_BINARY_DIR}/generated/core")
+set(RECURLOOP_BOOTSTRAP_DIR "${RECURLOOP_CORE_ROOT}/bootstrap")
+set(RECURLOOP_SOURCE_DIR_1 "${RECURLOOP_CORE_ROOT}/source-1")
+set(RECURLOOP_SOURCE_DIR_2 "${RECURLOOP_CORE_ROOT}/source-2")
+set(RECURLOOP_BOOTSTRAP_IMAGE "${RECURLOOP_BOOTSTRAP_DIR}/core.rli")
+set(RECURLOOP_SOURCE_IMAGE "${RECURLOOP_SOURCE_DIR_1}/core.rli")
+set(RECURLOOP_SOURCE_IMAGE_2 "${RECURLOOP_SOURCE_DIR_2}/core.rli")
+# Public tests and tooling should always point at the source-built image, never
+# at the private C++ bootstrap artifact.
+set(RECURLOOP_CORE_IMAGE "${RECURLOOP_SOURCE_IMAGE}")
+set(RECURLOOP_CORE_FIXED_POINT "${RECURLOOP_CORE_ROOT}/fixed-point.stamp")
 set(RECURLOOP_EMBEDDED_CORE_CPP "${CMAKE_CURRENT_BINARY_DIR}/generated/recurloop/EmbeddedCore.cpp")
-file(MAKE_DIRECTORY "${RECURLOOP_CORE_BUILD_DIR}")
+set(RECURLOOP_CORE_VALIDATE_SCRIPT "${CMAKE_CURRENT_SOURCE_DIR}/cmake/ValidateCoreSource.cmake")
+file(MAKE_DIRECTORY "${RECURLOOP_BOOTSTRAP_DIR}" "${RECURLOOP_SOURCE_DIR_1}" "${RECURLOOP_SOURCE_DIR_2}")
+
+file(GLOB RECURLOOP_CORE_SOURCES CONFIGURE_DEPENDS
+    "${CMAKE_CURRENT_SOURCE_DIR}/libraries/recurloop/core/*.rl")
+list(APPEND RECURLOOP_CORE_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/libraries/recurloop/core.rl")
+set(RECURLOOP_CONTROL_FLOW_SOURCE "${CMAKE_CURRENT_SOURCE_DIR}/libraries/recurloop/core/control-flow.rl")
 
 add_custom_command(
-    OUTPUT "${RECURLOOP_CORE_IMAGE}"
-    COMMAND "${CMAKE_COMMAND}" -E rm -f "${RECURLOOP_CORE_IMAGE}"
+    OUTPUT "${RECURLOOP_BOOTSTRAP_IMAGE}"
+    COMMAND "${CMAKE_COMMAND}" -E rm -f "${RECURLOOP_BOOTSTRAP_IMAGE}"
     COMMAND "$<TARGET_FILE:RecurloopCoreBuilder>"
-            --file "${CMAKE_CURRENT_SOURCE_DIR}/libraries/recurloop/core.rl"
-    WORKING_DIRECTORY "${RECURLOOP_CORE_BUILD_DIR}"
-    DEPENDS
-        RecurloopCoreBuilder
-        "${CMAKE_CURRENT_SOURCE_DIR}/libraries/recurloop/core.rl"
-        "${CMAKE_CURRENT_SOURCE_DIR}/libraries/recurloop/core/control-flow.rl"
-    COMMENT "Building core.rli"
+            "${RECURLOOP_BOOTSTRAP_IMAGE}"
+            "${RECURLOOP_CONTROL_FLOW_SOURCE}"
+    DEPENDS RecurloopCoreBuilder "${RECURLOOP_CONTROL_FLOW_SOURCE}"
+    COMMENT "Building bootstrap-core.rli from isolated C++ stage-0 bootstrap"
+    VERBATIM)
+
+add_custom_command(
+    OUTPUT "${RECURLOOP_SOURCE_IMAGE}"
+    COMMAND "${CMAKE_COMMAND}" -E rm -f "${RECURLOOP_SOURCE_IMAGE}"
+    COMMAND "$<TARGET_FILE:RecurloopCoreRunner>"
+            "${RECURLOOP_BOOTSTRAP_IMAGE}"
+            "${CMAKE_CURRENT_SOURCE_DIR}/libraries/recurloop/core.rl"
+    WORKING_DIRECTORY "${RECURLOOP_SOURCE_DIR_1}"
+    DEPENDS RecurloopCoreRunner "${RECURLOOP_BOOTSTRAP_IMAGE}" ${RECURLOOP_CORE_SOURCES}
+    COMMENT "Building source-core.rli from semantic core.rl"
+    VERBATIM)
+
+add_custom_command(
+    OUTPUT "${RECURLOOP_SOURCE_IMAGE_2}"
+    COMMAND "${CMAKE_COMMAND}" -E rm -f "${RECURLOOP_SOURCE_IMAGE_2}"
+    COMMAND "$<TARGET_FILE:RecurloopCoreRunner>"
+            "${RECURLOOP_SOURCE_IMAGE}"
+            "${CMAKE_CURRENT_SOURCE_DIR}/libraries/recurloop/core.rl"
+    WORKING_DIRECTORY "${RECURLOOP_SOURCE_DIR_2}"
+    DEPENDS RecurloopCoreRunner "${RECURLOOP_SOURCE_IMAGE}" ${RECURLOOP_CORE_SOURCES}
+    COMMENT "Building second source-core.rli fixed point"
+    VERBATIM)
+
+add_custom_command(
+    OUTPUT "${RECURLOOP_CORE_FIXED_POINT}"
+    COMMAND "${CMAKE_COMMAND}"
+            "-DROOT=${CMAKE_CURRENT_SOURCE_DIR}/libraries/recurloop"
+            -P "${RECURLOOP_CORE_VALIDATE_SCRIPT}"
+    COMMAND "${CMAKE_COMMAND}" -E compare_files "${RECURLOOP_BOOTSTRAP_IMAGE}" "${RECURLOOP_SOURCE_IMAGE}"
+    COMMAND "${CMAKE_COMMAND}" -E compare_files "${RECURLOOP_SOURCE_IMAGE}" "${RECURLOOP_SOURCE_IMAGE_2}"
+    COMMAND "${CMAKE_COMMAND}" -E touch "${RECURLOOP_CORE_FIXED_POINT}"
+    DEPENDS "${RECURLOOP_BOOTSTRAP_IMAGE}" "${RECURLOOP_SOURCE_IMAGE}" "${RECURLOOP_SOURCE_IMAGE_2}"
+            "${RECURLOOP_CORE_VALIDATE_SCRIPT}" ${RECURLOOP_CORE_SOURCES}
+    COMMENT "Checking byte-for-byte bootstrap/source/source fixed point"
     VERBATIM)
 
 add_custom_command(
     OUTPUT "${RECURLOOP_EMBEDDED_CORE_CPP}"
     COMMAND "${CMAKE_COMMAND}"
-            "-DINPUT=${RECURLOOP_CORE_IMAGE}"
+            "-DINPUT=${RECURLOOP_SOURCE_IMAGE}"
             "-DOUTPUT=${RECURLOOP_EMBEDDED_CORE_CPP}"
             -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/EmbedCoreImage.cmake"
-    DEPENDS "${RECURLOOP_CORE_IMAGE}" "${CMAKE_CURRENT_SOURCE_DIR}/cmake/EmbedCoreImage.cmake"
-    COMMENT "Embedding core.rli"
+    DEPENDS "${RECURLOOP_CORE_FIXED_POINT}" "${RECURLOOP_SOURCE_IMAGE}" "${CMAKE_CURRENT_SOURCE_DIR}/cmake/EmbedCoreImage.cmake"
+    COMMENT "Embedding source-built core.rli"
     VERBATIM)
 
-add_custom_target(RecurloopCoreImage DEPENDS "${RECURLOOP_CORE_IMAGE}")
+add_custom_target(RecurloopCoreImage DEPENDS "${RECURLOOP_CORE_FIXED_POINT}" "${RECURLOOP_SOURCE_IMAGE}")
 
-add_executable(Recurloop
-    "${RECURLOOP_SOURCE_DIR}/main.cpp"
+# Normal-runtime convenience API (Recurloop::initialize) is deliberately kept
+# out of RecurloopLib.  This layer is created only after the source-built core
+# exists, so bootstrap/core-runner tools remain independent of embedded core.
+add_library(RecurloopRuntimeLib STATIC
+    "${RECURLOOP_SOURCE_DIR}/runtime/RecurloopRuntime.cpp"
     "${RECURLOOP_EMBEDDED_CORE_CPP}")
+target_include_directories(RecurloopRuntimeLib PRIVATE "${RECURLOOP_INCLUDE_DIR}" "${RECURLOOP_SOURCE_DIR}")
+target_link_libraries(RecurloopRuntimeLib PUBLIC RecurloopLib)
+add_dependencies(RecurloopRuntimeLib RecurloopCoreImage)
+set_target_properties(RecurloopRuntimeLib PROPERTIES FOLDER "Libraries")
+
+add_executable(Recurloop "${RECURLOOP_SOURCE_DIR}/main.cpp")
 target_include_directories(Recurloop PRIVATE "${RECURLOOP_INCLUDE_DIR}" "${RECURLOOP_SOURCE_DIR}")
 set_target_properties(Recurloop PROPERTIES OUTPUT_NAME recurloop FOLDER "Executables")
-target_link_libraries(Recurloop PRIVATE RecurloopLib)
+target_link_libraries(Recurloop PRIVATE RecurloopRuntimeLib)
 install(TARGETS Recurloop RUNTIME DESTINATION bin)
 
 target_link_libraries(RadixLib PRIVATE UtilitiesLib)

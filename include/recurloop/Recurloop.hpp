@@ -1,5 +1,5 @@
 #pragma once
-#include "Language.hpp"
+#include <context/Context.hpp>
 
 #include <cstdint>
 #include <span>
@@ -19,7 +19,6 @@ namespace recurloop {
     void initializeBase(int argc, char **argv);
     void initializeRoot();
     void resetToKernel();
-    void installCompatibilityLanguage();
     void processStartupOperations();
 
     void cleanupMemory();
@@ -31,6 +30,9 @@ namespace recurloop {
     Recurloop();
     ~Recurloop();
 
+    // Initialize the normal runtime from the source-built core embedded in the
+    // final runtime layer.  The implementation intentionally lives outside
+    // RecurloopLib so stage-0/bootstrap tools do not depend on an embedded core.
     Recurloop& initialize(int argc, char **argv);
     Recurloop& initializeEmbedded(int argc, char **argv, std::span<const std::uint8_t> coreImage);
     int execute();

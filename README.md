@@ -674,14 +674,25 @@ Contributions are described in [`CONTRIBUTING.md`](CONTRIBUTING.md).
 
 ## Core image and self-hosted rebuild
 
-`core.rli` is the standard RecurLoop language image. A clean build creates it
-once with a private, non-installed builder, embeds those exact bytes in the
-final `recurloop` executable, and then uses the embedded image for ordinary
-execution.
+`core.rli` is the standard RecurLoop language image. A clean build uses an
+isolated, non-installed C++ stage-0 bootstrap only to create the first image.
+That image reads `libraries/recurloop/core.rl`, which clears the lexicon and
+rebuilds the same language from symbolic source declarations.
 
 ```text
-C++ host -> private core builder -> core.rl -> core.rli -> embed -> recurloop
+empty kernel
+  -> private C++ bootstrap
+  -> bootstrap-core.rli
+  -> core.rl
+  -> source-core.rli
+  -> fixed-point compare
+  -> embed source-core.rli
+  -> final recurloop
 ```
+
+The build requires both `bootstrap-core.rli == source-core.rli` and
+`source-core.rli == source-core-2.rli` byte-for-byte. Only the source-built
+image is embedded in the final executable.
 
 The public rebuild path uses the final executable itself:
 
@@ -693,17 +704,13 @@ recurloop --file libraries/recurloop/core.rl
 recurloop --reset --import core.rli --file libraries/recurloop/core.rl
 ```
 
-`libraries/recurloop/core.rl` exports `core.rli`, so an existing core image is
-the bootstrap for the next one. There is no public `--bootstrap`,
-`--language-image`, `--engine-image`, `--core`, or `--no-core` mode.
+`libraries/recurloop/core.rl` is semantic source rather than an engine-image
+dump: phrase references are symbolic and Host ABI primitives are named. Numeric
+phrase ids, numeric parent/prototype/successor ids and serialized payload dumps
+are rejected from the checked-in source core.
 
-The final runtime no longer constructs the compatibility language at startup.
-It registers process-local Host ABI action names, restores the embedded core
-image, and then binds ContextAPI/native addresses against that restored state.
-The Host ABI registry is kernel state rather than hidden lexicon data, so
-`--reset` replaces the language without serializing or reconstructing those
-bindings.
-
-The remaining migration is confined to the private clean-build builder. Its C++
-language subsystems are removed one by one as equivalent source modules become
-part of `core.rli`.
+There is no public `--bootstrap`, `--language-image`, `--engine-image`, `--core`,
+or `--no-core` mode. The final runtime registers process-local Host ABI action
+names, restores the embedded source-built core image, and binds native
+ContextAPI addresses against that restored state. The bootstrap language code
+is linked only into the private build tool under `bootstrap/`.

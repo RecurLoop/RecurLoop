@@ -1,4 +1,5 @@
 #pragma once
+#include <recurloop/LanguageKernel.hpp>
 #include <context/Context.hpp>
 
 #define PHRASE_CORE(Key, Action, Configure, Scope)                                                                     \
@@ -31,19 +32,12 @@
   PHRASE(" ", __VA_ARGS__);                                                                                            \
   WHITESPACES_EXCEPT_SPACE(__VA_ARGS__);
 
-namespace recurloop {
-  namespace language::phrases {
-    inline constexpr char TYPES[] = "phrase-types";
-    inline constexpr char TYPE_DATA[] = "data";
-    inline constexpr char TYPE_ELABORATE[] = "elaborate";
-    inline constexpr char TYPE_CALLABLE[] = "callable";
-    inline constexpr char TYPE_SCOPED_CALLABLE[] = "scoped-callable";
-  } // namespace language::phrases
+#include <context/Context.hpp>
 
+namespace recurloop::bootstrap {
   class Language {
   public:
     Language() = delete;
-
     static void setup(context::Context &context);
   };
-} // namespace recurloop
+}

@@ -1,5 +1,4 @@
 #include <recurloop/Recurloop.hpp>
-#include <recurloop/EmbeddedCore.hpp>
 
 static void printHelp(const char *program) {
   std::cout << "Recurloop\n\n"
@@ -72,7 +71,7 @@ int main(int argc, char *argv[]) {
   int result = 0;
 
   try {
-    result = recurloop::Recurloop().initializeEmbedded(argc, argv, recurloop::embedded::coreImage()).execute();
+    result = recurloop::Recurloop().initialize(argc, argv).execute();
   } catch (const Exception &error) {
     result = error.status();
     std::cerr << RED_TEXT;

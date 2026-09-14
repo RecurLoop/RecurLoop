@@ -1,6 +1,6 @@
 #pragma once
 
-#include <recurloop/Language.hpp>
+#include <recurloop/LanguageKernel.hpp>
 #include <recurloop/Assembler.hpp>
 #include <recurloop/Debugger.hpp>
 #include <recurloop/PhraseNames.hpp>

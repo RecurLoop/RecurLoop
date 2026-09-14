@@ -36,6 +36,8 @@ namespace recurloop {
     std::uint32_t magic = Magic;
     char mnemonic[16] = {};
 
+    constexpr AssemblerInstruction() = default;
+
     template <std::size_t N> constexpr AssemblerInstruction(const char (&name)[N]) {
       static_assert(N <= sizeof(mnemonic));
       for (std::size_t index = 0; index + 1 < N; ++index) mnemonic[index] = name[index];

@@ -13,7 +13,12 @@ namespace recurloop {
   public:
     ContextApi() = delete;
 
+    // Bootstrap path: declare the typed Host ABI functions and bind their process addresses.
     static void setup(context::Context &context);
+
+    // Runtime/source-core path: declarations must already exist; only validate
+    // them against this host and bind process-local native addresses.
+    static void bind(context::Context &context);
   };
 
   namespace context_phrase {

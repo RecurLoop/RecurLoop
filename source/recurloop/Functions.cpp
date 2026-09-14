@@ -24,6 +24,32 @@
 #include <vector>
 
 namespace recurloop {
+  namespace function_internal {
+    std::string stableActionSymbol(std::string_view scope, SourceLocation origin, std::string_view signature,
+                                   std::string_view body, std::size_t discriminator) {
+      // FNV-1a over source identity. Unlike the old lexicon-checkpoint based
+      // symbol, this is independent of transient allocator state and therefore
+      // stable across bootstrap/source fixed points.
+      std::uint64_t hash = 14695981039346656037ull;
+      const auto add = [&](std::string_view value) {
+        for (unsigned char byte : value) {
+          hash ^= byte;
+          hash *= 1099511628211ull;
+        }
+        hash ^= 0xffu;
+        hash *= 1099511628211ull;
+      };
+      add(scope);
+      add(origin.path);
+      add(std::to_string(origin.line));
+      add(std::to_string(origin.column));
+      add(signature);
+      add(body);
+      add(std::to_string(discriminator));
+      return "__recurloop_action_" + std::to_string(hash);
+    }
+  } // namespace function_internal
+
   namespace {
     constexpr std::string_view ActionRegistryName{"\0inline-actions", 15};
     constexpr std::uint64_t SignaturePhraseMagic = 0x524C464E53494731ull;
@@ -280,10 +306,12 @@ namespace recurloop {
                                            std::string_view bodySource, std::string hint,
                                            SourceLocation signatureOrigin, SourceLocation bodyOrigin) {
     const std::string scope = Assembler::definitionSymbol(context);
-    if (hint.empty()) hint = "__recurloop_action_" + std::to_string(context.lexicon.checkpoint().getAddress());
     if (signatureOrigin.path.empty())
       signatureOrigin = {context.source.path, context.source.line, context.source.position};
     if (bodyOrigin.path.empty()) bodyOrigin = signatureOrigin;
+    if (hint.empty())
+      hint = function_internal::stableActionSymbol(Assembler::definitionSymbol(context), signatureOrigin,
+                                                   signatureSource, bodySource);
     function_internal::FunctionDefinition definition = function_internal::parseSignature(
         context, signatureSource, hint, false, signatureOrigin.path, signatureOrigin.line, signatureOrigin.column);
     definition.scope = scope;

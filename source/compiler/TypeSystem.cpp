@@ -282,7 +282,7 @@ namespace compiler {
   TypeRegistry::TypeRegistry(lexicon::Phrase language)
       : lexicon(language.getLexicon()), languageAddress(language.getAddress()) {}
 
-  void TypeRegistry::setup(lexicon::Phrase root) {
+  void TypeRegistry::setupStorage(lexicon::Phrase root) {
     lexicon::Phrase language = dictionary(root, LanguageDictionaryName);
     lexicon::Phrase types = dictionary(language, TypesName);
     dictionary(language, TypeIdsName);
@@ -296,10 +296,15 @@ namespace compiler {
       storeAbiKind(abiKinds, TypeKind::Structure, ValueKind::Aggregate);
       storeAbiKind(abiKinds, TypeKind::Function, ValueKind::Pointer);
     }
-    if (!exact(types, NextTypeIdName).isNull()) return;
-    setNextId(types, 1);
+    if (exact(types, NextTypeIdName).isNull()) setNextId(types, 1);
+  }
+
+  void TypeRegistry::setup(lexicon::Phrase root) {
+    setupStorage(root);
+    lexicon::Phrase language = dictionary(root, LanguageDictionaryName);
     TypeRegistry registry(language);
-    registry.append({InvalidType, "void", TypeKind::Void, 0, 1});
+    if (registry.find("void") != InvalidType) return;
+    registry.defineVoid();
     registry.defineInteger("i8", 8, true);
     registry.defineInteger("u8", 8, false);
     registry.defineInteger("i16", 16, true);
@@ -345,6 +350,10 @@ namespace compiler {
     const TypeId id = find(name);
     if (id == InvalidType) THROW(, "unknown type: '" << name << "'")
     return get(id);
+  }
+
+  TypeId TypeRegistry::defineVoid(std::string name) {
+    return append({InvalidType, std::move(name), TypeKind::Void, 0, 1});
   }
 
   TypeId TypeRegistry::defineInteger(std::string name, std::size_t bits, bool isSigned) {
@@ -491,6 +500,23 @@ namespace compiler {
         }))
       THROW(, "structure method name is empty or duplicated")
     type.methods.push_back({std::move(name), std::move(signature)});
+    std::sort(type.methods.begin(), type.methods.end(), [](const TypeMethod &left, const TypeMethod &right) {
+      if (left.name != right.name) return left.name < right.name;
+      if (left.signature.symbol != right.signature.symbol) return left.signature.symbol < right.signature.symbol;
+      if (left.signature.parameters.size() != right.signature.parameters.size())
+        return left.signature.parameters.size() < right.signature.parameters.size();
+      for (std::size_t index = 0; index < left.signature.parameters.size(); ++index) {
+        const ValueType &a = left.signature.parameters[index];
+        const ValueType &b = right.signature.parameters[index];
+        if (a.name != b.name) return a.name < b.name;
+        if (a.kind != b.kind) return a.kind < b.kind;
+        if (a.bits != b.bits) return a.bits < b.bits;
+        if (a.pointerDepth != b.pointerDepth) return a.pointerDepth < b.pointerDepth;
+      }
+      if (left.signature.result.name != right.signature.result.name)
+        return left.signature.result.name < right.signature.result.name;
+      return left.signature.variadic < right.signature.variadic;
+    });
     lexicon::Phrase language = languageRoot(*lexicon, languageAddress);
     store(exact(language, TypesName), type.name, type);
     store(exact(language, TypeIdsName), idKey(type.id), type);
