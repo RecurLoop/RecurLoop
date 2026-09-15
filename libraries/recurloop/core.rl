@@ -1,8 +1,6 @@
-// RecurLoop standard language, defined as source rather than as an image dump.
-// The existing core is used only to read this declaration. engine define captures
-// the whole block first, replaces the lexicon, and rebuilds the stage-0 language
-// from these symbolic declarations.
 engine define {
+  // RecurLoop standard language is defined semantically from these sources.
+  // The seed only enters this block; CoreDefinition replaces the seed lexicon.
   include "core/phrases.rl"
   include "core/types.rl"
   include "core/expressions.rl"

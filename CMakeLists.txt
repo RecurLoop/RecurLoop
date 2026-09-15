@@ -72,30 +72,32 @@ add_library(RecurloopLib STATIC ${recurloop_sources})
 target_include_directories(RecurloopLib PRIVATE "${RECURLOOP_INCLUDE_DIR}" "${RECURLOOP_SOURCE_DIR}")
 set_target_properties(RecurloopLib PROPERTIES FOLDER "Libraries")
 
-# Bootstrap code is deliberately isolated from the production runtime library.
-# It exists only to create the first stage-0 image from an empty lexicon.
-add_library(RecurloopBootstrapLib STATIC
-    "${CMAKE_CURRENT_SOURCE_DIR}/bootstrap/source/BootstrapLanguage.cpp")
-target_include_directories(RecurloopBootstrapLib PRIVATE
+# Stage-0 seed code is deliberately isolated from the production runtime.
+# It contains only enough grammar to enter `engine define { ... }`; the seed is
+# not the standard language and is never embedded in the final executable.
+add_library(RecurloopSeedLib STATIC
+    "${CMAKE_CURRENT_SOURCE_DIR}/bootstrap/source/SeedLanguage.cpp")
+target_include_directories(RecurloopSeedLib PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}/bootstrap/include"
     "${RECURLOOP_INCLUDE_DIR}"
     "${RECURLOOP_SOURCE_DIR}")
-target_link_libraries(RecurloopBootstrapLib PRIVATE RecurloopLib)
-set_target_properties(RecurloopBootstrapLib PROPERTIES FOLDER "Bootstrap")
+target_link_libraries(RecurloopSeedLib PRIVATE RecurloopLib)
+set_target_properties(RecurloopSeedLib PROPERTIES FOLDER "Bootstrap")
 
-add_executable(RecurloopCoreBuilder "${CMAKE_CURRENT_SOURCE_DIR}/bootstrap/source/main.cpp")
-target_include_directories(RecurloopCoreBuilder PRIVATE
+add_executable(RecurloopSeedBuilder "${CMAKE_CURRENT_SOURCE_DIR}/bootstrap/source/main.cpp")
+target_include_directories(RecurloopSeedBuilder PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}/bootstrap/include"
     "${RECURLOOP_INCLUDE_DIR}"
     "${RECURLOOP_SOURCE_DIR}")
-target_link_libraries(RecurloopCoreBuilder PRIVATE RecurloopBootstrapLib RecurloopLib)
-set_target_properties(RecurloopCoreBuilder PROPERTIES
-    OUTPUT_NAME recurloop-core-builder
+target_link_libraries(RecurloopSeedBuilder PRIVATE RecurloopSeedLib RecurloopLib)
+set_target_properties(RecurloopSeedBuilder PROPERTIES
+    OUTPUT_NAME recurloop-seed-builder
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/tools"
     FOLDER "Build tools")
 
-# The source-core runner has no bootstrap dependency. It starts from a supplied
-# image and executes the checked-in source definition to produce the next image.
+# The source-core runner has no seed-library dependency. It starts from a
+# supplied image and executes the checked-in source definition to produce the
+# next image.
 add_executable(RecurloopCoreRunner "${RECURLOOP_SOURCE_DIR}/core_runner_main.cpp")
 target_include_directories(RecurloopCoreRunner PRIVATE "${RECURLOOP_INCLUDE_DIR}" "${RECURLOOP_SOURCE_DIR}")
 target_link_libraries(RecurloopCoreRunner PRIVATE RecurloopLib)
@@ -105,44 +107,41 @@ set_target_properties(RecurloopCoreRunner PROPERTIES
     FOLDER "Build tools")
 
 set(RECURLOOP_CORE_ROOT "${CMAKE_CURRENT_BINARY_DIR}/generated/core")
-set(RECURLOOP_BOOTSTRAP_DIR "${RECURLOOP_CORE_ROOT}/bootstrap")
+set(RECURLOOP_SEED_DIR "${RECURLOOP_CORE_ROOT}/seed")
 set(RECURLOOP_SOURCE_DIR_1 "${RECURLOOP_CORE_ROOT}/source-1")
 set(RECURLOOP_SOURCE_DIR_2 "${RECURLOOP_CORE_ROOT}/source-2")
-set(RECURLOOP_BOOTSTRAP_IMAGE "${RECURLOOP_BOOTSTRAP_DIR}/core.rli")
+set(RECURLOOP_SEED_IMAGE "${RECURLOOP_SEED_DIR}/seed.rli")
 set(RECURLOOP_SOURCE_IMAGE "${RECURLOOP_SOURCE_DIR_1}/core.rli")
 set(RECURLOOP_SOURCE_IMAGE_2 "${RECURLOOP_SOURCE_DIR_2}/core.rli")
-# Public tests and tooling should always point at the source-built image, never
-# at the private C++ bootstrap artifact.
+# Public tests and tooling always point at the self-hosted source-built image.
 set(RECURLOOP_CORE_IMAGE "${RECURLOOP_SOURCE_IMAGE}")
 set(RECURLOOP_CORE_FIXED_POINT "${RECURLOOP_CORE_ROOT}/fixed-point.stamp")
 set(RECURLOOP_EMBEDDED_CORE_CPP "${CMAKE_CURRENT_BINARY_DIR}/generated/recurloop/EmbeddedCore.cpp")
 set(RECURLOOP_CORE_VALIDATE_SCRIPT "${CMAKE_CURRENT_SOURCE_DIR}/cmake/ValidateCoreSource.cmake")
-file(MAKE_DIRECTORY "${RECURLOOP_BOOTSTRAP_DIR}" "${RECURLOOP_SOURCE_DIR_1}" "${RECURLOOP_SOURCE_DIR_2}")
+set(RECURLOOP_SEED_VALIDATE_SCRIPT "${CMAKE_CURRENT_SOURCE_DIR}/cmake/ValidateSeedImage.cmake")
+file(MAKE_DIRECTORY "${RECURLOOP_SEED_DIR}" "${RECURLOOP_SOURCE_DIR_1}" "${RECURLOOP_SOURCE_DIR_2}")
 
 file(GLOB RECURLOOP_CORE_SOURCES CONFIGURE_DEPENDS
     "${CMAKE_CURRENT_SOURCE_DIR}/libraries/recurloop/core/*.rl")
 list(APPEND RECURLOOP_CORE_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/libraries/recurloop/core.rl")
-set(RECURLOOP_CONTROL_FLOW_SOURCE "${CMAKE_CURRENT_SOURCE_DIR}/libraries/recurloop/core/control-flow.rl")
 
 add_custom_command(
-    OUTPUT "${RECURLOOP_BOOTSTRAP_IMAGE}"
-    COMMAND "${CMAKE_COMMAND}" -E rm -f "${RECURLOOP_BOOTSTRAP_IMAGE}"
-    COMMAND "$<TARGET_FILE:RecurloopCoreBuilder>"
-            "${RECURLOOP_BOOTSTRAP_IMAGE}"
-            "${RECURLOOP_CONTROL_FLOW_SOURCE}"
-    DEPENDS RecurloopCoreBuilder "${RECURLOOP_CONTROL_FLOW_SOURCE}"
-    COMMENT "Building bootstrap-core.rli from isolated C++ stage-0 bootstrap"
+    OUTPUT "${RECURLOOP_SEED_IMAGE}"
+    COMMAND "${CMAKE_COMMAND}" -E rm -f "${RECURLOOP_SEED_IMAGE}"
+    COMMAND "$<TARGET_FILE:RecurloopSeedBuilder>" "${RECURLOOP_SEED_IMAGE}"
+    DEPENDS RecurloopSeedBuilder
+    COMMENT "Building minimal seed.rli from isolated C++ stage-0 seed"
     VERBATIM)
 
 add_custom_command(
     OUTPUT "${RECURLOOP_SOURCE_IMAGE}"
     COMMAND "${CMAKE_COMMAND}" -E rm -f "${RECURLOOP_SOURCE_IMAGE}"
     COMMAND "$<TARGET_FILE:RecurloopCoreRunner>"
-            "${RECURLOOP_BOOTSTRAP_IMAGE}"
+            "${RECURLOOP_SEED_IMAGE}"
             "${CMAKE_CURRENT_SOURCE_DIR}/libraries/recurloop/core.rl"
     WORKING_DIRECTORY "${RECURLOOP_SOURCE_DIR_1}"
-    DEPENDS RecurloopCoreRunner "${RECURLOOP_BOOTSTRAP_IMAGE}" ${RECURLOOP_CORE_SOURCES}
-    COMMENT "Building source-core.rli from semantic core.rl"
+    DEPENDS RecurloopCoreRunner "${RECURLOOP_SEED_IMAGE}" ${RECURLOOP_CORE_SOURCES}
+    COMMENT "Building core.rli from minimal seed + semantic core.rl"
     VERBATIM)
 
 add_custom_command(
@@ -153,7 +152,7 @@ add_custom_command(
             "${CMAKE_CURRENT_SOURCE_DIR}/libraries/recurloop/core.rl"
     WORKING_DIRECTORY "${RECURLOOP_SOURCE_DIR_2}"
     DEPENDS RecurloopCoreRunner "${RECURLOOP_SOURCE_IMAGE}" ${RECURLOOP_CORE_SOURCES}
-    COMMENT "Building second source-core.rli fixed point"
+    COMMENT "Building second self-hosted core.rli fixed point"
     VERBATIM)
 
 add_custom_command(
@@ -161,12 +160,15 @@ add_custom_command(
     COMMAND "${CMAKE_COMMAND}"
             "-DROOT=${CMAKE_CURRENT_SOURCE_DIR}/libraries/recurloop"
             -P "${RECURLOOP_CORE_VALIDATE_SCRIPT}"
-    COMMAND "${CMAKE_COMMAND}" -E compare_files "${RECURLOOP_BOOTSTRAP_IMAGE}" "${RECURLOOP_SOURCE_IMAGE}"
+    COMMAND "${CMAKE_COMMAND}"
+            "-DSEED=${RECURLOOP_SEED_IMAGE}"
+            "-DCORE=${RECURLOOP_SOURCE_IMAGE}"
+            -P "${RECURLOOP_SEED_VALIDATE_SCRIPT}"
     COMMAND "${CMAKE_COMMAND}" -E compare_files "${RECURLOOP_SOURCE_IMAGE}" "${RECURLOOP_SOURCE_IMAGE_2}"
     COMMAND "${CMAKE_COMMAND}" -E touch "${RECURLOOP_CORE_FIXED_POINT}"
-    DEPENDS "${RECURLOOP_BOOTSTRAP_IMAGE}" "${RECURLOOP_SOURCE_IMAGE}" "${RECURLOOP_SOURCE_IMAGE_2}"
-            "${RECURLOOP_CORE_VALIDATE_SCRIPT}" ${RECURLOOP_CORE_SOURCES}
-    COMMENT "Checking byte-for-byte bootstrap/source/source fixed point"
+    DEPENDS "${RECURLOOP_SEED_IMAGE}" "${RECURLOOP_SOURCE_IMAGE}" "${RECURLOOP_SOURCE_IMAGE_2}"
+            "${RECURLOOP_CORE_VALIDATE_SCRIPT}" "${RECURLOOP_SEED_VALIDATE_SCRIPT}" ${RECURLOOP_CORE_SOURCES}
+    COMMENT "Checking seed separation and byte-for-byte core/core self-hosting fixed point"
     VERBATIM)
 
 add_custom_command(
@@ -176,7 +178,7 @@ add_custom_command(
             "-DOUTPUT=${RECURLOOP_EMBEDDED_CORE_CPP}"
             -P "${CMAKE_CURRENT_SOURCE_DIR}/cmake/EmbedCoreImage.cmake"
     DEPENDS "${RECURLOOP_CORE_FIXED_POINT}" "${RECURLOOP_SOURCE_IMAGE}" "${CMAKE_CURRENT_SOURCE_DIR}/cmake/EmbedCoreImage.cmake"
-    COMMENT "Embedding source-built core.rli"
+    COMMENT "Embedding self-hosted core.rli"
     VERBATIM)
 
 add_custom_target(RecurloopCoreImage DEPENDS "${RECURLOOP_CORE_FIXED_POINT}" "${RECURLOOP_SOURCE_IMAGE}")

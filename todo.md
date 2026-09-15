@@ -1,6 +1,6 @@
 # RecurLoop autonomy migration
 
-Status after this overlay: **Stage 4 COMPLETE. Stage 5 is NEXT.**
+Status after this overlay: **Stage 5 COMPLETE. Stage 6 is NEXT.**
 
 This file is temporary migration state for an AI agent. Update it after every autonomy overlay. The final autonomy overlay must delete `todo.md`.
 
@@ -566,15 +566,70 @@ The same generic relocation metadata is consumed by Stage-3 promotion because pr
 
 Standalone Stage-3/4 harnesses also verified selective replay, internal reference relocation and rejected unselected transaction dependencies.
 
-## Stage 5 — change bootstrap proof from parity to self-hosting
+## Stage 5 — change bootstrap proof from parity to self-hosting — COMPLETE
 
-Current migration proof intentionally requires:
+The bootstrap parity proof has been removed. A clean build now uses a genuinely
+smaller stage-0 seed whose only language job is to enter the semantic
+`engine define { ... }` block in `core.rl`.
+
+### 5.1 Minimal seed
+
+The old full `bootstrap::Language::setup()` implementation was removed.
+`bootstrap::SeedLanguage::setup()` now creates only:
 
 ```text
-bootstrap-core.rli == source-core.rli == source-core-2.rli
+root / phrase-type kernel
+canonical `{` and `}` grammar markers
+root whitespace
+`engine` dictionary whitespace
+`engine define`
 ```
 
-For true self-hosting, replace it with:
+The checked-in `core.rl` begins directly with `engine define { ... }`, so the
+seed does not need comments, expressions, `let`, functions, compiler registry,
+assembler syntax, control flow or any ordinary standard-language phrase.
+
+Current clean-build image sizes in the Stage-5 validation build:
+
+```text
+seed.rli  = 2,106 bytes
+core.rli  = 283,167 bytes
+```
+
+Do not treat the exact byte counts as ABI constants; the invariant is that the
+seed is a distinct, strictly smaller image.
+
+### 5.2 Exact build-image restore
+
+Normal `EngineImage::decode()` retains its compatibility behavior of restoring
+an image and then ensuring normal compiler/value defaults.
+
+The private core build runner now uses `EngineImage::decodeExact()` instead.
+Exact restore reconstructs only the serialized image graph plus process-local
+action bindings and lookup/staging/reference state. It does **not** inject
+`LanguageState::setup()` or `Values::setup()` state before `core.rl` runs.
+
+This is required for the Stage-5 proof: `seed.rli` must not receive a hidden
+compiler registry from C++ before `engine define` replaces the seed lexicon.
+`CoreDefinition::apply()` is responsible for materializing the full source core,
+including compiler state, and then initializes the value/compiler state declared
+by that source graph.
+
+Do not replace `decodeExact()` in the seed/core runner with normal production
+`initializeEmbedded()`; the latter intentionally assumes an already complete
+core image and immediately binds ContextAPI declarations.
+
+### 5.3 Build pipeline
+
+The private build targets are now:
+
+```text
+RecurloopSeedLib
+RecurloopSeedBuilder -> seed.rli
+RecurloopCoreRunner  -> core.rli / core-2.rli
+```
+
+The clean-build proof is:
 
 ```text
 minimal C++ seed
@@ -583,13 +638,66 @@ seed.rli + core.rl
     -> core.rli
 core.rli + core.rl
     -> core-2.rli
-require core.rli == core-2.rli
+require core.rli == core-2.rli byte-for-byte
 embed core.rli
 ```
 
-`seed.rli` is only powerful enough to build the real core. It is not required to be byte-identical to the final core and must not be embedded in the production executable.
+There is deliberately no `seed.rli == core.rli` comparison.
 
-Never weaken the `core.rli == core-2.rli` byte-for-byte fixed point.
+`cmake/ValidateSeedImage.cmake` additionally fails the build if:
+
+```text
+seed.rli == core.rli
+or
+size(seed.rli) >= size(core.rli)
+```
+
+This prevents accidental regression to the old parity/bootstrap model.
+`cmake/ValidateCoreSource.cmake` still rejects numeric-id/image-dump style core
+source.
+
+### 5.4 Production boundary
+
+`RecurloopSeedLib` is a private build-time dependency only. The production
+executable remains:
+
+```text
+Recurloop -> RecurloopRuntimeLib -> RecurloopLib
+```
+
+and embeds only the self-hosted `core.rli`. It does not link the seed library or
+seed language.
+
+### 5.5 Stage-5 verification
+
+The Stage-5 validation build proved:
+
+```text
+seed.rli + core.rl -> core.rli
+core.rli + core.rl -> core-2.rli
+core.rli == core-2.rli
+```
+
+and `libraries/recurloop/test-core.sh` still passes:
+
+```text
+embedded == reset+import
+reset leaves only the host kernel
+recurloop --file core.rl reproduces core.rli
+reset+import core.rli + core.rl reproduces core.rli
+```
+
+### 5.6 What Stage 5 does NOT claim
+
+`CoreDefinition::apply()` is still implemented in C++ and still knows how to
+materialize the compiler declarations from `core/compiler.rl`. Production
+`LanguageState`/`TypeRegistry` still know hidden compiler-registry names and
+layouts. Standard phrases still predominantly bind `action host "..."`.
+
+Those are Stage 6 and Stage 7. Do not call Stage 5 full self-hosting of compiler
+semantics; it is the correct **self-reproducing core bootstrap boundary** that
+allows those later migrations without requiring the seed to duplicate the final
+language.
 
 ## Stage 6 — move compiler registry schema/semantics into RecurLoop
 

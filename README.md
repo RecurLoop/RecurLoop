@@ -675,24 +675,27 @@ Contributions are described in [`CONTRIBUTING.md`](CONTRIBUTING.md).
 ## Core image and self-hosted rebuild
 
 `core.rli` is the standard RecurLoop language image. A clean build uses an
-isolated, non-installed C++ stage-0 bootstrap only to create the first image.
-That image reads `libraries/recurloop/core.rl`, which clears the lexicon and
-rebuilds the same language from symbolic source declarations.
+isolated, non-installed C++ **seed** that contains only enough grammar to enter
+`engine define { ... }`. The seed is deliberately not the standard language.
+`libraries/recurloop/core.rl` replaces that seed lexicon and builds the real core
+from symbolic source declarations.
 
 ```text
 empty kernel
-  -> private C++ bootstrap
-  -> bootstrap-core.rli
+  -> private C++ seed
+  -> seed.rli
   -> core.rl
-  -> source-core.rli
-  -> fixed-point compare
-  -> embed source-core.rli
+  -> core.rli
+  -> core.rl
+  -> core-2.rli
+  -> byte-for-byte core/core fixed point
+  -> embed core.rli
   -> final recurloop
 ```
 
-The build requires both `bootstrap-core.rli == source-core.rli` and
-`source-core.rli == source-core-2.rli` byte-for-byte. Only the source-built
-image is embedded in the final executable.
+The build requires `core.rli == core-2.rli` byte-for-byte. It also fails if
+`seed.rli` is equal to, or not smaller than, the final core. Only `core.rli` is
+embedded in the final executable.
 
 The public rebuild path uses the final executable itself:
 
@@ -712,5 +715,5 @@ are rejected from the checked-in source core.
 There is no public `--bootstrap`, `--language-image`, `--engine-image`, `--core`,
 or `--no-core` mode. The final runtime registers process-local Host ABI action
 names, restores the embedded source-built core image, and binds native
-ContextAPI addresses against that restored state. The bootstrap language code
-is linked only into the private build tool under `bootstrap/`.
+ContextAPI addresses against that restored state. The seed language code is
+linked only into the private build tool under `bootstrap/`.

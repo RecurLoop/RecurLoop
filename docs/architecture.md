@@ -61,10 +61,10 @@ functions, native modules, link inputs, and output policy in the lexicon.
 `source/recurloop` contains the runtime/image bridge, semantic source-core
 interpreter, Host ABI actions, compiler-facing language services, and native
 backend integration. The standard-language construction itself is not part of
-the production runtime: the equivalent C++ stage-0 definition lives only under
-`bootstrap/`, while the canonical definition lives under
-`libraries/recurloop/core/`. The installed executable starts from Host ABI
-registration plus the embedded source-built `core.rli`.
+the production runtime. `bootstrap/` contains only a minimal C++ seed capable
+of entering the semantic `engine define` block; the canonical language
+definition lives under `libraries/recurloop/core/`. The installed executable
+starts from Host ABI registration plus the embedded self-hosted `core.rli`.
 
 ## Native module flow
 

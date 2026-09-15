@@ -36,6 +36,11 @@ namespace recurloop {
     // root and any reachable type/prototype/action dependencies are retained.
     static std::vector<std::uint8_t> encode(context::Context &context, Size since);
     static void decode(context::Context &context, std::span<const std::uint8_t> bytes);
+    // Restore exactly the serialized semantic graph without injecting the
+    // compatibility compiler/value defaults normally supplied by decode().
+    // This is used by the private seed/core build pipeline so the minimal seed
+    // cannot receive hidden language/compiler state from C++ before core.rl.
+    static void decodeExact(context::Context &context, std::span<const std::uint8_t> bytes);
     // Materialize an image below an existing dictionary. Existing phrases are
     // reused as graph dependencies; new phrases are appended to the target.
     static void merge(context::Context &context, std::span<const std::uint8_t> bytes, lexicon::Phrase target);

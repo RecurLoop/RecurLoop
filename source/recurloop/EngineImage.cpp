@@ -1019,7 +1019,7 @@ namespace recurloop {
       }
     }
 
-    void restore(context::Context &context, const Snapshot &snapshot) {
+    void restore(context::Context &context, const Snapshot &snapshot, bool initializeSemanticDefaults) {
       const std::vector<Record> &records = snapshot.phrases;
       const std::vector<Record> previous = capture(context);
       const std::uint64_t importedRoot = records.front().id;
@@ -1180,8 +1180,10 @@ namespace recurloop {
       // excluded from .rli images. Recreate the names used by the restored
       // image after the lexicon replacement.
       context.actions().restore(registeredActions);
+      if (initializeSemanticDefaults) {
         context::Values::setup(root);
-      compiler::LanguageState::setup(root);
+        compiler::LanguageState::setup(root);
+      }
       context.lookup = {};
       context.staging = {};
       context.reference = {};
@@ -1200,7 +1202,11 @@ namespace recurloop {
   }
 
   void EngineImage::decode(context::Context &context, std::span<const std::uint8_t> bytes) {
-    restore(context, decodeRecords(context, bytes));
+    restore(context, decodeRecords(context, bytes), true);
+  }
+
+  void EngineImage::decodeExact(context::Context &context, std::span<const std::uint8_t> bytes) {
+    restore(context, decodeRecords(context, bytes), false);
   }
 
   void EngineImage::merge(context::Context &context, std::span<const std::uint8_t> bytes, lexicon::Phrase target) {
@@ -1345,7 +1351,7 @@ namespace recurloop {
       const std::vector<std::string> fields = tokens(line, lineNumber);
       if (fields.empty()) continue;
       if ((fields[0] == "phrase" && fields.size() >= 3 && fields[2] == "parent") || fields[0] == "relocate") {
-        restore(context, parseManifest(context, source));
+        restore(context, parseManifest(context, source), true);
         return;
       }
       break;

@@ -41,18 +41,19 @@ recurloop --reset --import core.rli --file libraries/recurloop/core.rl
 ## Clean build
 
 A clean checkout has no previous image, so CMake uses a private, non-installed
-bootstrap under `bootstrap/` to create the first stage-0 image. That image is
-used only to read `core.rl`.
+minimal seed under `bootstrap/`. The seed contains only enough grammar to enter
+`engine define { ... }`; it is not the standard language.
 
-The build then requires the following fixed point byte-for-byte:
+The build proves the source-built language is self-hosting:
 
 ```text
-C++ bootstrap -> bootstrap-core.rli
-bootstrap-core.rli + core.rl -> source-core.rli
-source-core.rli + core.rl -> source-core-2.rli
+C++ seed -> seed.rli
+seed.rli + core.rl -> core.rli
+core.rli + core.rl -> core-2.rli
 
-bootstrap-core.rli == source-core.rli == source-core-2.rli
+core.rli == core-2.rli
 ```
 
-Only `source-core.rli` is embedded in the production executable. The production
-`RecurloopLib` does not contain the C++ standard-language setup.
+`seed.rli` is explicitly required to differ from and be smaller than `core.rli`.
+Only `core.rli` is embedded in the production executable. The production
+`RecurloopLib` does not contain the C++ seed language or standard-language setup.

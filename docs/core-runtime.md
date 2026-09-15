@@ -23,20 +23,26 @@ recurloop --reset --import core.rli --file program.rl
 An `.rli` image has no special root/core/bootstrap kind. Its role comes from the
 state into which it is imported.
 
-## Clean-build bootstrap
+## Clean-build seed
 
 A completely clean checkout has no previous `core.rli`, so the build contains a
-private, non-installed stage-0 bootstrap. Its C++ language definition lives only
-under `bootstrap/` and is not linked into the production runtime.
+private, non-installed stage-0 seed. Its C++ definition lives only under
+`bootstrap/` and is not linked into the production runtime.
+
+The seed contains only the phrase-type kernel, structural brace markers,
+whitespace and `engine define`. It does not contain the standard language or a
+compiler registry.
 
 ```text
 empty kernel
-  -> bootstrap::Language::setup()          (bootstrap/ only)
-  -> bootstrap-core.rli
+  -> bootstrap::SeedLanguage::setup()      (bootstrap/ only)
+  -> seed.rli
 ```
 
-`bootstrap-core.rli` exists only so RecurLoop can read the source definition of
-the same language.
+The private core runner restores `seed.rli` exactly, without the compatibility
+compiler/value defaults that normal runtime image restore may provide. The seed
+exists only so RecurLoop can enter the semantic `engine define { ... }` block in
+`core.rl`.
 
 ## Source-defined core
 
@@ -55,34 +61,42 @@ paths, and compiler settings. C++ supplies only the physical layout facts and
 process-local native implementations required by those source declarations.
 
 After the fresh stage-0 graph exists, source-defined `control-flow.rl` is parsed
-by that newly built language and the result is exported as `source-core.rli`.
+by that newly built language and the result is exported as `core.rli`.
 
-## Fixed point
+## Self-hosting fixed point
 
-The build requires both of these comparisons to succeed byte-for-byte:
+The build intentionally does **not** require the seed to equal the final core.
+Instead it proves that the source-built language reproduces itself:
 
 ```text
-bootstrap-core.rli == source-core.rli
-source-core.rli    == source-core-2.rli
+seed.rli + core.rl -> core.rli
+core.rli + core.rl -> core-2.rli
+
+core.rli == core-2.rli
 ```
 
-A one-byte difference fails the build. The source tree is also scanned to reject
-dump-like core declarations before the comparison runs.
+A one-byte difference between `core.rli` and `core-2.rli` fails the build. A
+separate build-time guard also fails if `seed.rli` is equal to, or not smaller
+than, `core.rli`; this prevents accidental regression to bootstrap parity. The
+source tree is still scanned to reject dump-like core declarations.
 
-Only `source-core.rli` is embedded in the final executable:
+Only `core.rli` is embedded in the final executable:
 
 ```text
-C++ bootstrap
-  -> bootstrap-core.rli
+minimal C++ seed
+  -> seed.rli
   -> core.rl
-  -> source-core.rli
-  -> byte-for-byte fixed point
-  -> embed source-core.rli
+  -> core.rli
+  -> core.rl
+  -> core-2.rli
+  -> byte-for-byte core/core fixed point
+  -> embed core.rli
   -> final recurloop
 ```
 
 The production `RecurloopLib` contains the kernel/runtime/Host ABI and the
-semantic `engine define` interpreter, but not the C++ standard-language setup.
+semantic `engine define` interpreter, but not the C++ standard-language setup or
+seed language.
 
 ## Self-hosted rebuild
 
@@ -119,7 +133,7 @@ Production startup is:
 ```text
 empty kernel
   -> register process-local Host ABI actions
-  -> restore embedded source-core.rli
+  -> restore embedded core.rli
   -> bind process-local ContextAPI/native symbols
   -> process CLI operations
 ```
