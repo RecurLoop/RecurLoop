@@ -86,14 +86,15 @@ namespace recurloop::function_internal {
     public:
       LlvmGenerator(context::Context &context, const FunctionDefinition &signature, std::string_view executableEntry,
                     std::string targetTriple = RECURLOOP_LLVM_TARGET_TRIPLE, std::string targetCpu = RECURLOOP_LLVM_CPU,
-                    std::string targetFeatures = RECURLOOP_LLVM_FEATURES)
+                    std::string targetFeatures = RECURLOOP_LLVM_FEATURES, bool debug = false)
           : context(context), signature(signature), llvmContext(), module("recurloop", llvmContext),
             builder(llvmContext), integerType(context.language().types.find("i64")),
             realType(context.language().types.find("f64")),
             bytePointer(context.language().types.pointerTo(context.language().types.find("u8"))),
             bitStringPointer(context.language().types.find("BitString*")),
             phraseActionPointer(context.language().types.find("PhraseAction*")), executableEntry(executableEntry),
-            triple(std::move(targetTriple)), cpu(std::move(targetCpu)), features(std::move(targetFeatures)) {}
+            triple(std::move(targetTriple)), cpu(std::move(targetCpu)), features(std::move(targetFeatures)),
+            debug(debug) {}
 
       LlvmProgram generate(const std::vector<Statement> &body) {
         initializeTargets();
@@ -101,12 +102,17 @@ namespace recurloop::function_internal {
         triple = llvm::Triple::normalize(triple);
         const llvm::Triple llvmTriple(triple);
         module.setTargetTriple(llvmTriple);
+        if (llvmTriple.isX86()) {
+          module.addModuleFlag(llvm::Module::Min, "cf-protection-return", 1);
+          module.addModuleFlag(llvm::Module::Min, "cf-protection-branch", 1);
+        }
 
         std::string targetError;
         const llvm::Target *target = llvm::TargetRegistry::lookupTarget(llvmTriple, targetError);
         if (target == nullptr) fail({}, 0, "LLVM target '" + triple + "' is unavailable: " + targetError);
         llvm::TargetOptions options;
-        const llvm::CodeGenOptLevel codegenLevel = RECURLOOP_LLVM_OPT_LEVEL == 0   ? llvm::CodeGenOptLevel::None
+        const llvm::CodeGenOptLevel codegenLevel = debug                           ? llvm::CodeGenOptLevel::None
+                                                   : RECURLOOP_LLVM_OPT_LEVEL == 0 ? llvm::CodeGenOptLevel::None
                                                    : RECURLOOP_LLVM_OPT_LEVEL == 1 ? llvm::CodeGenOptLevel::Less
                                                    : RECURLOOP_LLVM_OPT_LEVEL == 2 ? llvm::CodeGenOptLevel::Default
                                                                                    : llvm::CodeGenOptLevel::Aggressive;
@@ -177,6 +183,7 @@ namespace recurloop::function_internal {
       void createFunction() {
         function = llvm::Function::Create(functionType(signature.function), llvm::GlobalValue::ExternalLinkage,
                                           signature.function.signature.symbol, module);
+        function->addFnAttr(llvm::Attribute::StackProtectReq);
         llvm::BasicBlock *entry = llvm::BasicBlock::Create(llvmContext, "entry", function);
         builder.SetInsertPoint(entry);
         scopes.emplace_back();
@@ -209,7 +216,8 @@ namespace recurloop::function_internal {
         passes.registerFunctionAnalyses(functions);
         passes.registerLoopAnalyses(loops);
         passes.crossRegisterProxies(loops, functions, callGraph, modules);
-        const llvm::OptimizationLevel level = RECURLOOP_LLVM_OPT_LEVEL == 0   ? llvm::OptimizationLevel::O0
+        const llvm::OptimizationLevel level = debug                           ? llvm::OptimizationLevel::O0
+                                              : RECURLOOP_LLVM_OPT_LEVEL == 0 ? llvm::OptimizationLevel::O0
                                               : RECURLOOP_LLVM_OPT_LEVEL == 1 ? llvm::OptimizationLevel::O1
                                               : RECURLOOP_LLVM_OPT_LEVEL == 2 ? llvm::OptimizationLevel::O2
                                                                               : llvm::OptimizationLevel::O3;
@@ -244,6 +252,7 @@ namespace recurloop::function_internal {
             llvm::Type::getInt32Ty(llvmContext),
             {llvm::Type::getInt32Ty(llvmContext), llvm::PointerType::getUnqual(llvmContext)}, false);
         llvm::Function *main = llvm::Function::Create(mainType, llvm::GlobalValue::ExternalLinkage, "main", module);
+        main->addFnAttr(llvm::Attribute::StackProtectReq);
         llvm::BasicBlock *entry = llvm::BasicBlock::Create(llvmContext, "entry", main);
         llvm::IRBuilder<> wrapper(entry);
         std::vector<llvm::Value *> arguments;
@@ -1061,6 +1070,7 @@ namespace recurloop::function_internal {
       std::string triple;
       std::string cpu;
       std::string features;
+      bool debug = false;
       std::vector<std::unordered_map<std::string, LlvmLocal>> scopes;
       std::vector<LlvmLoop> loops;
       std::vector<const Expression *> defers;
@@ -1069,10 +1079,12 @@ namespace recurloop::function_internal {
   } // namespace
 
   LlvmProgram generateLlvmProgram(context::Context &context, const FunctionDefinition &signature,
-                                  const std::vector<Statement> &body, std::string_view executableEntry) {
+                                  const std::vector<Statement> &body, std::string_view executableEntry, bool debug) {
     DiagnosticScope diagnostics(signature.sourceText,
                                 {signature.sourcePath, signature.sourceLine, signature.sourceColumn});
-    LlvmProgram result = LlvmGenerator(context, signature, executableEntry).generate(body);
+    LlvmProgram result = LlvmGenerator(context, signature, executableEntry, RECURLOOP_LLVM_TARGET_TRIPLE,
+                                       RECURLOOP_LLVM_CPU, RECURLOOP_LLVM_FEATURES, debug)
+                             .generate(body);
     std::unordered_set<std::string> provided(result.providedSymbols.begin(), result.providedSymbols.end());
     std::unordered_set<std::string> imports(result.imports.begin(), result.imports.end());
     std::unordered_set<std::string> visited;
@@ -1113,7 +1125,9 @@ namespace recurloop::function_internal {
         const std::vector<Statement> statements =
             parseBody(context, source->body, source->scope, source->path, source->line, source->column);
         DiagnosticScope dependencyDiagnostics(source->body, {source->path, source->line, source->column});
-        LlvmProgram artifact = LlvmGenerator(context, dependency, {}).generate(statements);
+        LlvmProgram artifact = LlvmGenerator(context, dependency, {}, RECURLOOP_LLVM_TARGET_TRIPLE, RECURLOOP_LLVM_CPU,
+                                             RECURLOOP_LLVM_FEATURES, debug)
+                                   .generate(statements);
         provided.insert(symbol);
         result.providedSymbols.push_back(symbol);
         result.objects.push_back(std::move(artifact.objects.front()));
@@ -1156,6 +1170,10 @@ namespace recurloop::function_internal {
     const std::string triple = llvm::Triple::normalize(llvm::sys::getDefaultTargetTriple());
     const llvm::Triple llvmTriple(triple);
     module.setTargetTriple(llvmTriple);
+    if (llvmTriple.isX86()) {
+      module.addModuleFlag(llvm::Module::Min, "cf-protection-return", 1);
+      module.addModuleFlag(llvm::Module::Min, "cf-protection-branch", 1);
+    }
     std::string targetError;
     const llvm::Target *target = llvm::TargetRegistry::lookupTarget(llvmTriple, targetError);
     if (target == nullptr) fail({}, 0, "LLVM host target is unavailable: " + targetError);
@@ -1214,6 +1232,7 @@ namespace recurloop::function_internal {
 
     llvm::FunctionType *entryType = llvm::FunctionType::get(llvm::Type::getVoidTy(llvmContext), false);
     llvm::Function *entry = llvm::Function::Create(entryType, llvm::GlobalValue::ExternalLinkage, symbol, module);
+    entry->addFnAttr(llvm::Attribute::StackProtectReq);
     llvm::BasicBlock *block = llvm::BasicBlock::Create(llvmContext, "entry", entry);
     llvm::BasicBlock *exit = llvm::BasicBlock::Create(llvmContext, "exit", entry);
     llvm::IRBuilder<> builder(block);

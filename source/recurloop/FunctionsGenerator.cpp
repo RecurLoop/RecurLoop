@@ -79,11 +79,16 @@ namespace recurloop {
       }
 
       compiler::Module generate(const std::vector<Statement> &body) {
+        emitBytes({0xf3, 0x0f, 0x1e, 0xfa}); // endbr64
         emit("push", "rbp");
         emit("mov", "rbp, rsp");
         emitBytes({0x48, 0x81, 0xec});
         framePatch = code.size();
         little(0, 4);
+
+        const std::size_t canarySlot = allocate();
+        emitBytes({0x64, 0x48, 0x8b, 0x04, 0x25, 0x28, 0x00, 0x00, 0x00}); // mov rax, fs:0x28
+        emit("mov", slot(canarySlot) + ", rax");
 
         scopes.emplace_back();
         static constexpr std::string_view registers[] = {"rdi", "rsi", "rdx", "rcx", "r8", "r9"};
@@ -105,6 +110,15 @@ namespace recurloop {
         statements(body);
         emit("xor", "eax, eax");
         const std::size_t epilogue = code.size();
+        emit("mov", "rdx, " + slot(canarySlot));
+        emitBytes({0x64, 0x48, 0x33, 0x14, 0x25, 0x28, 0x00, 0x00, 0x00}); // xor rdx, fs:0x28
+        const std::size_t canaryValid = jump({0x0f, 0x84});
+        emitBytes({0xe8});
+        const std::size_t failurePatch = code.size();
+        little(0, 4);
+        relocations.push_back({compiler::SectionKind::Text, failurePatch, compiler::RelocationKind::PLTRelative32,
+                               "__stack_chk_fail", -4, true});
+        patchRelative(canaryValid, code.size());
         emit("leave", "");
         emit("ret", "");
         for (std::size_t patch : returns) patchRelative(patch, epilogue);
@@ -354,19 +368,13 @@ namespace recurloop {
         code.insert(code.end(), bytes);
       }
       void emitFunctionAddress(const std::string &symbol, bool imported) {
-        if (imported) {
-          emitBytes({0x48, 0xb8});
-          const std::size_t patch = code.size();
-          little(0, 8);
-          relocations.push_back(
-              {compiler::SectionKind::Text, patch, compiler::RelocationKind::Absolute64, symbol, 0, true});
-          return;
-        }
         emitBytes({0x48, 0x8d, 0x05});
         const std::size_t patch = code.size();
         little(0, 4);
-        relocations.push_back({compiler::SectionKind::Text, patch, compiler::RelocationKind::PCRelative32, symbol, -4,
-                               symbol != signature.function.signature.symbol});
+        relocations.push_back({compiler::SectionKind::Text, patch,
+                               imported ? compiler::RelocationKind::PLTRelative32
+                                        : compiler::RelocationKind::PCRelative32,
+                               symbol, -4, imported || symbol != signature.function.signature.symbol});
       }
       void emitDataAddress(const std::string &symbol) {
         emitBytes({0x48, 0x8d, 0x05});
@@ -1036,12 +1044,11 @@ namespace recurloop {
         if (callable && callable->signature.variadic) emit("xor", "eax, eax");
         if (function) {
           if (function->imported) {
-            emitBytes({0x49, 0xbb});
+            emitBytes({0xe8});
             const std::size_t patch = code.size();
-            little(0, 8);
-            relocations.push_back({compiler::SectionKind::Text, patch, compiler::RelocationKind::Absolute64,
-                                   function->signature.symbol, 0, true});
-            emitBytes({0x41, 0xff, 0xd3});
+            little(0, 4);
+            relocations.push_back({compiler::SectionKind::Text, patch, compiler::RelocationKind::PLTRelative32,
+                                   function->signature.symbol, -4, true});
           } else {
             emitBytes({0xe8});
             const std::size_t patch = code.size();
@@ -1376,7 +1383,6 @@ namespace recurloop {
       action("fn.assignment.emit-multiply", emitAssignmentMultiply);
       action("fn.assignment.emit-divide", emitAssignmentDivide);
       action("fn.assignment.emit-modulo", emitAssignmentModulo);
-
     }
 
     void setupCompilerSyntax(context::Context &context) {

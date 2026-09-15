@@ -128,7 +128,9 @@ public:
   }
 
   bool contains(const std::vector<std::uint8_t> &bytes, std::string_view text) const {
-    return std::search(bytes.begin(), bytes.end(), text.begin(), text.end()) != bytes.end();
+    return std::search(bytes.begin(), bytes.end(), text.begin(), text.end(), [](std::uint8_t left, char right) {
+             return left == static_cast<std::uint8_t>(right);
+           }) != bytes.end();
   }
 
   bool symbolDefined(const std::vector<std::uint8_t> &bytes, std::string_view name) const {
@@ -166,6 +168,96 @@ public:
         std::memcpy(&symbol, bytes.data() + symbols.sh_offset + offset, sizeof(symbol));
         const char *symbolName = reinterpret_cast<const char *>(bytes.data() + strings.sh_offset + symbol.st_name);
         if (name == symbolName) return symbol.st_shndx != SHN_UNDEF && ELF64_ST_BIND(symbol.st_info) == STB_GLOBAL;
+      }
+    }
+    return false;
+  }
+
+  bool hasSectionType(const std::vector<std::uint8_t> &bytes, Elf64_Word type) const {
+    Elf64_Ehdr header;
+    std::memcpy(&header, bytes.data(), sizeof(header));
+    for (std::size_t index = 0; index < header.e_shnum; ++index) {
+      Elf64_Shdr section;
+      std::memcpy(&section, bytes.data() + header.e_shoff + index * header.e_shentsize, sizeof(section));
+      if (section.sh_type == type) return true;
+    }
+    return false;
+  }
+
+  bool sectionFamilyContains(const std::vector<std::uint8_t> &bytes, std::string_view prefix,
+                             std::string_view pattern) const {
+    if (bytes.size() < sizeof(Elf64_Ehdr) || pattern.empty()) return false;
+    Elf64_Ehdr header;
+    std::memcpy(&header, bytes.data(), sizeof(header));
+    if (header.e_shstrndx == SHN_UNDEF || header.e_shstrndx >= header.e_shnum) return false;
+
+    Elf64_Shdr names;
+    std::memcpy(&names, bytes.data() + header.e_shoff + header.e_shstrndx * header.e_shentsize, sizeof(names));
+    if (names.sh_offset > bytes.size() || names.sh_size > bytes.size() - names.sh_offset) return false;
+    const char *sectionNames = reinterpret_cast<const char *>(bytes.data() + names.sh_offset);
+
+    for (std::size_t index = 0; index < header.e_shnum; ++index) {
+      Elf64_Shdr section;
+      std::memcpy(&section, bytes.data() + header.e_shoff + index * header.e_shentsize, sizeof(section));
+      if (section.sh_name >= names.sh_size || section.sh_offset > bytes.size() ||
+          section.sh_size > bytes.size() - section.sh_offset)
+        continue;
+      std::string_view name(sectionNames + section.sh_name);
+      if (!name.starts_with(prefix)) continue;
+      const auto begin = bytes.begin() + static_cast<std::ptrdiff_t>(section.sh_offset);
+      const auto end = begin + static_cast<std::ptrdiff_t>(section.sh_size);
+      if (std::search(begin, end, pattern.begin(), pattern.end(), [](std::uint8_t left, char right) {
+            return left == static_cast<std::uint8_t>(right);
+          }) != end)
+        return true;
+    }
+    return false;
+  }
+
+  bool hasProgramHeader(const std::vector<std::uint8_t> &bytes, Elf64_Word type, Elf64_Word forbiddenFlags = 0) const {
+    Elf64_Ehdr header;
+    std::memcpy(&header, bytes.data(), sizeof(header));
+    for (std::size_t index = 0; index < header.e_phnum; ++index) {
+      Elf64_Phdr program;
+      std::memcpy(&program, bytes.data() + header.e_phoff + index * header.e_phentsize, sizeof(program));
+      if (program.p_type == type && (program.p_flags & forbiddenFlags) == 0) return true;
+    }
+    return false;
+  }
+
+  bool bindsNow(const std::vector<std::uint8_t> &bytes) const {
+    Elf64_Ehdr header;
+    std::memcpy(&header, bytes.data(), sizeof(header));
+    for (std::size_t index = 0; index < header.e_phnum; ++index) {
+      Elf64_Phdr program;
+      std::memcpy(&program, bytes.data() + header.e_phoff + index * header.e_phentsize, sizeof(program));
+      if (program.p_type != PT_DYNAMIC) continue;
+      for (std::size_t offset = 0; offset + sizeof(Elf64_Dyn) <= program.p_filesz; offset += sizeof(Elf64_Dyn)) {
+        Elf64_Dyn dynamic;
+        std::memcpy(&dynamic, bytes.data() + program.p_offset + offset, sizeof(dynamic));
+        if (dynamic.d_tag == DT_BIND_NOW || (dynamic.d_tag == DT_FLAGS && (dynamic.d_un.d_val & DF_BIND_NOW) != 0) ||
+            (dynamic.d_tag == DT_FLAGS_1 && (dynamic.d_un.d_val & DF_1_NOW) != 0))
+          return true;
+        if (dynamic.d_tag == DT_NULL) break;
+      }
+    }
+    return false;
+  }
+
+  bool hasSymbol(const std::vector<std::uint8_t> &bytes, std::string_view name) const {
+    Elf64_Ehdr header;
+    std::memcpy(&header, bytes.data(), sizeof(header));
+    for (std::size_t index = 0; index < header.e_shnum; ++index) {
+      Elf64_Shdr symbols;
+      std::memcpy(&symbols, bytes.data() + header.e_shoff + index * header.e_shentsize, sizeof(symbols));
+      if (symbols.sh_type != SHT_SYMTAB && symbols.sh_type != SHT_DYNSYM) continue;
+      Elf64_Shdr strings;
+      std::memcpy(&strings, bytes.data() + header.e_shoff + symbols.sh_link * header.e_shentsize, sizeof(strings));
+      for (std::size_t offset = 0; offset < symbols.sh_size; offset += symbols.sh_entsize) {
+        Elf64_Sym symbol;
+        std::memcpy(&symbol, bytes.data() + symbols.sh_offset + offset, sizeof(symbol));
+        const char *symbolName = reinterpret_cast<const char *>(bytes.data() + strings.sh_offset + symbol.st_name);
+        if (name == symbolName) return true;
       }
     }
     return false;
@@ -2037,6 +2129,49 @@ TEST_F(AssemblerTesting, EmitsAndRunsAnAnonymousExecutableWithoutLet) {
   std::filesystem::remove(path);
 }
 
+TEST_F(AssemblerTesting, ReleaseExecutablesAreHardenedAndStrippedByDefault) {
+  const std::string path = executablePath("hardened-release-output");
+  std::filesystem::remove(path);
+  const std::string source = "emit executable \"" + path + R"(" hardened_entry = fn () -> i64 {
+  return 0
+}
+)";
+
+  ASSERT_EQ(execute(source), 0) << error();
+  const std::vector<std::uint8_t> executable = readFile(path);
+  Elf64_Ehdr header;
+  std::memcpy(&header, executable.data(), sizeof(header));
+  EXPECT_EQ(header.e_type, ET_DYN);
+  EXPECT_TRUE(hasProgramHeader(executable, PT_GNU_RELRO));
+  EXPECT_TRUE(hasProgramHeader(executable, PT_GNU_STACK, PF_X));
+  EXPECT_TRUE(bindsNow(executable));
+  EXPECT_FALSE(hasSectionType(executable, SHT_SYMTAB));
+  EXPECT_TRUE(hasSymbol(executable, "__stack_chk_fail"));
+  EXPECT_TRUE(contains(executable, std::string_view("\x02\x00\x00\xc0\x04\x00\x00\x00\x03\x00\x00\x00", 12)));
+  EXPECT_TRUE(sectionFamilyContains(executable, ".plt", std::string_view("\xf3\x0f\x1e\xfa", 4)));
+  std::filesystem::remove(path);
+}
+
+TEST_F(AssemblerTesting, DebugExecutableKeepsSymbolsWhileRetainingLinkerHardening) {
+  const std::string path = executablePath("hardened-debug-output");
+  std::filesystem::remove(path);
+  const std::string source = "emit executable debug \"" + path + R"(" debug_entry = fn () -> i64 {
+  return 0
+}
+)";
+
+  ASSERT_EQ(execute(source), 0) << error();
+  const std::vector<std::uint8_t> executable = readFile(path);
+  Elf64_Ehdr header;
+  std::memcpy(&header, executable.data(), sizeof(header));
+  EXPECT_EQ(header.e_type, ET_DYN);
+  EXPECT_TRUE(hasProgramHeader(executable, PT_GNU_RELRO));
+  EXPECT_TRUE(bindsNow(executable));
+  EXPECT_TRUE(hasSectionType(executable, SHT_SYMTAB));
+  EXPECT_TRUE(hasSymbol(executable, "debug_entry"));
+  std::filesystem::remove(path);
+}
+
 TEST_F(AssemblerTesting, ReturnsTheNativeEntrypointStatusFromAStaticExecutable) {
   const std::string path = executablePath("exit-status");
   std::filesystem::remove(path);
@@ -2082,7 +2217,7 @@ let jit = asm { ret }
   Elf64_Ehdr header;
   std::memcpy(&header, executable.data(), sizeof(header));
   EXPECT_EQ(std::memcmp(header.e_ident, ELFMAG, SELFMAG), 0);
-  EXPECT_EQ(header.e_type, ET_EXEC);
+  EXPECT_EQ(header.e_type, ET_DYN);
   EXPECT_EQ(header.e_machine, EM_X86_64);
   EXPECT_NE(std::filesystem::status(path).permissions() & std::filesystem::perms::owner_exec,
             std::filesystem::perms::none);

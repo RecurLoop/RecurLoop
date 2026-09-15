@@ -419,7 +419,14 @@ TEST_F(ModuleLinkerTesting, RoutesImportedPltCallsThroughNearbyStubs) {
   const auto entry = reinterpret_cast<std::uint64_t (*)()>(image.address("entry"));
 
   EXPECT_EQ(entry(), 73);
-  EXPECT_GE(image.size(), code.size() + 16);
+  EXPECT_GE(image.size(), code.size() + 24);
+
+  // The first import stub is 8-byte aligned after the six-byte text section.
+  // Function values may point at this stub, so CET/IBT requires ENDBR64 at
+  // the indirect branch target.
+  const auto *jit = static_cast<const std::uint8_t *>(executable) + image.offset();
+  const std::array<std::uint8_t, 4> endbr64 = {0xf3, 0x0f, 0x1e, 0xfa};
+  EXPECT_TRUE(std::equal(endbr64.begin(), endbr64.end(), jit + 8));
 }
 
 TEST_F(ModuleLinkerTesting, RelocatesEveryAddressInTheNativePhraseInvocationTemplate) {

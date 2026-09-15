@@ -29,6 +29,7 @@ namespace recurloop {
     std::string path;
     std::string entry;
     bool anonymous = false;
+    bool debug = false;
   };
 
   struct AssemblerInstruction {
@@ -80,6 +81,7 @@ namespace recurloop {
     static void outputBegin(context::Context &context, lexicon::Phrase &invoked);
     static void objectEnd(context::Context &context, lexicon::Phrase &invoked);
     static void executableEnd(context::Context &context, lexicon::Phrase &invoked);
+    static void executableDebugEnd(context::Context &context, lexicon::Phrase &invoked);
     static void rawEnd(context::Context &context, lexicon::Phrase &invoked);
     static std::string prepareDefinitionName(context::Context &context, std::string name);
     static std::string dictionarySymbol(context::Context &context);

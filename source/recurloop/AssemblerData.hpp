@@ -139,6 +139,7 @@ namespace recurloop {
     Size pathBytes = 0;
     NativeOutputKind kind = NativeOutputKind::None;
     bool anonymous = false;
+    bool debug = false;
   };
 
   static_assert(std::is_trivially_copyable_v<CompiledScopeSessionData>);

@@ -18,7 +18,7 @@ namespace compiler {
       std::size_t offset = 0;
     };
 
-    constexpr std::size_t ImportStubSize = 16;
+    constexpr std::size_t ImportStubSize = 24;
 
     std::size_t alignUp(std::size_t value, std::size_t alignment) {
       if (alignment == 0 || (alignment & (alignment - 1)) != 0)
@@ -144,7 +144,14 @@ namespace compiler {
 
     for (const ImportStub &stub : importStubs) {
       const std::size_t offset = stub.offset - start;
-      static constexpr std::array<std::uint8_t, 8> jump = {0xff, 0x25, 0x02, 0x00, 0x00, 0x00, 0x66, 0x90};
+      // PLTRelative32 is also used when a generated function value refers to
+      // an import. In that case callers reach this stub through an indirect
+      // branch, so the stub itself must be a valid CET/IBT landing pad.
+      static constexpr std::array<std::uint8_t, 16> jump = {
+          0xf3, 0x0f, 0x1e, 0xfa,                         // endbr64
+          0xff, 0x25, 0x06, 0x00, 0x00, 0x00,             // jmp qword ptr [rip + 6]
+          0x66, 0x0f, 0x1f, 0x44, 0x00, 0x00,             // six-byte nop
+      };
       std::copy(jump.begin(), jump.end(), bytes.begin() + offset);
       writeLittle(bytes.data() + offset + jump.size(), image.address(stub.symbol), sizeof(std::uint64_t));
     }

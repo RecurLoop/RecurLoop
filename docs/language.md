@@ -190,7 +190,26 @@ emit raw "/tmp/data.bin" = hex { 52 4c 0a }
 emit object "/tmp/module.o" add = fn (a:i64, b:i64) -> i64 {
     return a + b
 }
+emit executable "/tmp/app" app_main = fn () -> i64 {
+    return 0
+}
+emit executable debug "/tmp/app-debug" app_debug_main = fn () -> i64 {
+    return 0
+}
 ```
+
+`emit executable` defaults to release output: PIE, immediate binding with
+full RELRO, a non-executable stack, x86-64 CET/IBT metadata and landing pads,
+stack canaries in generated `fn` code, and a stripped static symbol table.
+The `debug` form retains symbols and disables optimization for the LLVM
+function compiled by that directive while retaining the security properties.
+Hand-written `asm` remains responsible for valid indirect-branch landing
+pads inside the user-controlled instruction stream.
+
+`_FORTIFY_SOURCE` is a C/C++ preprocessing feature, not an ELF property or a
+RecurLoop code-generation mode. C/C++ objects linked into RecurLoop output
+must therefore be compiled with their desired fortify level separately;
+RecurLoop does not advertise a misleading fortify flag for native `fn` code.
 
 `module auto` closes native dependencies automatically. `module manual`,
 `module include`, `module exclude`, `module dynamic`, `module entry`,

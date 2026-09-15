@@ -49,7 +49,8 @@ namespace recurloop {
     lexicon::Phrase native_output(context::Context &context);
     NativeOutputKind native_output_kind(context::Context &context);
     bool linked_native_output(context::Context &context);
-    void set_native_output(context::Context &context, const std::string &path, NativeOutputKind kind);
+    void set_native_output(context::Context &context, const std::string &path, NativeOutputKind kind,
+                           bool debug = false);
     std::string compiled_scope_session_key();
     lexicon::Phrase compiled_scope_session(context::Context &context, bool required = true);
     bool compiled_scope_open(context::Context &context);

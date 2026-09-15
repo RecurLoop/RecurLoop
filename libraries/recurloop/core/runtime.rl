@@ -2179,6 +2179,43 @@ phrase emit_executable_quote = "\"" in emit_executable {
   action host "lookup.enter"
 }
 
+phrase emit_executable_debug = "debug" in emit_executable {
+  dictionary
+  type phrase_types_elaborate
+  action host "lookup.enter"
+}
+
+phrase emit_executable_debug_tab = "\t" in emit_executable_debug {
+  type phrase_types_elaborate
+  action host "language.ignore"
+}
+
+phrase emit_executable_debug_newline = "\n" in emit_executable_debug {
+  type phrase_types_elaborate
+  action host "language.ignore"
+}
+
+phrase emit_executable_debug_vertical_tab = "\x0b" in emit_executable_debug {
+  type phrase_types_elaborate
+  action host "language.ignore"
+}
+
+phrase emit_executable_debug_carriage_return = "\r" in emit_executable_debug {
+  type phrase_types_elaborate
+  action host "language.ignore"
+}
+
+phrase emit_executable_debug_empty = " " in emit_executable_debug {
+  type phrase_types_elaborate
+  action host "language.ignore"
+}
+
+phrase emit_executable_debug_quote = "\"" in emit_executable_debug {
+  dictionary
+  type phrase_types_elaborate
+  action host "lookup.enter"
+}
+
 phrase emit_object_tab = "\t" in emit_object {
   type phrase_types_elaborate
   action host "language.ignore"
@@ -2383,6 +2420,41 @@ phrase emit_executable_quote_t = "\\t" in emit_executable_quote {
 }
 
 phrase emit_executable_quote_v = "\\v" in emit_executable_quote {
+  type phrase_types_elaborate
+  action host "workspace.pass-vtab"
+}
+
+phrase emit_executable_debug_quote_empty = "" in emit_executable_debug_quote {
+  type phrase_types_elaborate
+  action host "workspace.pass-byte"
+}
+
+phrase emit_executable_debug_quote_quote = "\"" in emit_executable_debug_quote {
+  type phrase_types_elaborate
+  action host "assembler.executable-debug-end"
+}
+
+phrase emit_executable_debug_quote_backslash = "\\" in emit_executable_debug_quote {
+  type phrase_types_elaborate
+  action host "workspace.pass-byte"
+}
+
+phrase emit_executable_debug_quote_n = "\\n" in emit_executable_debug_quote {
+  type phrase_types_elaborate
+  action host "workspace.pass-lf"
+}
+
+phrase emit_executable_debug_quote_r = "\\r" in emit_executable_debug_quote {
+  type phrase_types_elaborate
+  action host "workspace.pass-cr"
+}
+
+phrase emit_executable_debug_quote_t = "\\t" in emit_executable_debug_quote {
+  type phrase_types_elaborate
+  action host "workspace.pass-tab"
+}
+
+phrase emit_executable_debug_quote_v = "\\v" in emit_executable_debug_quote {
   type phrase_types_elaborate
   action host "workspace.pass-vtab"
 }

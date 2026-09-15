@@ -8,7 +8,6 @@
 namespace recurloop {
   namespace assembler_internal {
 
-    static constexpr char EXECUTABLE_ENTRY_SYMBOL[] = ".Lentry";
     lexicon::Phrase assembler_ensure_label(context::Context &context, const std::string &name,
                                            const compiler::Assembler::Location &location) {
       if (!compiler::Assembler::isIdentifier(name)) assembler_fail(location, "invalid label name '" + name + "'");
@@ -342,8 +341,17 @@ namespace recurloop {
       if (!output) THROW(, description << ": cannot write output file '" << path << "'")
     }
 
+    void append_executable_link_options(std::vector<std::string> &arguments, bool debug) {
+      arguments.push_back("-pie");
+      arguments.push_back("-Wl,-z,relro");
+      arguments.push_back("-Wl,-z,now");
+      arguments.push_back("-Wl,-z,noexecstack");
+      arguments.push_back("-Wl,-z,separate-code");
+      if (!debug) arguments.push_back("-Wl,--strip-all");
+    }
+
     void write_shared_executable(context::Context &context, compiler::Module module, std::string_view entryName,
-                                 const std::string &path) {
+                                 const std::string &path, bool debug) {
       const compiler::Symbol *entry = module.findSymbol(entryName);
       if (entry == nullptr || entry->imported)
         THROW(, "dynamic executable: module symbol '" << entryName << "' is missing")
@@ -353,7 +361,18 @@ namespace recurloop {
       if (entryName != "main") {
         const compiler::Symbol *main = module.findSymbol("main");
         if (main != nullptr) THROW(, "dynamic executable: module already contains a 'main' symbol")
-        module.define("main", entry->section, entry->offset);
+        static constexpr std::array<std::uint8_t, 20> wrapper = {
+            0xf3, 0x0f, 0x1e, 0xfa,       // endbr64
+            0x31, 0xc0,                   // xor eax, eax: a bare ret produces status 0
+            0x48, 0x83, 0xec, 0x08,       // align the stack for the SysV call
+            0xe8, 0x00, 0x00, 0x00, 0x00, // call configured entry
+            0x48, 0x83, 0xc4, 0x08,       // restore the main entry stack
+            0xc3,                         // ret to the C runtime
+        };
+        const std::size_t wrapperOffset = module.append(compiler::SectionKind::Text, wrapper, 16);
+        module.define("main", compiler::SectionKind::Text, wrapperOffset);
+        module.relocate(compiler::SectionKind::Text, wrapperOffset + 11, compiler::RelocationKind::PCRelative32,
+                        std::string(entryName), -4);
       }
 
       TemporaryLinkObject object;
@@ -361,7 +380,15 @@ namespace recurloop {
 
       const char *configuredDriver = std::getenv("RECURLOOP_CC");
       const std::string driver = configuredDriver == nullptr || *configuredDriver == '\0' ? "cc" : configuredDriver;
-      std::vector<std::string> arguments = {driver, "-no-pie", object.get(), "-o", path};
+      std::vector<std::string> arguments = {driver};
+      append_executable_link_options(arguments, debug);
+      // The built-in backend emits x86-64 functions with ENDBR64 and advertises
+      // GNU_PROPERTY_X86_FEATURE_1_IBT. Function values can be represented by
+      // PLT-relative addresses, so those PLT entries must also be legal IBT
+      // targets. Without an IBT PLT, an indirect callback can fault on hosts
+      // that actually enforce CET even though the same binary works elsewhere.
+      arguments.push_back("-Wl,-z,ibtplt");
+      arguments.insert(arguments.end(), {object.get(), "-o", path});
       for (const std::string &searchPath : context.language().linkerSearchPaths())
         arguments.push_back("-L" + searchPath);
       for (const std::string &library : context.language().sharedLibraries()) arguments.push_back("-l" + library);
@@ -438,21 +465,6 @@ namespace recurloop {
     };
 #endif
 
-    void add_executable_entry(compiler::Module &module, std::string_view definitionSymbol) {
-      static constexpr std::array<std::uint8_t, 23> entry = {
-          0x48, 0x8b, 0x3c, 0x24,       // mov rdi, [rsp]     (argc)
-          0x48, 0x8d, 0x74, 0x24, 0x08, // lea rsi, [rsp+8]   (argv)
-          0xe8, 0,    0,    0,    0,    // call native definition
-          0x89, 0xc7,                   // mov edi, eax      (exit status)
-          0xb8, 0x3c, 0,    0,    0,    // mov eax, 60 (exit)
-          0x0f, 0x05,                   // syscall
-      };
-      const std::size_t offset = module.append(compiler::SectionKind::Text, entry, 16);
-      module.define(EXECUTABLE_ENTRY_SYMBOL, compiler::SectionKind::Text, offset);
-      module.relocate(compiler::SectionKind::Text, offset + 10, compiler::RelocationKind::PCRelative32,
-                      std::string(definitionSymbol), -4);
-    }
-
     bool write_native_output(context::Context &context, compiler::Module &module) {
       lexicon::Phrase directive = native_output(context);
       if (directive.isNull()) return false;
@@ -523,26 +535,26 @@ namespace recurloop {
           if (entry == nullptr || entry->imported)
             THROW(, "LLVM executable: entry symbol '" << entryName << "' is missing")
           if (module.findSymbol("main") != nullptr) THROW(, "LLVM executable: module already defines 'main'")
-          static constexpr std::array<std::uint8_t, 8> wrapper = {
+          static constexpr std::array<std::uint8_t, 20> wrapper = {
+              0xf3, 0x0f, 0x1e, 0xfa,       // endbr64
               0x31, 0xc0,                   // xor eax, eax: a bare ret produces status 0
+              0x48, 0x83, 0xec, 0x08,       // align the stack for the SysV call
               0xe8, 0x00, 0x00, 0x00, 0x00, // call configured entry
+              0x48, 0x83, 0xc4, 0x08,       // restore the main entry stack
               0xc3,                         // ret to the C runtime
           };
           const std::size_t wrapperOffset = module.append(compiler::SectionKind::Text, wrapper, 16);
           module.define("main", compiler::SectionKind::Text, wrapperOffset);
-          module.relocate(compiler::SectionKind::Text, wrapperOffset + 3, compiler::RelocationKind::PCRelative32,
+          module.relocate(compiler::SectionKind::Text, wrapperOffset + 11, compiler::RelocationKind::PCRelative32,
                           entryName, -4);
         }
         TemporaryLinkObject object;
         write_file(object.get(), compiler::ElfWriter::write(module), "LLVM assembler input");
-        std::vector<std::string> arguments = {
-            RECURLOOP_LLVM_CLANG,
-            "--target=" RECURLOOP_LLVM_TARGET_TRIPLE,
-            "-fuse-ld=" RECURLOOP_LLVM_LLD,
-            "-no-pie",
-            "-Wl,-O" + std::to_string(RECURLOOP_LLVM_OPT_LEVEL),
-            object.get(),
-        };
+        std::vector<std::string> arguments = {RECURLOOP_LLVM_CLANG, "--target=" RECURLOOP_LLVM_TARGET_TRIPLE,
+                                              "-fuse-ld=" RECURLOOP_LLVM_LLD,
+                                              "-Wl,-O" + std::to_string(RECURLOOP_LLVM_OPT_LEVEL)};
+        append_executable_link_options(arguments, outputData.debug);
+        arguments.push_back(object.get());
         LlvmLinkFiles linkFiles(context);
         linkFiles.append(arguments);
         arguments.insert(arguments.end(), {"-o", path});
@@ -556,12 +568,8 @@ namespace recurloop {
         break;
       }
 #else
-        if (context.language().hasSharedLibraries()) {
-          write_shared_executable(context, module, entryName, path);
-        } else {
-          add_executable_entry(module, entryName);
-          bytes = compiler::ElfWriter::writeExecutable(module, EXECUTABLE_ENTRY_SYMBOL);
-        }
+        write_shared_executable(context, module, entryName, path, outputData.debug);
+        linkedExternally = true;
         break;
 #endif
       case NativeOutputKind::Raw:
@@ -576,9 +584,7 @@ namespace recurloop {
       case NativeOutputKind::None: THROW(, "native output: invalid output kind")
       }
 
-      if (!linkedExternally &&
-          (outputData.kind != NativeOutputKind::Executable || !context.language().hasSharedLibraries()))
-        write_file(path, bytes, description);
+      if (!linkedExternally) write_file(path, bytes, description);
 
       if (outputData.kind == NativeOutputKind::Executable) {
         std::error_code error;
@@ -974,7 +980,8 @@ namespace recurloop {
       assembler_internal::run_llvm_linker(arguments, request->path, "LLVM object");
     } else {
       arguments = {RECURLOOP_LLVM_CLANG, "--target=" RECURLOOP_LLVM_TARGET_TRIPLE, "-fuse-ld=" RECURLOOP_LLVM_LLD,
-                   "-no-pie", "-Wl,-O" + std::to_string(RECURLOOP_LLVM_OPT_LEVEL)};
+                   "-Wl,-O" + std::to_string(RECURLOOP_LLVM_OPT_LEVEL)};
+      assembler_internal::append_executable_link_options(arguments, request->debug);
       arguments.insert(arguments.end(), llvmPaths.begin(), llvmPaths.end());
       if (hasDependencies) arguments.push_back(dependencyObject.get());
       linkFiles.append(arguments);

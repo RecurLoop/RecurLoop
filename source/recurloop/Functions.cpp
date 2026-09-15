@@ -413,7 +413,8 @@ namespace recurloop {
       if (output && output->kind != NativeFileKind::Raw) {
         function_internal::LlvmProgram program = function_internal::generateLlvmProgram(
             context, signature, statements,
-            output->kind == NativeFileKind::Executable ? std::string_view(output->entry) : std::string_view{});
+            output->kind == NativeFileKind::Executable ? std::string_view(output->entry) : std::string_view{},
+            output->debug);
         Assembler::finalizeLlvm(context, invoked, program.objects, program.providedSymbols, program.imports);
       } else {
         module = function_internal::generateLlvmModule(context, signature, statements);

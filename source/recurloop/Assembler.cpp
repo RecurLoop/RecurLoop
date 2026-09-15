@@ -65,9 +65,9 @@ namespace recurloop {
     definition.elaborate(context);
   }
 
-  static void finish_native_output(context::Context &context, NativeOutputKind kind) {
+  static void finish_native_output(context::Context &context, NativeOutputKind kind, bool debug = false) {
     const char *path = reinterpret_cast<const char *>(context.workspace.key.getMemory().toPtr());
-    assembler_internal::set_native_output(context, std::string(path, context.workspace.key.size()), kind);
+    assembler_internal::set_native_output(context, std::string(path, context.workspace.key.size()), kind, debug);
     context.workspace.key.clear();
     if (context.lookup.stack.size() < 3) THROW(, "native output: lookup stack is incomplete")
     lexicon::Phrase destination = context.lookup.stack[context.lookup.stack.size() - 3];
@@ -82,6 +82,10 @@ namespace recurloop {
 
   void Assembler::executableEnd(context::Context &context, lexicon::Phrase &invoked) {
     finish_native_output(context, NativeOutputKind::Executable);
+  }
+
+  void Assembler::executableDebugEnd(context::Context &context, lexicon::Phrase &invoked) {
+    finish_native_output(context, NativeOutputKind::Executable, true);
   }
 
   void Assembler::rawEnd(context::Context &context, lexicon::Phrase &invoked) {
@@ -170,6 +174,7 @@ namespace recurloop {
     request.path.assign(bytes, data.pathBytes);
     request.entry = context.language().moduleEntry().value_or(context.staging.phrase.getKey());
     request.anonymous = data.anonymous;
+    request.debug = data.debug;
     switch (data.kind) {
     case NativeOutputKind::Object: request.kind = NativeFileKind::Object; break;
     case NativeOutputKind::Executable: request.kind = NativeFileKind::Executable; break;
@@ -255,6 +260,7 @@ namespace recurloop {
     actions.define("assembler.output-begin", outputBegin);
     actions.define("assembler.object-end", objectEnd);
     actions.define("assembler.executable-end", executableEnd);
+    actions.define("assembler.executable-debug-end", executableDebugEnd);
     actions.define("assembler.raw-end", rawEnd);
     actions.define("assembler.begin", begin);
     actions.define("assembler.instruction", instruction);

@@ -60,7 +60,7 @@ namespace recurloop {
       return kind == NativeOutputKind::Object || kind == NativeOutputKind::Executable;
     }
 
-    void set_native_output(context::Context &context, const std::string &path, NativeOutputKind kind) {
+    void set_native_output(context::Context &context, const std::string &path, NativeOutputKind kind, bool debug) {
       if (path.empty()) THROW(, "native output: path cannot be empty")
       if (path.find('\0') != std::string::npos) THROW(, "native output: path contains a NUL byte")
       if (kind == NativeOutputKind::None) THROW(, "native output: missing output kind")
@@ -71,7 +71,7 @@ namespace recurloop {
               .make()
               .setType(lexicon::phrase::type::getData(root))
               .save()
-              .store(NativeOutputData{path.size(), kind, false});
+              .store(NativeOutputData{path.size(), kind, false, debug});
       Byte destination = directive.allocate(path.size());
       Byte::copy(Byte(const_cast<char *>(path.data())), destination, path.size());
     }

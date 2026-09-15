@@ -37,7 +37,8 @@ namespace recurloop::function_internal {
   };
 
   LlvmProgram generateLlvmProgram(context::Context &context, const FunctionDefinition &signature,
-                                  const std::vector<Statement> &body, std::string_view executableEntry);
+                                  const std::vector<Statement> &body, std::string_view executableEntry,
+                                  bool debug = false);
   compiler::Module generateLlvmModule(context::Context &context, const FunctionDefinition &signature,
                                       const std::vector<Statement> &body);
   LlvmPhraseModule generateLlvmPhraseModule(context::Context &context, std::string_view symbol,

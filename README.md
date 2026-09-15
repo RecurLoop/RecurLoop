@@ -375,6 +375,11 @@ emit executable "/tmp/hello-recurloop" main = fn () -> i64 {
 }
 ```
 
+Executable output is a hardened, stripped release build by default. Use
+`emit executable debug "/tmp/hello-recurloop" ...` to keep the symbol table
+and lower the newly compiled LLVM function without optimization; linker
+hardening remains enabled in debug output.
+
 The examples include generated applications such as a CIDR calculator, number
 tools, a task queue, container-oriented code, a JSON processor, an exchange
 simulator, and a ray tracer.

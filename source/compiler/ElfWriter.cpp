@@ -163,6 +163,17 @@ namespace compiler {
     }
 
     sections.push_back({".note.GNU-stack", {}, SHT_PROGBITS, 0, 0, 1});
+    // Every x86-64 object emitted by the built-in writer participates in CET.
+    // GNU_PROPERTY_X86_FEATURE_1_AND advertises both IBT and shadow-stack
+    // compatibility to the final linker.
+    sections.push_back(
+        {".note.gnu.property",
+         {0x04, 0x00, 0x00, 0x00, 0x10, 0x00, 0x00, 0x00, 0x05, 0x00, 0x00, 0x00, 'G',  'N',  'U',  0x00,
+          0x02, 0x00, 0x00, 0xc0, 0x04, 0x00, 0x00, 0x00, 0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00},
+         SHT_NOTE,
+         SHF_ALLOC,
+         32,
+         8});
 
     std::vector<std::vector<const Relocation *>> relocations(module.sections().size());
     for (const Relocation &relocation : module.relocations()) {

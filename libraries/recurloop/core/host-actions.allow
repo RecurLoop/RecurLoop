@@ -4,6 +4,7 @@ assembler.comment
 assembler.custom-section
 assembler.deferred-native-entry
 assembler.end
+assembler.executable-debug-end
 assembler.executable-end
 assembler.instruction
 assembler.invoke
