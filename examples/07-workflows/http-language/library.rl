@@ -773,15 +773,44 @@ let HttpSyntax:emit_raw = fn (
 }
 
 let HttpSyntax:emit_route = fn (
-    state:Context*, method:u8*, source:u8*, path_start:i64, path_end:i64, handler:u8*
+    state:Context*, method:u8*, source:u8*, path_start:i64, path_end:i64,
+    handler_start:i64, handler_end:i64
 ) -> void {
     context:syntax:emit(state, "__http_server.route(\"")
     context:syntax:emit(state, method)
     context:syntax:emit(state, "\", ")
     HttpSyntax:emit_raw(state, source, path_start, path_end)
     context:syntax:emit(state, ", ")
-    context:syntax:emit(state, handler)
+    HttpSyntax:emit_raw(state, source, handler_start, handler_end)
     context:syntax:emit(state, ")\n")
+}
+
+// A route handler is either one identifier or an inline function literal. For
+// the latter, consume through its balanced body; SliceReader already keeps
+// braces inside strings and comments out of the token stream.
+let HttpSyntax:handler_end = fn (reader:LanguageKit:SliceReader*) -> i64 {
+    if LanguageKit:SliceReader:kind_of(reader) != 1 { return -1 }
+    if !LanguageKit:SliceReader:is(reader, "fn") {
+        LanguageKit:SliceReader:consume(reader)
+        return reader.position
+    }
+
+    LanguageKit:SliceReader:consume(reader)
+    var body_started = 0
+    var depth = 0
+    while LanguageKit:SliceReader:kind_of(reader) != 0 {
+        if LanguageKit:SliceReader:match(reader, "{") {
+            body_started = 1
+            depth += 1
+        } else if LanguageKit:SliceReader:match(reader, "}") {
+            if !body_started { return -1 }
+            depth -= 1
+            if depth == 0 { return reader.position }
+        } else {
+            LanguageKit:SliceReader:consume(reader)
+        }
+    }
+    return -1
 }
 
 let http = phrase {
@@ -854,13 +883,14 @@ let http = phrase {
                 if path_value { free(path_value) }
 
                 if !LanguageKit:SliceReader:expect(reader, "->", "http route expects -> before the handler") { return }
-                let handler = LanguageKit:SliceReader:take_identifier(reader)
-                if !handler {
-                    HttpSyntax:error(state, "http route needs a handler function")
+                LanguageKit:SliceReader:skip_trivia(reader)
+                let handler_start = reader.position
+                let handler_end = HttpSyntax:handler_end(reader)
+                if handler_end <= handler_start {
+                    HttpSyntax:error(state, "http route needs a handler name or inline function")
                     return
                 }
-                HttpSyntax:emit_route(state, method, source, path_start, path_end, handler)
-                free(handler)
+                HttpSyntax:emit_route(state, method, source, path_start, path_end, handler_start, handler_end)
             }
         }
         if !closed { HttpSyntax:error(state, "http route block is not closed"); return }

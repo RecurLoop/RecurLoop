@@ -55,25 +55,19 @@ let home = fn (request:Http:Request*, response:Http:Response*) -> void {
 let health = fn (request:Http:Request*, response:Http:Response*) -> void {
     response.json(200, "{\"status\":\"ok\"}\n")
 }
-
-let echo = fn (request:Http:Request*, response:Http:Response*) -> void {
-    response.send(
-        200,
-        "application/octet-stream",
-        request.body,
-        request.body_length
-    )
-}
 ```
 
-The route table is language syntax defined by `library.rl`:
+The route table is language syntax defined by `library.rl`. The value after
+`->` can be a named handler or an inline function literal:
 
 ```rl
 let main = fn () -> i64 {
     http "127.0.0.1" 8080 {
         GET  "/"       -> home
         GET  "/health" -> health
-        POST "/echo"   -> echo
+        POST "/echo"   -> fn (request:Http:Request*, response:Http:Response*) -> void {
+            response.send(200, "application/octet-stream", request.body, request.body_length)
+        }
     }
 
     return 0
@@ -91,7 +85,9 @@ defer Http:Server:destroy(__http_server)
 
 __http_server.route("GET", "/", home)
 __http_server.route("GET", "/health", health)
-__http_server.route("POST", "/echo", echo)
+__http_server.route("POST", "/echo", fn (request:Http:Request*, response:Http:Response*) -> void {
+    response.send(200, "application/octet-stream", request.body, request.body_length)
+})
 
 __http_server.run()
 ```

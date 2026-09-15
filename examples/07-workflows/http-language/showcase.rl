@@ -18,16 +18,14 @@ let hello = fn (request:Http:Request*, response:Http:Response*) -> void {
     }
 }
 
-let echo = fn (request:Http:Request*, response:Http:Response*) -> void {
-    response.send(200, "application/octet-stream", request.body, request.body_length)
-}
-
 let http_main = fn () -> i64 {
     http "127.0.0.1" 8080 {
         GET  "/"       -> home
         GET  "/health" -> health
         GET  "/hello"  -> hello
-        POST "/echo"   -> echo
+        POST "/echo"   -> fn (request:Http:Request*, response:Http:Response*) -> void {
+            response.send(200, "application/octet-stream", request.body, request.body_length)
+        }
     }
     return 0
 }
