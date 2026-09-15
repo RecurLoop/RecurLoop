@@ -1,3 +1,3 @@
 120
 factorial specializations=1
-  (integer) -> integer hits=5 compiled=1
+  (integer) -> integer hits=1 compiled=1

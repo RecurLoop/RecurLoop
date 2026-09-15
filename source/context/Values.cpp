@@ -262,6 +262,22 @@ namespace context {
       lexicon::Phrase found = exact(scope, name);
       if (found.isNull()) continue;
       if (!header(found).mutableValue) THROW(, "cannot assign to constant: '" << name << "'")
+
+      // Runtime state (call depth, lifetime counters, etc.) is updated very
+      // frequently. Re-defining the phrase on every assignment grows the
+      // append-only radix arena even when the encoded value has exactly the
+      // same size. Update fixed-size payloads in place instead. This keeps
+      // mutable integer/boolean/real state genuinely mutable and prevents deep
+      // or hot recursive execution from exhausting lexicon storage.
+      const std::vector<std::uint8_t> payload = encode(value, true);
+      if (payload.size() == found.payloadSize()) {
+        if (!payload.empty()) std::memcpy(found.content(0, payload.size()).toPtr(), payload.data(), payload.size());
+        return;
+      }
+
+      // Variable-size changes (most notably strings) still require a new radix
+      // item because phrase payloads cannot be resized unless they are last in
+      // the arena.
       saveBinding(scope, name, value, true);
       return;
     }

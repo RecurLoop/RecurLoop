@@ -1022,22 +1022,46 @@ namespace recurloop {
     void restore(context::Context &context, const Snapshot &snapshot, bool initializeSemanticDefaults) {
       const std::vector<Record> &records = snapshot.phrases;
       const std::vector<Record> previous = capture(context);
-      const std::uint64_t importedRoot = records.front().id;
       const std::uint64_t previousRoot = previous.front().id;
-      std::set<std::pair<std::string, std::uint64_t>> importedRoots;
-      for (const Record &record : records)
-        if (record.parent == importedRoot) importedRoots.emplace(record.key, record.keyBits);
+
+      // Engine images are composable overlays, not whole-root replacements.
+      // Build a stable binary path for every phrase and preserve every phrase
+      // from the already-loaded language whose exact path is absent from the
+      // imported image. The old top-level-only rule discarded descendants of a
+      // colliding root (for example LanguageKit:Forms:Shell when another image
+      // also contained LanguageKit), leaving preserved phrases with dangling
+      // dependencies after a second --import.
+      const auto indexPaths = [](const std::vector<Record> &source) {
+        std::unordered_map<std::uint64_t, std::string> paths;
+        paths.reserve(source.size());
+        for (const Record &record : source) {
+          if (record.parent == 0) {
+            paths.emplace(record.id, std::string{});
+            continue;
+          }
+          const auto parent = paths.find(record.parent);
+          if (parent == paths.end()) THROW(, "engine image phrase is declared before its path parent")
+          std::string path = parent->second;
+          const std::uint64_t bytes = record.key.size();
+          path.append(reinterpret_cast<const char *>(&record.keyBits), sizeof(record.keyBits));
+          path.append(reinterpret_cast<const char *>(&bytes), sizeof(bytes));
+          path.append(record.key);
+          paths.emplace(record.id, std::move(path));
+        }
+        return paths;
+      };
+      const auto importedPathsById = indexPaths(records);
+      const auto previousPathsById = indexPaths(previous);
+      std::unordered_set<std::string> importedPaths;
+      importedPaths.reserve(records.size());
+      for (const Record &record : records) importedPaths.insert(importedPathsById.at(record.id));
 
       std::vector<Record> preserved;
       preserved.reserve(previous.size());
-      std::unordered_set<std::uint64_t> preservedIds;
       for (const Record &record : previous) {
-        const bool retainedRoot =
-            record.parent == previousRoot && !importedRoots.contains({record.key, record.keyBits});
-        const bool retainedDescendant = record.parent != previousRoot && preservedIds.contains(record.parent);
-        if (retainedRoot || retainedDescendant) {
+        if (record.parent == 0) continue;
+        if (!importedPaths.contains(previousPathsById.at(record.id))) {
           preserved.push_back(record);
-          preservedIds.insert(record.id);
         }
       }
 
@@ -1116,8 +1140,30 @@ namespace recurloop {
       std::unordered_map<std::uint64_t, const Record *> previousById;
       for (const Record &record : previous) previousById.emplace(record.id, &record);
       std::unordered_map<std::uint64_t, lexicon::Phrase> preservedPhrases;
+      const auto resolvePreviousPath = [&](std::uint64_t id) {
+        if (id == previousRoot) return root;
+        std::vector<std::pair<std::string, std::uint64_t>> path;
+        std::uint64_t cursor = id;
+        while (cursor != previousRoot) {
+          const auto found = previousById.find(cursor);
+          if (found == previousById.end()) THROW(, "preserved phrase owner references an unknown phrase")
+          path.emplace_back(found->second->key, found->second->keyBits);
+          cursor = found->second->parent;
+        }
+        lexicon::Phrase target = root;
+        for (auto key = path.rbegin(); key != path.rend(); ++key) {
+          target = exact(target, key->first, key->second);
+          if (target.isNull()) THROW(, "preserved phrase owner is absent from the imported language")
+        }
+        return target;
+      };
       for (const Record &record : preserved) {
-        lexicon::Phrase owner = record.parent == previousRoot ? root : preservedPhrases.at(record.parent);
+        lexicon::Phrase owner;
+        if (record.parent == previousRoot) owner = root;
+        else if (const auto retained = preservedPhrases.find(record.parent); retained != preservedPhrases.end())
+          owner = retained->second;
+        else
+          owner = resolvePreviousPath(record.parent);
         if (!owner.containsSubdictionary()) THROW(, "preserved phrase owner has no subdictionary")
         lexicon::Draft draft = owner.append(Byte(const_cast<char *>(record.key.data())), 0, record.keyBits).make();
         if (record.subdictionary) draft.enableSubdictionary();

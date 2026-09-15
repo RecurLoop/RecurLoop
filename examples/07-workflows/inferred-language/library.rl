@@ -694,6 +694,128 @@ let Inferred:compile_specialization = fn (state:Context*, f:Inferred:Function*, 
     return 1
 }
 
+let Inferred:native_scalar_append_integer = fn (out:LanguageKit:Text*, value:i64) -> i64 {
+    if value == 0 { return out.append_byte(cast(u8, 48)) }
+    var n = value
+    if n < 0 { if !out.append_byte(cast(u8, 45)) { return 0 }; n = -n }
+    let digits = cast(u8*, malloc(32)); if !digits { return 0 }
+    var count = 0
+    while n > 0 { digits[count] = cast(u8, 48 + (n % 10)); count += 1; n /= 10 }
+    var i = count
+    while i > 0 { i -= 1; if !out.append_byte(digits[i]) { free(digits); return 0 } }
+    free(digits); return 1
+}
+
+let Inferred:native_scalar_expr = fn (state:Context*, out:LanguageKit:Text*, expr:Inferred:Expr*, self_name:u8*) -> i64 {
+    if !expr { return 0 }
+    if expr.kind == 1 { return Inferred:native_scalar_append_integer(out, expr.number) }
+    if expr.kind == 2 { return out.append(expr.text) }
+    if expr.kind == 4 {
+        // The scalar specialization may recurse directly into itself. Calls to
+        // other inferred/shared functions keep using the generic boxed path so
+        // lazy specialization and cross-language dispatch semantics stay intact.
+        if !expr.text || strcmp(expr.text, self_name) != 0 { return 0 }
+        if !out.append(expr.text) || !out.append_byte(cast(u8, 40)) { return 0 }
+        var i = 0
+        while i < expr.argc {
+            if i > 0 && !out.append(", ") { return 0 }
+            if !Inferred:native_scalar_expr(state, out, expr.args[i], self_name) { return 0 }
+            i += 1
+        }
+        return out.append_byte(cast(u8, 41))
+    }
+    if expr.kind == 6 {
+        if expr.op == 1 { if !out.append("(!") { return 0 } } else { if !out.append("(-") { return 0 } }
+        if !Inferred:native_scalar_expr(state, out, expr.right, self_name) { return 0 }
+        return out.append_byte(cast(u8, 41))
+    }
+    if expr.kind == 5 {
+        if !out.append_byte(cast(u8, 40)) || !Inferred:native_scalar_expr(state, out, expr.left, self_name) { return 0 }
+        if expr.op == 1 { if !out.append(" + ") { return 0 } }
+        else if expr.op == 2 { if !out.append(" - ") { return 0 } }
+        else if expr.op == 3 { if !out.append(" * ") { return 0 } }
+        else if expr.op == 4 { if !out.append(" / ") { return 0 } }
+        else if expr.op == 5 { if !out.append(" % ") { return 0 } }
+        else if expr.op == 6 { if !out.append(" < ") { return 0 } }
+        else if expr.op == 7 { if !out.append(" > ") { return 0 } }
+        else if expr.op == 8 { if !out.append(" <= ") { return 0 } }
+        else if expr.op == 9 { if !out.append(" >= ") { return 0 } }
+        else if expr.op == 10 { if !out.append(" == ") { return 0 } }
+        else if expr.op == 11 { if !out.append(" != ") { return 0 } }
+        else if expr.op == 12 { if !out.append(" && ") { return 0 } }
+        else if expr.op == 13 { if !out.append(" || ") { return 0 } }
+        else { return 0 }
+        if !Inferred:native_scalar_expr(state, out, expr.right, self_name) { return 0 }
+        return out.append_byte(cast(u8, 41))
+    }
+    return 0
+}
+
+let Inferred:native_scalar_block = fn (state:Context*, out:LanguageKit:Text*, stmt:Inferred:Stmt*, self_name:u8*) -> i64 {
+    var current = stmt
+    while current {
+        if current.kind == 2 {
+            if !out.append("var ") || !out.append(current.name) || !out.append(":i64 = ") { return 0 }
+            if !Inferred:native_scalar_expr(state, out, current.expr, self_name) || !out.append("\n") { return 0 }
+        } else if current.kind == 6 {
+            if !out.append(current.name) || !out.append(" = ") { return 0 }
+            if !Inferred:native_scalar_expr(state, out, current.expr, self_name) || !out.append("\n") { return 0 }
+        } else if current.kind == 3 {
+            if !Inferred:native_scalar_expr(state, out, current.expr, self_name) || !out.append("\n") { return 0 }
+        } else if current.kind == 4 {
+            if !out.append("return ") || !Inferred:native_scalar_expr(state, out, current.expr, self_name) || !out.append("\n") { return 0 }
+        } else if current.kind == 5 {
+            if !out.append("if ") || !Inferred:native_scalar_expr(state, out, current.expr, self_name) || !out.append(" {\n") { return 0 }
+            if !Inferred:native_scalar_block(state, out, current.body, self_name) || !out.append("}\n") { return 0 }
+            if current.else_body {
+                if !out.append("else {\n") || !Inferred:native_scalar_block(state, out, current.else_body, self_name) || !out.append("}\n") { return 0 }
+            }
+        } else { return 0 }
+        current = current.next
+    }
+    return 1
+}
+
+let Inferred:compile_native_scalar = fn (state:Context*, f:Inferred:Function*) -> i64 {
+    if !f || !f.body || f.arity < 0 || f.arity > 6 { return 0 }
+    let signature = LanguageKit:Text:new(); let body = LanguageKit:Text:new()
+    if !signature || !body { return 0 }
+    if !signature.append_byte(cast(u8, 40)) { return 0 }
+    var i = 0
+    while i < f.arity {
+        if i > 0 && !signature.append(", ") { return 0 }
+        if !signature.append(f.params[i]) || !signature.append(":i64") { return 0 }
+        i += 1
+    }
+    if !signature.append(") -> i64") { return 0 }
+    if !Inferred:native_scalar_block(state, body, f.body, f.name) { return 0 }
+    let sig_text = signature.take(); let body_text = body.take(); signature.destroy(); body.destroy()
+    if !sig_text || !body_text { return 0 }
+    let entry = context:function:compile(state, sig_text, body_text, f.name)
+    free(sig_text); free(body_text)
+    return entry
+}
+
+let Inferred:Scalar0 = fn () -> i64
+let Inferred:Scalar1 = fn (a0:i64) -> i64
+let Inferred:Scalar2 = fn (a0:i64, a1:i64) -> i64
+let Inferred:Scalar3 = fn (a0:i64, a1:i64, a2:i64) -> i64
+let Inferred:Scalar4 = fn (a0:i64, a1:i64, a2:i64, a3:i64) -> i64
+let Inferred:Scalar5 = fn (a0:i64, a1:i64, a2:i64, a3:i64, a4:i64) -> i64
+let Inferred:Scalar6 = fn (a0:i64, a1:i64, a2:i64, a3:i64, a4:i64, a5:i64) -> i64
+
+let Inferred:invoke_native_scalar = fn (entry:i64, args:LanguageKit:Value**, argc:i64) -> i64 {
+    if entry == 0 { return 0 }
+    if argc == 0 { let call = cast(Inferred:Scalar0, entry); return call() }
+    if argc == 1 { let call = cast(Inferred:Scalar1, entry); return call(args[0].number) }
+    if argc == 2 { let call = cast(Inferred:Scalar2, entry); return call(args[0].number, args[1].number) }
+    if argc == 3 { let call = cast(Inferred:Scalar3, entry); return call(args[0].number, args[1].number, args[2].number) }
+    if argc == 4 { let call = cast(Inferred:Scalar4, entry); return call(args[0].number, args[1].number, args[2].number, args[3].number) }
+    if argc == 5 { let call = cast(Inferred:Scalar5, entry); return call(args[0].number, args[1].number, args[2].number, args[3].number, args[4].number) }
+    if argc == 6 { let call = cast(Inferred:Scalar6, entry); return call(args[0].number, args[1].number, args[2].number, args[3].number, args[4].number, args[5].number) }
+    return 0
+}
+
 let Inferred:create_specialization = fn (state:Context*, f:Inferred:Function*, args:LanguageKit:Value**, argc:i64) -> Inferred:Specialization* {
     let spec = cast(Inferred:Specialization*, malloc(64)); if !spec { return cast(Inferred:Specialization*, 0) }
     spec.arity = argc; spec.kinds = cast(i64*, malloc(argc * 8)); spec.result_kind = 0
@@ -703,6 +825,15 @@ let Inferred:create_specialization = fn (state:Context*, f:Inferred:Function*, a
     while i < argc { spec.kinds[i] = args[i].kind; types = Inferred:TypeEnv:set(types, f.param_symbols[i], args[i].kind); i += 1 }
     if f.specialization_tail { f.specialization_tail.next = spec } else { f.specializations = spec }
     f.specialization_tail = spec; f.specialization_count += 1
+    var scalar = argc >= 0 && argc <= 6; var scalar_i = 0
+    while scalar_i < argc { if !args[scalar_i] || args[scalar_i].kind != 1 { scalar = 0 }; scalar_i += 1 }
+    if scalar {
+        let scalar_entry = Inferred:compile_native_scalar(state, f)
+        if scalar_entry != 0 {
+            spec.native_entry = scalar_entry; spec.result_kind = 1; spec.state = 3
+            return spec
+        }
+    }
     let typed_body = Inferred:clone_block(state, f.body, types)
     if !typed_body || !spec.compiled_symbol || !Inferred:compile_specialization(state, f, spec, typed_body) { return cast(Inferred:Specialization*, 0) }
     spec.state = 2
@@ -714,8 +845,9 @@ let Inferred:interop_call = fn (state:Context*, userdata:i64, args:LanguageKit:V
     if !f || argc != f.arity { context:diagnostic:error(state, "Inferred: function arity mismatch"); return cast(LanguageKit:Value*, 0) }
     var spec = Inferred:find_specialization(f, args, argc)
     if !spec { spec = Inferred:create_specialization(state, f, args, argc) }
-    if !spec || spec.state != 2 || spec.native_entry == 0 { context:diagnostic:error(state, "Inferred: native specialization could not be materialized"); return cast(LanguageKit:Value*, 0) }
+    if !spec || spec.native_entry == 0 || (spec.state != 2 && spec.state != 3) { context:diagnostic:error(state, "Inferred: native specialization could not be materialized"); return cast(LanguageKit:Value*, 0) }
     spec.hits += 1
+    if spec.state == 3 { return LanguageKit:Value:integer(state, Inferred:invoke_native_scalar(spec.native_entry, args, argc)) }
     let call = cast(LanguageKit:Call, spec.native_entry)
     let result = call(state, userdata, args, argc)
     if !result { context:diagnostic:error(state, "Inferred: native specialization returned no value"); return cast(LanguageKit:Value*, 0) }
@@ -741,89 +873,9 @@ let Inferred:compile_top_expression = fn (state:Context*, expr:Inferred:Expr*) -
     return call(state, 0, cast(LanguageKit:Value**, 0), 0)
 }
 
-let Inferred:native_scalar_append_integer = fn (out:LanguageKit:Text*, value:i64) -> i64 {
-    if value == 0 { return out.append_byte(cast(u8, 48)) }
-    var n = value
-    if n < 0 { if !out.append_byte(cast(u8, 45)) { return 0 }; n = -n }
-    let digits = cast(u8*, malloc(32)); if !digits { return 0 }
-    var count = 0
-    while n > 0 { digits[count] = cast(u8, 48 + (n % 10)); count += 1; n /= 10 }
-    var i = count
-    while i > 0 { i -= 1; if !out.append_byte(digits[i]) { free(digits); return 0 } }
-    free(digits); return 1
-}
-
-let Inferred:native_scalar_expr = fn (state:Context*, out:LanguageKit:Text*, expr:Inferred:Expr*) -> i64 {
-    if !expr { return 0 }
-    if expr.kind == 1 { return Inferred:native_scalar_append_integer(out, expr.number) }
-    if expr.kind == 2 { return out.append(expr.text) }
-    if expr.kind == 4 {
-        if !out.append(expr.text) || !out.append_byte(cast(u8, 40)) { return 0 }
-        var i = 0
-        while i < expr.argc {
-            if i > 0 && !out.append(", ") { return 0 }
-            if !Inferred:native_scalar_expr(state, out, expr.args[i]) { return 0 }
-            i += 1
-        }
-        let closed = out.append_byte(cast(u8, 41))
-        if !closed { return 0 }
-        return 1
-    }
-    if expr.kind == 6 {
-        if expr.op == 1 { if !out.append("(!") { return 0 } } else { if !out.append("(-") { return 0 } }
-        if !Inferred:native_scalar_expr(state, out, expr.right) { return 0 }
-        let closed = out.append_byte(cast(u8, 41))
-        if !closed { return 0 }
-        return 1
-    }
-    if expr.kind == 5 {
-        if !out.append_byte(cast(u8, 40)) || !Inferred:native_scalar_expr(state, out, expr.left) { return 0 }
-        if expr.op == 1 { if !out.append(" + ") { return 0 } }
-        else if expr.op == 2 { if !out.append(" - ") { return 0 } }
-        else if expr.op == 3 { if !out.append(" * ") { return 0 } }
-        else if expr.op == 4 { if !out.append(" / ") { return 0 } }
-        else if expr.op == 5 { if !out.append(" % ") { return 0 } }
-        else if expr.op == 6 { if !out.append(" < ") { return 0 } }
-        else if expr.op == 7 { if !out.append(" > ") { return 0 } }
-        else if expr.op == 8 { if !out.append(" <= ") { return 0 } }
-        else if expr.op == 9 { if !out.append(" >= ") { return 0 } }
-        else if expr.op == 10 { if !out.append(" == ") { return 0 } }
-        else if expr.op == 11 { if !out.append(" != ") { return 0 } }
-        else if expr.op == 12 { if !out.append(" && ") { return 0 } }
-        else if expr.op == 13 { if !out.append(" || ") { return 0 } }
-        else { return 0 }
-        if !Inferred:native_scalar_expr(state, out, expr.right) { return 0 }
-        let closed = out.append_byte(cast(u8, 41))
-        if !closed { return 0 }
-        return 1
-    }
-    return 0
-}
-
-let Inferred:compile_native_scalar = fn (state:Context*, f:Inferred:Function*) -> i64 {
-    if !f || !f.body || f.body.next || f.body.kind != 4 || !f.body.expr { return 0 }
-    let signature = LanguageKit:Text:new(); let body = LanguageKit:Text:new()
-    if !signature || !body { return 0 }
-    if !signature.append_byte(cast(u8, 40)) { return 0 }
-    var i = 0
-    while i < f.arity {
-        if i > 0 && !signature.append(", ") { return 0 }
-        if !signature.append(f.params[i]) || !signature.append(":i64") { return 0 }
-        i += 1
-    }
-    if !signature.append(") -> i64") || !body.append("return ") { return 0 }
-    if !Inferred:native_scalar_expr(state, body, f.body.expr) || !body.append("\n") { return 0 }
-    let sig_text = signature.take(); let body_text = body.take(); signature.destroy(); body.destroy()
-    if !sig_text || !body_text { return 0 }
-    let entry = context:function:compile(state, sig_text, body_text, f.name)
-    free(sig_text); free(body_text)
-    return entry != 0
-}
-
 let Inferred:add_function = fn (state:Context*, f:Inferred:Function*) -> i64 {
     let db = Inferred:database(state)
     if db.tail { db.tail.next = f } else { db.functions = f }; db.tail = f
-    let native_scalar = Inferred:compile_native_scalar(state, f)
     LanguageKit:publish_callable(state, f.name, f.arity, Inferred:interop_call, f.symbol)
     return 1
 }
