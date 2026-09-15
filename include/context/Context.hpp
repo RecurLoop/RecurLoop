@@ -67,6 +67,13 @@ namespace context {
     // Process-local futures. The phrase graph and source descriptor remain
     // serializable; only in-flight compilation state lives here.
     std::shared_ptr<recurloop::TranslationUnitRegistry> translationUnits;
+
+    // Process-local executable cache for source-owned phrase actions. Keep it
+    // separate from runtime: runtime is observable/generated program code and
+    // several compiler transactions rely on its size remaining unchanged when
+    // only compiler-language actions are executed. This cache is never
+    // serialized.
+    JitMemory actionRuntime;
   };
 } // namespace context
 

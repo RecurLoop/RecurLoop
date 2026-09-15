@@ -731,6 +731,35 @@ namespace compiler {
     return linker.link(result);
   }
 
+  Module LanguageState::composeInternalModule(const Module &root,
+                                                   std::span<const std::string> providedSymbols) const {
+    Module result = root;
+    std::unordered_set<std::string> merged;
+    const std::unordered_set<std::string> provided(providedSymbols.begin(), providedSymbols.end());
+
+    const auto mergeAvailable = [&](const std::string &symbol, auto &self) -> void {
+      if (provided.contains(symbol) || !merged.insert(symbol).second) return;
+      const Symbol *existing = result.findSymbol(symbol);
+      if (existing != nullptr && !existing->imported) return;
+      const std::optional<Module> dependency = findModule(symbol);
+      if (!dependency) return;  // OS/host/native imports stay unresolved for the JIT resolver.
+      result.merge(*dependency);
+
+      std::vector<std::string> imports;
+      for (const Symbol &candidate : result.symbols())
+        if (candidate.imported && !provided.contains(candidate.name) && findModule(candidate.name))
+          imports.push_back(candidate.name);
+      for (const std::string &candidate : imports) self(candidate, self);
+    };
+
+    std::vector<std::string> imports;
+    for (const Symbol &symbol : result.symbols())
+      if (symbol.imported && !provided.contains(symbol.name) && findModule(symbol.name))
+        imports.push_back(symbol.name);
+    for (const std::string &symbol : imports) mergeAvailable(symbol, mergeAvailable);
+    return result;
+  }
+
   void LanguageState::clearModuleSelection() {
     setSetting(*lexicon, languageAddress, SlotRole::SelectionGeneration,
                setting(*lexicon, languageAddress, SlotRole::SelectionGeneration) + 1);

@@ -197,6 +197,13 @@ namespace lexicon {
     return *this;
   }
 
+  Phrase &Phrase::copyAction(Phrase source) {
+    setAction(source.getAction());
+    Phrase implementation = source.getActionImplementation();
+    if (!implementation.isNull()) setActionImplementation(implementation);
+    return *this;
+  }
+
   Phrase::Action Phrase::getAction() {
     if (!meta.loaded) load();
     return cached.action.dispatch;

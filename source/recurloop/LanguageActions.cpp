@@ -462,9 +462,7 @@ namespace recurloop {
 
       lexicon::Phrase phrase = matched.getPhrase();
 
-      context.staging.phrase.setPrototype(phrase).setType(phrase.getType()).setAction(phrase.getAction());
-      lexicon::Phrase implementation = phrase.getActionImplementation();
-      if (!implementation.isNull()) context.staging.phrase.setActionImplementation(implementation);
+      context.staging.phrase.setPrototype(phrase).setType(phrase.getType()).copyAction(phrase);
 
       context::Lookup::leave(context, invoked, 2);
 

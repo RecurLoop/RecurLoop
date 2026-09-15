@@ -317,7 +317,7 @@ TEST_F(EngineImageTesting, ImportsBinaryImagesByMergingIntoTheExistingLexicon) {
   lexicon::Phrase ping = pingMatch.getPhrase();
   lexicon::Phrase preserved =
       root.append("preserved").make().enableSubdictionary().setType(lexicon::phrase::type::getData(root)).save();
-  lexicon::Phrase child = preserved.append("child").make().setType(ping.getType()).setAction(ping.getAction()).save();
+  lexicon::Phrase child = preserved.append("child").make().setType(ping.getType()).copyAction(ping).save();
   preserved.append("binding")
       .make()
       .setType(lexicon::phrase::type::getData(root))

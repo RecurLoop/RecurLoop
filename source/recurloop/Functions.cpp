@@ -271,9 +271,9 @@ namespace recurloop {
     if (entry == 0) {
       const std::optional<compiler::Module> module = context.language().findModule(symbol);
       if (!module) THROW(, "bound phrase action module is unavailable: '" << symbol << "'")
-      const compiler::Module linked = context.language().composeModule(*module);
+      const compiler::Module linked = context.language().composeInternalModule(*module);
       const compiler::JitImage image = compiler::JitLinker::link(
-          linked, context.runtime, [&](std::string_view dependency) -> std::optional<std::uintptr_t> {
+          linked, context.actionRuntime, [&](std::string_view dependency) -> std::optional<std::uintptr_t> {
             return compiler::DynamicLinker::instance().resolveFromDefault(dependency);
           });
       entry = image.address(symbol);
@@ -475,7 +475,7 @@ namespace recurloop {
                      .enableSubdictionary()
                      .setPrototype(implementation)
                      .setType(implementation.getType())
-                     .setAction(implementation.getAction())
+                     .copyAction(implementation)
                      .save();
     }
     if (!previous.isNull() && previous.containsSubdictionary() &&
@@ -489,7 +489,7 @@ namespace recurloop {
             .enableSubdictionary()
             .setPrototype(variant)
             .setType(variant.getType())
-            .setAction(variant.getAction())
+            .copyAction(variant)
             .save();
       }
     }
@@ -498,7 +498,7 @@ namespace recurloop {
         .enableSubdictionary()
         .setPrototype(function)
         .setType(function.getType())
-        .setAction(function.getAction())
+        .copyAction(function)
         .save();
     context.exec.pendingFunctionVariant.clear();
   }

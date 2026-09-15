@@ -1,6 +1,12 @@
 # RecurLoop autonomy migration
 
-Status after this overlay: **Stage 6 COMPLETE. Stage 7 is NEXT.**
+Status after this overlay: **Stage 7A COMPLETE. Stage 8 is NEXT.**
+
+Stage 7 is intentionally split. Stage 7A establishes real source-owned compiled
+actions and a monotonic host-action budget. Stage 7B (migration of the remaining
+compiler/parser action implementations) is blocked on Stage 8 because those
+implementations currently depend on C++-only working collections/parser frames.
+After Stage 8, return to Stage 7B before starting Stage 9.
 
 This file is temporary migration state for an AI agent. Update it after every autonomy overlay. The final autonomy overlay must delete `todo.md`.
 
@@ -826,15 +832,96 @@ Those are addressed by Stage 7 onward.
 
 ## Stage 7 — move standard semantic actions/compiler algorithms into core.rli
 
-Replace standard `action host "..."` bindings with compiled RecurLoop functions stored in the core image wherever the language can express the implementation.
+### Stage 7A — source-owned compiled action layer — COMPLETE
 
-Keep only a small audited host primitive whitelist for irreducible operations such as raw memory/OS/native/JIT/backend boundaries.
+The core now has a real source-owned action binding layer in
+`libraries/recurloop/core/actions.rl`. These are normal RecurLoop `fn`
+implementations compiled while building `core.rli`; after image reload the target
+phrases invoke them through the generic `fn.bound-action` mechanism. They are not
+wrappers which dispatch to the old semantic C++ callbacks.
 
-Add a build-time audit that rejects final `core.rli` host-action references outside the whitelist.
+The first migrated batch is:
 
-Final invariant: adding a parser action, language construct, compiler registry algorithm or normal compiler collection must not require production C++.
+```text
+language.ignore
+language.ping
+source.progress-byte
+workspace.pass-byte
+workspace.pass-cr
+workspace.pass-lf
+workspace.pass-tab
+workspace.pass-vtab
+hex.byte
+```
 
-## Stage 8 — compiler collections/work memory in `.rl`
+`Core:ActionBindings` maps the bootstrap action identity to a carrier phrase whose
+compiled implementation lives in the image. `context:actions:bind_root` is a
+build-time generic binder: it does not know any migrated action names and only
+replaces matching bootstrap action pointers with the already-compiled phrase
+implementation. After binding, final target phrases contain `fn.bound-action` plus
+the serialized implementation reference.
+
+The small supporting Context primitives added for this first batch are mechanism,
+not language semantics:
+
+```text
+context:actions:bind_root
+context:io:write
+context:workspace:key:append_byte
+context:workspace:code:append_byte
+```
+
+The final image is audited by `cmake/ValidateSourceActions.cmake` against
+`libraries/recurloop/core/host-actions.allow`. The audit has three hard rules:
+
+1. migrated actions above may not occur as direct `action "..."` fields;
+2. every remaining direct host action must be explicitly present in the reviewed
+   allowlist;
+3. stale allowlist entries are errors, so the budget only shrinks when actions are
+   migrated.
+
+At completion of Stage 7A the reviewed direct host-action budget is **210**. The
+self-hosted `core.rli == core-2.rli` fixed point remains byte-for-byte, and
+`debug ping` executes through the compiled source-owned implementation from the
+embedded core image.
+
+Compiler-internal source-action JIT is deliberately isolated from the user's
+module-output policy. `LanguageState::composeInternalModule()` follows only
+transitive RecurLoop module dependencies and ignores `module entry/include`,
+exclusions, auto/manual mode and link inputs. This is required because an action
+may first execute while parsing a function selected as the output entry before
+that function's module exists. `source_owned_actions.cmake` is the regression
+test for this boundary.
+
+### Stage 7B — migrate remaining semantic actions/compiler algorithms — BLOCKED BY STAGE 8
+
+Do not fake completion by replacing the remaining callbacks with `.rl` wrappers
+that simply call the same C++ implementation. The remaining action groups are
+mostly backed by C++-only compiler/parser working state:
+
+```text
+expressions.*
+fn.*
+typed.*
+phrase.field.* / phrase.define
+dictionary.* / reference.* / name interpolation
+assembler.*
+debugger.*
+```
+
+Some true boundary actions in those groups may ultimately remain host/backend
+primitives, but normal parser/compiler algorithms must move to RecurLoop. To do
+that without smuggling private C++ state behind helper calls, first provide the
+compiler collections/work-memory layer from Stage 8. Then return here, migrate the
+remaining expressible algorithms, delete their C++ callbacks/registrations, and
+reduce `host-actions.allow` to the genuinely irreducible kernel/backend boundary.
+
+Stage 7 final invariant remains:
+
+> adding a parser action, language construct, compiler registry algorithm or
+> normal compiler collection does not require production C++.
+
+## Stage 8 — compiler collections/work memory in `.rl` — NEXT
 
 Provide the collection primitives/implementations needed by the self-hosted compiler.
 
@@ -882,7 +969,8 @@ Before declaring the host complete:
 ## Rules for the next AI agent
 
 1. Read this entire file before editing.
-2. Work only on the first incomplete stage unless a demonstrated prerequisite blocks it.
+2. Work on the first **unblocked** incomplete stage. Stage 7B is explicitly
+   blocked by Stage 8; complete Stage 8 next, then resume Stage 7B before Stage 9.
 3. Preserve the compiler execution model: runtime function blocks are generated code, not lexicon transactions.
 4. Do not introduce a second generic semantic store/registry alongside `context.lexicon`.
 5. Do not turn `Blocks::execute(scoped=true)` into a whole-lexicon transaction without an explicit semantic reason and tests.

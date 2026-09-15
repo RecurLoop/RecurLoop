@@ -14,4 +14,8 @@ engine define {
 // lexicon exists, so it is parsed by the language that was just constructed.
 include "core/control-flow.rl"
 
+// Standard actions that can be expressed in RecurLoop are compiled into the
+// image after the fresh source-defined language exists.
+include "core/actions.rl"
+
 engine export "core.rli"

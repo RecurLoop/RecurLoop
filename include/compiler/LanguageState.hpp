@@ -96,6 +96,12 @@ namespace compiler {
     std::optional<std::string> moduleEntry() const;
     Module composeModule(const Module &root, std::span<const std::string> providedSymbols = {},
                          bool includeLinkInputs = true) const;
+    // Compose only the transitive RecurLoop-module dependencies of `root`.
+    // This deliberately ignores user module selection/exclusion, auto/manual
+    // mode and link inputs. It is used for compiler-internal code (for example
+    // source-owned phrase actions) whose execution must not depend on the
+    // module-output policy of the program currently being compiled.
+    Module composeInternalModule(const Module &root, std::span<const std::string> providedSymbols = {}) const;
     void clearModuleSelection();
     void linkObject(const std::string &path);
     void linkArchive(const std::string &path);

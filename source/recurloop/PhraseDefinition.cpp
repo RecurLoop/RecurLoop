@@ -196,15 +196,11 @@ namespace recurloop {
         }
         lexicon::Phrase value = referenceValue();
         if (target != nullptr) {
-          target->setAction(value.getAction());
-          lexicon::Phrase implementation = value.getActionImplementation();
-          if (!implementation.isNull()) target->setActionImplementation(implementation);
+          target->copyAction(value);
           target->save();
           return;
         }
-        context.staging.phrase.setAction(value.getAction());
-        lexicon::Phrase implementation = value.getActionImplementation();
-        if (!implementation.isNull()) context.staging.phrase.setActionImplementation(implementation);
+        context.staging.phrase.copyAction(value);
       }
 
       void applyParent(lexicon::Phrase *) {

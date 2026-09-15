@@ -76,6 +76,10 @@ namespace recurloop {
     constexpr std::string_view BlockRelease{"context:source:block:release"};
     constexpr std::string_view DiagnosticError{"context:diagnostic:error"};
     constexpr std::string_view DiagnosticErrorAt{"context:diagnostic:error:at"};
+    constexpr std::string_view ActionBindRoot{"context:actions:bind_root"};
+    constexpr std::string_view IoWrite{"context:io:write"};
+    constexpr std::string_view WorkspaceAppendKeyByte{"context:workspace:key:append_byte"};
+    constexpr std::string_view WorkspaceAppendCodeByte{"context:workspace:code:append_byte"};
     constexpr std::string_view ExpressionFormat{"context:expression:format"};
     constexpr std::string_view ExpressionFormatAt{"context:expression:format:at"};
     constexpr std::string_view ExpressionBooleanAt{"context:expression:boolean:at"};
@@ -156,15 +160,11 @@ namespace recurloop {
     }
 
     void copyAction(lexicon::Draft &draft, lexicon::Phrase action) {
-      draft.setAction(action.getAction());
-      lexicon::Phrase implementation = action.getActionImplementation();
-      if (!implementation.isNull()) draft.setActionImplementation(implementation);
+      draft.copyAction(action);
     }
 
     void copyAction(lexicon::Phrase &phrase, lexicon::Phrase action) {
-      phrase.setAction(action.getAction());
-      lexicon::Phrase implementation = action.getActionImplementation();
-      if (!implementation.isNull()) phrase.setActionImplementation(implementation);
+      phrase.copyAction(action);
     }
 
     auto populated() {
@@ -734,6 +734,73 @@ namespace recurloop {
         EngineImage::declarePayloadField(value, schema, static_cast<std::size_t>(offset),
                                          EngineImage::PayloadFieldKind::NativePointer);
         return schemaAddress;
+      });
+    }
+
+    void bindSourceActionRecursive(context::Context &context, lexicon::Phrase phrase,
+                                   lexicon::Phrase::Action hostAction, lexicon::Phrase implementation,
+                                   std::uint64_t &count) {
+      if (phrase.containsAction() && phrase.getAction() == hostAction) {
+        Functions::bindAction(phrase, implementation);
+        ++count;
+      }
+      if (!phrase.containsSubdictionary()) return;
+      auto visible = [](radix::Node *, radix::Node *candidate) -> bool { return !candidate->isEmpty(); };
+      for (lexicon::Dictionary cursor = phrase.getSubdictionary().fore(visible); !cursor.isNull(); cursor = cursor.next(visible)) {
+        lexicon::Phrase child = cursor.getPhrase();
+        if (!child.isNull()) bindSourceActionRecursive(context, child, hostAction, implementation, count);
+      }
+    }
+
+    extern "C" std::uint64_t contextActionsBindRoot(context::Context *context, std::uint64_t bindingsAddress) noexcept {
+      return checked(context, std::uint64_t{0}, [&](context::Context &value) {
+        lexicon::Phrase bindings = phraseAt(value, bindingsAddress);
+        if (bindings.isNull() || !bindings.containsSubdictionary())
+          THROW(, "source action binding root must be a dictionary phrase")
+
+        std::uint64_t total = 0;
+        auto visible = [](radix::Node *, radix::Node *candidate) -> bool { return !candidate->isEmpty(); };
+        for (lexicon::Dictionary cursor = bindings.getSubdictionary().fore(visible); !cursor.isNull(); cursor = cursor.next(visible)) {
+          lexicon::Phrase binding = cursor.getPhrase();
+          if (binding.isNull()) continue;
+          lexicon::Phrase carrier = binding.getPrototype();
+          // User dictionaries may contain parser/whitespace helper phrases.
+          // Only alias entries with a prototype participate in action binding.
+          if (carrier.isNull()) continue;
+          lexicon::Phrase implementation = carrier.getActionImplementation();
+          if (implementation.isNull())
+            THROW(, "source action carrier for '" << binding.getKey() << "' has no compiled implementation")
+          lexicon::Phrase::Action hostAction = value.actions().get(binding.getKey());
+          std::uint64_t replaced = 0;
+          bindSourceActionRecursive(value, value.lexicon.phrase(), hostAction, implementation, replaced);
+          if (replaced == 0)
+            THROW(, "source action binding '" << binding.getKey() << "' did not replace any core phrase")
+          total += replaced;
+        }
+        return total;
+      });
+    }
+
+    extern "C" std::uint64_t contextIoWrite(context::Context *context, const std::uint8_t *text) noexcept {
+      return checked(context, std::uint64_t{0}, [&](context::Context &value) {
+        if (text == nullptr || value.io.out == nullptr) return std::uint64_t{0};
+        *value.io.out << reinterpret_cast<const char *>(text);
+        value.io.out->flush();
+        return std::uint64_t{1};
+      });
+    }
+
+    extern "C" std::uint64_t contextWorkspaceAppendKeyByte(context::Context *context, std::uint64_t byte) noexcept {
+      return checked(context, std::uint64_t{0}, [&](context::Context &value) {
+        value.workspace.key.append(static_cast<char>(static_cast<std::uint8_t>(byte)));
+        return std::uint64_t{1};
+      });
+    }
+
+    extern "C" std::uint64_t contextWorkspaceAppendCodeByte(context::Context *context, std::uint64_t byte) noexcept {
+      return checked(context, std::uint64_t{0}, [&](context::Context &value) {
+        value.workspace.code.append(static_cast<char>(static_cast<std::uint8_t>(byte)));
+        return std::uint64_t{1};
       });
     }
 
@@ -1830,6 +1897,14 @@ namespace recurloop {
     declareHostFunction(context, DiagnosticErrorAt, "context:diagnostic:error:at",
                         {contextPointer, bytePointer, u64, u64, bytePointer}, u64,
                         reinterpret_cast<std::uintptr_t>(&contextDiagnosticErrorAt));
+    declareHostFunction(context, ActionBindRoot, "context:actions:bind-root", {contextPointer, u64}, u64,
+                        reinterpret_cast<std::uintptr_t>(&contextActionsBindRoot));
+    declareHostFunction(context, IoWrite, "context:io:write", {contextPointer, bytePointer}, u64,
+                        reinterpret_cast<std::uintptr_t>(&contextIoWrite));
+    declareHostFunction(context, WorkspaceAppendKeyByte, "context:workspace:key:append-byte", {contextPointer, u64}, u64,
+                        reinterpret_cast<std::uintptr_t>(&contextWorkspaceAppendKeyByte));
+    declareHostFunction(context, WorkspaceAppendCodeByte, "context:workspace:code:append-byte", {contextPointer, u64}, u64,
+                        reinterpret_cast<std::uintptr_t>(&contextWorkspaceAppendCodeByte));
     declareHostFunction(context, ExpressionFormat, "context:expression:format$text", {contextPointer, bytePointer},
                         bytePointer, reinterpret_cast<std::uintptr_t>(&contextExpressionFormatText));
     declareHostFunction(context, ExpressionFormat, "context:expression:format$slice",

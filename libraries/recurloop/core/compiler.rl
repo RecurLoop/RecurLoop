@@ -172,6 +172,10 @@ compiler {
   extern "SourceBlock:release" symbol "SourceBlock:release" params [ "SourceBlock*" ] result "void" abi "sysv-amd64" imported
   extern "context:diagnostic:error" symbol "context:diagnostic:error" params [ "Context*" "u8*" ] result "u64" abi "sysv-amd64" imported
   extern "context:diagnostic:error:at" symbol "context:diagnostic:error:at" params [ "Context*" "u8*" "u64" "u64" "u8*" ] result "u64" abi "sysv-amd64" imported
+  extern "context:actions:bind_root" symbol "context:actions:bind-root" params [ "Context*" "u64" ] result "u64" abi "sysv-amd64" imported
+  extern "context:io:write" symbol "context:io:write" params [ "Context*" "u8*" ] result "u64" abi "sysv-amd64" imported
+  extern "context:workspace:key:append_byte" symbol "context:workspace:key:append-byte" params [ "Context*" "u64" ] result "u64" abi "sysv-amd64" imported
+  extern "context:workspace:code:append_byte" symbol "context:workspace:code:append-byte" params [ "Context*" "u64" ] result "u64" abi "sysv-amd64" imported
   extern "context:expression:boolean:at" symbol "context:expression:boolean:at" params [ "Context*" "u8*" "u8*" "u64" "u64" ] result "u64" abi "sysv-amd64" imported
   extern "context:expression:format" symbol "context:expression:format$text" params [ "Context*" "u8*" ] result "u8*" abi "sysv-amd64" imported
   extern "context:expression:format" symbol "context:expression:format$slice" params [ "Context*" "u8*" "u64" "u64" ] result "u8*" abi "sysv-amd64" imported

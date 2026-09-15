@@ -39,6 +39,7 @@ namespace lexicon {
 
     DECLARATION bool containsAction();
     DECLARATION Draft &setAction(Action action);
+    DECLARATION Draft &copyAction(Phrase source);
     DECLARATION Draft &setActionImplementation(Phrase implementation);
     DECLARATION Action getAction();
 

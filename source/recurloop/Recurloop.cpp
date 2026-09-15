@@ -55,33 +55,38 @@ namespace recurloop {
   }
 
   void Recurloop::initializeRuntime() {
-    int fd = syscall(SYS_memfd_create, "jit_mem", 0);
-    if (fd < 0) THROW(, "cannot create JIT memory file: " << std::strerror(errno));
+    const auto mapJitMemory = [&](const char *name) {
+      int fd = syscall(SYS_memfd_create, name, 0);
+      if (fd < 0) THROW(, "cannot create JIT memory file: " << std::strerror(errno))
 
-    if (ftruncate(fd, context.config.runtime.memory.size) != 0) {
-      const int error = errno;
+      if (ftruncate(fd, context.config.runtime.memory.size) != 0) {
+        const int error = errno;
+        close(fd);
+        THROW(, "cannot size JIT memory file: " << std::strerror(error));
+      }
+
+      void *memory = mmap(nullptr, context.config.runtime.memory.size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+      if (memory == MAP_FAILED) {
+        const int error = errno;
+        close(fd);
+        THROW(, "cannot map writable JIT memory: " << std::strerror(error));
+      }
+
+      void *executable =
+          mmap(nullptr, context.config.runtime.memory.size, PROT_READ | PROT_EXEC, MAP_SHARED, fd, 0);
+      if (executable == MAP_FAILED) {
+        const int error = errno;
+        munmap(memory, context.config.runtime.memory.size);
+        close(fd);
+        THROW(, "cannot map executable JIT memory: " << std::strerror(error));
+      }
+
       close(fd);
-      THROW(, "cannot size JIT memory file: " << std::strerror(error));
-    }
+      return JitMemory(memory, executable, context.config.runtime.memory.size).clear();
+    };
 
-    void *runtimeMemory = mmap(nullptr, context.config.runtime.memory.size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
-    if (runtimeMemory == MAP_FAILED) {
-      const int error = errno;
-      close(fd);
-      THROW(, "cannot map writable JIT memory: " << std::strerror(error));
-    }
-
-    void *runtimeExecutable =
-        mmap(nullptr, context.config.runtime.memory.size, PROT_READ | PROT_EXEC, MAP_SHARED, fd, 0);
-    if (runtimeExecutable == MAP_FAILED) {
-      const int error = errno;
-      munmap(runtimeMemory, context.config.runtime.memory.size);
-      close(fd);
-      THROW(, "cannot map executable JIT memory: " << std::strerror(error));
-    }
-
-    close(fd);
-    context.runtime = JitMemory(runtimeMemory, runtimeExecutable, context.config.runtime.memory.size).clear();
+    context.runtime = mapJitMemory("recurloop_runtime");
+    context.actionRuntime = mapJitMemory("recurloop_actions");
   }
 
   void Recurloop::initializeWorkspace() {
@@ -99,6 +104,8 @@ namespace recurloop {
     free(context.workspace.key.getMemory().toPtr());
     munmap(context.runtime.getMemory().toPtr(), context.runtime.getCapacity());
     munmap(context.runtime.getExecutable().toPtr(), context.runtime.getCapacity());
+    munmap(context.actionRuntime.getMemory().toPtr(), context.actionRuntime.getCapacity());
+    munmap(context.actionRuntime.getExecutable().toPtr(), context.actionRuntime.getCapacity());
   }
 
   Recurloop::Recurloop() {}

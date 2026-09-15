@@ -149,6 +149,13 @@ namespace lexicon {
     return *this;
   }
 
+  Draft &Draft::copyAction(Phrase source) {
+    setAction(source.getAction());
+    Phrase implementation = source.getActionImplementation();
+    if (!implementation.isNull()) setActionImplementation(implementation);
+    return *this;
+  }
+
   Draft &Draft::setActionImplementation(Phrase implementation) {
     if (!containsAction()) THROW(, "Draft doesnt contain action, so its implementation cannot be set.")
     phrase.setActionImplementation(implementation);
