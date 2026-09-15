@@ -78,6 +78,11 @@ namespace recurloop {
     constexpr std::string_view DiagnosticErrorAt{"context:diagnostic:error:at"};
     constexpr std::string_view ActionBindRoot{"context:actions:bind_root"};
     constexpr std::string_view IoWrite{"context:io:write"};
+    constexpr std::string_view MemoryAllocate{"context:memory:allocate"};
+    constexpr std::string_view MemoryReallocate{"context:memory:reallocate"};
+    constexpr std::string_view MemoryRelease{"context:memory:release"};
+    constexpr std::string_view MemoryCopy{"context:memory:copy"};
+    constexpr std::string_view MemoryMove{"context:memory:move"};
     constexpr std::string_view WorkspaceAppendKeyByte{"context:workspace:key:append_byte"};
     constexpr std::string_view WorkspaceAppendCodeByte{"context:workspace:code:append_byte"};
     constexpr std::string_view ExpressionFormat{"context:expression:format"};
@@ -788,6 +793,43 @@ namespace recurloop {
         value.io.out->flush();
         return std::uint64_t{1};
       });
+    }
+
+    extern "C" std::uint8_t *contextMemoryAllocate(context::Context *context, std::uint64_t bytes) noexcept {
+      if (context == nullptr || context->exec.pendingException || bytes > std::numeric_limits<std::size_t>::max())
+        return nullptr;
+      return static_cast<std::uint8_t *>(std::malloc(static_cast<std::size_t>(bytes)));
+    }
+
+    extern "C" std::uint8_t *contextMemoryReallocate(context::Context *context, std::uint8_t *memory,
+                                                     std::uint64_t bytes) noexcept {
+      if (context == nullptr || context->exec.pendingException || bytes > std::numeric_limits<std::size_t>::max())
+        return nullptr;
+      return static_cast<std::uint8_t *>(std::realloc(memory, static_cast<std::size_t>(bytes)));
+    }
+
+    extern "C" void contextMemoryRelease(context::Context *context, std::uint8_t *memory) noexcept {
+      if (context != nullptr) std::free(memory);
+    }
+
+    extern "C" std::uint8_t *contextMemoryCopy(context::Context *context, std::uint8_t *destination,
+                                               const std::uint8_t *source, std::uint64_t bytes) noexcept {
+      if (context == nullptr || context->exec.pendingException ||
+          (bytes != 0 && (destination == nullptr || source == nullptr)) ||
+          bytes > std::numeric_limits<std::size_t>::max())
+        return nullptr;
+      if (bytes != 0) std::memcpy(destination, source, static_cast<std::size_t>(bytes));
+      return destination;
+    }
+
+    extern "C" std::uint8_t *contextMemoryMove(context::Context *context, std::uint8_t *destination,
+                                               const std::uint8_t *source, std::uint64_t bytes) noexcept {
+      if (context == nullptr || context->exec.pendingException ||
+          (bytes != 0 && (destination == nullptr || source == nullptr)) ||
+          bytes > std::numeric_limits<std::size_t>::max())
+        return nullptr;
+      if (bytes != 0) std::memmove(destination, source, static_cast<std::size_t>(bytes));
+      return destination;
     }
 
     extern "C" std::uint64_t contextWorkspaceAppendKeyByte(context::Context *context, std::uint64_t byte) noexcept {
@@ -1901,10 +1943,20 @@ namespace recurloop {
                         reinterpret_cast<std::uintptr_t>(&contextActionsBindRoot));
     declareHostFunction(context, IoWrite, "context:io:write", {contextPointer, bytePointer}, u64,
                         reinterpret_cast<std::uintptr_t>(&contextIoWrite));
-    declareHostFunction(context, WorkspaceAppendKeyByte, "context:workspace:key:append-byte", {contextPointer, u64}, u64,
-                        reinterpret_cast<std::uintptr_t>(&contextWorkspaceAppendKeyByte));
-    declareHostFunction(context, WorkspaceAppendCodeByte, "context:workspace:code:append-byte", {contextPointer, u64}, u64,
-                        reinterpret_cast<std::uintptr_t>(&contextWorkspaceAppendCodeByte));
+    declareHostFunction(context, MemoryAllocate, "context:memory:allocate", {contextPointer, u64}, bytePointer,
+                        reinterpret_cast<std::uintptr_t>(&contextMemoryAllocate));
+    declareHostFunction(context, MemoryReallocate, "context:memory:reallocate", {contextPointer, bytePointer, u64},
+                        bytePointer, reinterpret_cast<std::uintptr_t>(&contextMemoryReallocate));
+    declareHostFunction(context, MemoryRelease, "context:memory:release", {contextPointer, bytePointer}, voidType,
+                        reinterpret_cast<std::uintptr_t>(&contextMemoryRelease));
+    declareHostFunction(context, MemoryCopy, "context:memory:copy", {contextPointer, bytePointer, bytePointer, u64},
+                        bytePointer, reinterpret_cast<std::uintptr_t>(&contextMemoryCopy));
+    declareHostFunction(context, MemoryMove, "context:memory:move", {contextPointer, bytePointer, bytePointer, u64},
+                        bytePointer, reinterpret_cast<std::uintptr_t>(&contextMemoryMove));
+    declareHostFunction(context, WorkspaceAppendKeyByte, "context:workspace:key:append-byte", {contextPointer, u64},
+                        u64, reinterpret_cast<std::uintptr_t>(&contextWorkspaceAppendKeyByte));
+    declareHostFunction(context, WorkspaceAppendCodeByte, "context:workspace:code:append-byte", {contextPointer, u64},
+                        u64, reinterpret_cast<std::uintptr_t>(&contextWorkspaceAppendCodeByte));
     declareHostFunction(context, ExpressionFormat, "context:expression:format$text", {contextPointer, bytePointer},
                         bytePointer, reinterpret_cast<std::uintptr_t>(&contextExpressionFormatText));
     declareHostFunction(context, ExpressionFormat, "context:expression:format$slice",
