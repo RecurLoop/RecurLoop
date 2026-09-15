@@ -3,6 +3,7 @@
 #include <recurloop/Blocks.hpp>
 #include <recurloop/Expressions.hpp>
 #include <recurloop/Functions.hpp>
+#include <recurloop/LexiconTransaction.hpp>
 #include <recurloop/PhraseAction.hpp>
 #include <recurloop/SyntaxExtension.hpp>
 
@@ -13,7 +14,6 @@
 #include "FunctionsInternal.hpp"
 #include <context/Context.hpp>
 #include <lexicon/Lexicon.hpp>
-#include <radix/Checkpoint.hpp>
 
 #include <algorithm>
 #include <cstdlib>
@@ -222,7 +222,7 @@ namespace recurloop {
                                std::uint64_t flags) noexcept {
       if (context == nullptr || !validBitSlice(text, offset, bits)) return 0;
       if (actionValue != nullptr && !(flags & context_phrase::HasAction)) return 0;
-      const Size checkpoint = context->lexicon.checkpoint().getAddress();
+      LexiconTransaction transaction(context->lexicon);
       try {
         lexicon::Phrase owner = ownerAt(*context, ownerAddress);
         if (owner.isNull() || !owner.containsSubdictionary()) return 0;
@@ -256,9 +256,10 @@ namespace recurloop {
           saved.setSerializable(true).save();
         if (flags & context_phrase::Rewritable) saved.setRewritable(true).save();
         if (flags & context_phrase::Permanent) saved.setPermanent(true).save();
-        return saved.getAddress();
+        const std::uint64_t result = saved.getAddress();
+        transaction.commit();
+        return result;
       } catch (...) {
-        radix::Checkpoint(&context->lexicon, checkpoint).restore();
         return 0;
       }
     }
@@ -593,6 +594,11 @@ namespace recurloop {
       return contextPhraseDefineBitsAction(context, 0, text, action);
     }
 
+    // Explicit metaprogramming mutation boundary. This edits an existing
+    // phrase in place; a radix allocation checkpoint cannot undo such a write.
+    // Compiler/elaboration transactions must therefore either target phrases
+    // created inside their own watermark or use a future versioned/promotion
+    // operation instead of assuming restore() reverses this API.
     extern "C" std::uint64_t contextPhraseSet(context::Context *context, std::uint64_t address, std::uint64_t field,
                                               std::uint64_t value) noexcept {
       if (context == nullptr) return 0;
@@ -623,6 +629,7 @@ namespace recurloop {
       }
     }
 
+    // Same explicit in-place mutation contract as contextPhraseSet().
     extern "C" std::uint64_t contextPhraseSetAction(context::Context *context, std::uint64_t address,
                                                     std::uint64_t field, const PhraseAction *action) noexcept {
       if (context == nullptr || field != context_phrase::SetAction) return 0;
@@ -812,13 +819,11 @@ namespace recurloop {
         if (hook.isNull() || !hook.isElaboratable())
           THROW(, "context source hook requires an elaboratable phrase")
 
-        lexicon::Phrase marker = sourceHookMarker(value);
-        if (marker.isNull()) {
-          lexicon::Phrase root = value.lexicon.phrase();
-          marker = root.append(std::string(SourceHookMarker)).make().setPrototype(hook).save();
-        } else {
-          marker.setPrototype(hook).setSerializable(true).save();
-        }
+        // Version the hook by shadowing the hidden marker instead of mutating
+        // an older marker in place. A lexicon checkpoint can therefore restore
+        // the previous hook simply by discarding this newer phrase.
+        lexicon::Phrase root = value.lexicon.phrase();
+        root.append(std::string(SourceHookMarker)).make().setPrototype(hook).save();
         return static_cast<std::uint64_t>(hook.getAddress());
       });
     }

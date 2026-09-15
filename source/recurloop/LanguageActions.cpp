@@ -7,6 +7,7 @@
 #include <recurloop/Expressions.hpp>
 #include <recurloop/TranslationUnits.hpp>
 #include <recurloop/LanguageGrammar.hpp>
+#include <recurloop/LexiconTransaction.hpp>
 #include <utilities/Byte.hpp>
 
 #include <cctype>
@@ -391,7 +392,7 @@ namespace recurloop {
         Size lexiconCheckpoint;
         invoked.fetch(0, lexiconCheckpoint);
 
-        radix::Checkpoint(&context.lexicon, lexiconCheckpoint).restore();
+        LexiconTransaction::restore(context.lexicon, lexiconCheckpoint);
       };
 
       auto discard = [](context::Context &context, lexicon::Phrase &invoked) {
@@ -402,7 +403,7 @@ namespace recurloop {
         invoked.fetch(0, lexiconCheckpoint, workspaceCheckpoint);
 
         context.workspace.key.truncate(workspaceCheckpoint);
-        radix::Checkpoint(&context.lexicon, lexiconCheckpoint).restore();
+        LexiconTransaction::restore(context.lexicon, lexiconCheckpoint);
 
         invoked.older().elaborate(context);
       };
@@ -412,7 +413,7 @@ namespace recurloop {
 
         Size lexiconCheckpoint;
         invoked.fetch(0, lexiconCheckpoint);
-        radix::Checkpoint(&context.lexicon, lexiconCheckpoint).restore();
+        LexiconTransaction::restore(context.lexicon, lexiconCheckpoint);
 
         context::Lookup::leave(context, invoked);
       };
@@ -420,7 +421,7 @@ namespace recurloop {
       lexicon::Phrase &phrase = context::Lookup::current(context);
 
       // Retrieve lexicon and workspace status
-      Size lexiconCheckpoint = context.lexicon.checkpoint().getAddress();
+      Size lexiconCheckpoint = LexiconTransaction::capture(context.lexicon);
       Size workspaceKeyCheckpoint = context.workspace.key.bits();
 
       // RECORD (a procedure that does not ignore but appends whitespace to the workspace)
@@ -502,7 +503,7 @@ namespace recurloop {
         Size lexiconCheckpoint;
         invoked.fetch(0, lexiconCheckpoint);
 
-        radix::Checkpoint(&context.lexicon, lexiconCheckpoint).restore();
+        LexiconTransaction::restore(context.lexicon, lexiconCheckpoint);
       };
 
       auto discard = [](context::Context &context, lexicon::Phrase &invoked) {
@@ -513,7 +514,7 @@ namespace recurloop {
         invoked.fetch(0, lexiconCheckpoint, workspaceCheckpoint);
 
         context.workspace.key.truncate(workspaceCheckpoint);
-        radix::Checkpoint(&context.lexicon, lexiconCheckpoint).restore();
+        LexiconTransaction::restore(context.lexicon, lexiconCheckpoint);
 
         invoked.older().elaborate(context);
       };
@@ -523,7 +524,7 @@ namespace recurloop {
 
         Size lexiconCheckpoint;
         invoked.fetch(0, lexiconCheckpoint);
-        radix::Checkpoint(&context.lexicon, lexiconCheckpoint).restore();
+        LexiconTransaction::restore(context.lexicon, lexiconCheckpoint);
 
         context::Lookup::leave(context, invoked);
       };
@@ -531,7 +532,7 @@ namespace recurloop {
       lexicon::Phrase &phrase = context::Lookup::current(context);
 
       // Retrieve lexicon and workspace status
-      Size lexiconCheckpoint = context.lexicon.checkpoint().getAddress();
+      Size lexiconCheckpoint = LexiconTransaction::capture(context.lexicon);
       Size workspaceKeyCheckpoint = context.workspace.key.bits();
 
       // RECORD (a procedure that does not ignore but appends whitespace to the workspace)
@@ -599,13 +600,13 @@ namespace recurloop {
 
         DEBUG_LOG(SCOPE : END, address);
 
-        radix::Checkpoint(&context.lexicon, address).restore();
+        LexiconTransaction::restore(context.lexicon, address);
       };
 
       DEBUG_PROFILE_SCOPE(ScopeStart);
       lexicon::Phrase &phrase = context::Lookup::current(context);
 
-      Size address = context.lexicon.checkpoint().getAddress();
+      Size address = LexiconTransaction::capture(context.lexicon);
 
       DEBUG_LOG(SCOPE : START, address);
 

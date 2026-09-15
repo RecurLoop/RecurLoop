@@ -475,6 +475,10 @@ namespace recurloop {
     context::Lookup::leave(context, invoked);
   }
 
+  // Source-level phrase mutation is intentionally explicit metaprogramming.
+  // It modifies an already allocated phrase and is not undone by merely
+  // restoring a radix allocation checkpoint. Transactional compiler code must
+  // not silently rely on checkpoint rollback around this operation.
   bool PhraseDefinition::mutate(context::Context &context) {
     const std::size_t offset = context.source.buffer.offset / Byte::length;
     const std::size_t bytes = context.source.buffer.bits / Byte::length;

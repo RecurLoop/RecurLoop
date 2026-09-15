@@ -4,6 +4,7 @@
 #include <recurloop/EngineImage.hpp>
 #include <recurloop/Execution.hpp>
 #include <recurloop/LanguageGrammar.hpp>
+#include <recurloop/LexiconTransaction.hpp>
 #include <recurloop/Recurloop.hpp>
 #include <utilities/Exception.hpp>
 
@@ -141,26 +142,23 @@ namespace recurloop {
   }
 
   void TranslationUnitRegistry::merge(lexicon::Phrase sourcePhrase, lexicon::Phrase target) {
-    const Size checkpoint = owner.lexicon.checkpoint().getAddress();
-    try {
-      if (!isDescriptor(sourcePhrase)) {
-        EngineImage::merge(owner, sourcePhrase, target);
-        return;
-      }
-
-      start(sourcePhrase);
-
-      std::shared_future<std::vector<std::uint8_t>> result;
-      {
-        std::lock_guard lock(mutex);
-        result = jobs.at(sourcePhrase.getAddress()).result;
-      }
-      const std::vector<std::uint8_t> image = result.get();
-      EngineImage::merge(owner, image, target);
-    } catch (...) {
-      radix::Checkpoint(&owner.lexicon, checkpoint).restore();
-      throw;
+    LexiconTransaction transaction(owner.lexicon);
+    if (!isDescriptor(sourcePhrase)) {
+      EngineImage::merge(owner, sourcePhrase, target);
+      transaction.commit();
+      return;
     }
+
+    start(sourcePhrase);
+
+    std::shared_future<std::vector<std::uint8_t>> result;
+    {
+      std::lock_guard lock(mutex);
+      result = jobs.at(sourcePhrase.getAddress()).result;
+    }
+    const std::vector<std::uint8_t> image = result.get();
+    EngineImage::merge(owner, image, target);
+    transaction.commit();
   }
 
   void TranslationUnitRegistry::merge(context::Context &context, lexicon::Phrase &invoked) {

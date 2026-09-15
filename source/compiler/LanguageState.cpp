@@ -438,7 +438,13 @@ namespace compiler {
       const Size offset = host.payloadSize() - sizeof(existing);
       host.fetch(offset, existing);
       if (existing.magic == LanguageBinding::Magic) {
-        host.update(offset, value).save();
+        // Language bindings are serialized semantic state. Rewriting a binding
+        // in place would bypass radix checkpoint rollback for a phrase that may
+        // predate the checkpoint. A second bind to the same language is
+        // idempotent; changing the language identity requires a new/versioned
+        // phrase instead of mutating this one.
+        if (existing.language != value.language)
+          THROW(, "cannot rebind an existing phrase to a different compiler language in place")
         return;
       }
     }
