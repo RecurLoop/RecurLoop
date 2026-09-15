@@ -18,6 +18,10 @@ examples/07-workflows/http-language/tests/query-header.test.sh \
 
 Each script builds `/tmp/recurloop-http-library.rli` automatically when needed and reports `ok` only after the actual socket request matches the expected result.
 
+`standalone.test.sh` additionally compiles `standalone.rl`, launches the
+generated `/tmp/recurloop-http-server` directly, and checks its inline POST
+handler over a real socket.
+
 To inspect the server manually instead, build the image and start the `.rl` file yourself:
 
 ```bash

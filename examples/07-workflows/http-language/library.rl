@@ -824,12 +824,16 @@ let http = phrase {
         defer LanguageKit:SliceReader:destroy(reader)
 
         var once = 0
-        if LanguageKit:SliceReader:match(reader, "once") { once = 1 }
-
         var address_start = -1
         var address_end = -1
         LanguageKit:SliceReader:skip_trivia(reader)
-        let address_token_start = reader.position
+        var address_token_start = reader.position
+        if LanguageKit:SliceReader:is(reader, "once") {
+            once = 1
+            LanguageKit:SliceReader:consume(reader)
+            LanguageKit:SliceReader:skip_trivia(reader)
+            address_token_start = reader.position
+        }
         if LanguageKit:SliceReader:kind_of(reader) == 3 {
             address_start = address_token_start
             address_end = reader.position

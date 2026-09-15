@@ -43,6 +43,42 @@ curl 'http://127.0.0.1:8080/hello?name=Alice'
 curl -X POST --data-binary 'hello' http://127.0.0.1:8080/echo
 ```
 
+## Standalone executable
+
+`standalone.rl` uses the same HTTP language to emit a native Linux executable.
+Starting from the repository root, build the two reusable language images and
+then compile the server:
+
+```bash
+build/Release/bin/recurloop \
+  --file examples/07-workflows/language-kit/library.rl
+
+build/Release/bin/recurloop \
+  --import /tmp/recurloop-language-kit.rli \
+  --file examples/07-workflows/http-language/library.rl
+
+build/Release/bin/recurloop \
+  --import /tmp/recurloop-http-library.rli \
+  --file examples/07-workflows/http-language/standalone.rl
+```
+
+The last command writes `/tmp/recurloop-http-server`. It no longer needs the
+RecurLoop executable or an engine image at runtime:
+
+```bash
+/tmp/recurloop-http-server
+```
+
+From another terminal:
+
+```bash
+curl http://127.0.0.1:8080/
+curl http://127.0.0.1:8080/health
+curl -X POST --data-binary 'hello' http://127.0.0.1:8080/echo
+```
+
+Stop the server with `Ctrl+C`.
+
 ## Routing syntax
 
 Handlers are ordinary typed RecurLoop functions:
@@ -359,6 +395,7 @@ examples/07-workflows/http-language/run-tests.sh \
 The regression runner verifies:
 
 - reusable image creation;
+- standalone executable generation and execution;
 - route dispatch;
 - case-insensitive request headers;
 - percent-decoded query parameters;
