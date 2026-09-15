@@ -1182,7 +1182,10 @@ namespace recurloop {
       context.actions().restore(registeredActions);
       if (initializeSemanticDefaults) {
         context::Values::setup(root);
-        compiler::LanguageState::setup(root);
+        // Compiler registry topology is part of the serialized/source-defined
+        // language image. Loading an image validates it; production C++ no
+        // longer synthesizes hidden registry names or defaults.
+        (void)compiler::LanguageState::locate(context.lexicon);
       }
       context.lookup = {};
       context.staging = {};

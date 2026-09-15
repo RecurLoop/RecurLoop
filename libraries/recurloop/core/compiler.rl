@@ -1,6 +1,42 @@
 // Semantic compiler/Host ABI contract used by engine define.
 // Physical sizeof/alignof/offsetof values deliberately stay in HostAbi C++; no layout offsets are stored here.
 compiler {
+  // Source-owned compiler registry topology. Production C++ resolves these
+  // objects by semantic role tags and does not know their physical keys.
+  language-root "\0compiler-language"
+  registry calling-conventions "calling-conventions"
+  registry functions "functions"
+  registry function-sources "function-sources"
+  registry modules "modules"
+  registry settings "settings"
+  registry module-selections "module-selections"
+  registry link-objects "link-objects"
+  registry link-archives "link-archives"
+  registry link-paths "link-paths"
+  registry shared-libraries "shared-libraries"
+  registry types "types"
+  registry type-ids "by-id"
+  registry abi-kinds "abi-kinds"
+
+  // Source-owned slots. The key may change without changing production C++;
+  // shadowing the slot preserves the role tag across compiler transactions.
+  slot type-next-id "next-id" 1
+  slot automatic-modules "automatic-modules" true
+  slot embed-language "embed-language" true
+  slot selection-generation "selection-generation" 0
+  slot link-sequence "link-sequence" 0
+  slot link-generation "link-generation" 0
+  slot module-entry "module-entry"
+
+  // ABI lowering behavior of type categories is source data, not a C++ setup table.
+  abi-kind void void
+  abi-kind integer integer
+  abi-kind floating floating
+  abi-kind pointer pointer
+  abi-kind array aggregate
+  abi-kind structure aggregate
+  abi-kind function pointer
+
   abi "sysv-amd64"
   abi "microsoft-x64"
   abi "cdecl-x86"
@@ -309,6 +345,4 @@ compiler {
   linker-path "/usr/lib/x86_64-linux-gnu"
   linker-path "/usr/lib64"
   linker-path "/usr/local/lib"
-  setting automatic-modules true
-  setting embed-language true
 }

@@ -1,6 +1,6 @@
 # RecurLoop autonomy migration
 
-Status after this overlay: **Stage 5 COMPLETE. Stage 6 is NEXT.**
+Status after this overlay: **Stage 6 COMPLETE. Stage 7 is NEXT.**
 
 This file is temporary migration state for an AI agent. Update it after every autonomy overlay. The final autonomy overlay must delete `todo.md`.
 
@@ -699,22 +699,130 @@ semantics; it is the correct **self-reproducing core bootstrap boundary** that
 allows those later migrations without requiring the seed to duplicate the final
 language.
 
-## Stage 6 — move compiler registry schema/semantics into RecurLoop
+## Stage 6 — source-own the compiler registry schema — COMPLETE
 
-Physical compiler data already lives in the shared lexicon. Move knowledge of its schema and operations out of production C++:
+### Goal
+
+Physical compiler data already lived in the shared lexicon, but production C++
+still owned its physical topology: hidden root/key strings, settings/counter slot
+keys and ABI-kind initialization. Stage 6 removes that physical schema knowledge
+from production `LanguageState`/`TypeRegistry`.
+
+This stage deliberately does **not** claim that compiler algorithms are
+self-hosted. Function/type/module lookup logic and payload codecs remain C++
+algorithms until Stage 7/8. The completed invariant is narrower and testable:
+
+> `core/compiler.rl` owns the physical compiler-registry graph. Production C++
+> addresses that graph only through stable semantic role tags serialized in the
+> lexicon/image.
+
+### Source-owned declarations
+
+`libraries/recurloop/core/compiler.rl` now declares:
 
 ```text
-types
-functions
-function sources
-modules
-calling conventions
-settings
-module selection
-link objects/archives/search paths
+language-root <source-chosen key>
+
+registry calling-conventions <source-chosen key>
+registry functions <source-chosen key>
+registry function-sources <source-chosen key>
+registry modules <source-chosen key>
+registry settings <source-chosen key>
+registry module-selections <source-chosen key>
+registry link-objects <source-chosen key>
+registry link-archives <source-chosen key>
+registry link-paths <source-chosen key>
+registry shared-libraries <source-chosen key>
+registry types <source-chosen key>
+registry type-ids <source-chosen key>
+registry abi-kinds <source-chosen key>
+
+slot type-next-id <source-chosen key> 1
+slot automatic-modules <source-chosen key> true
+slot embed-language <source-chosen key> true
+slot selection-generation <source-chosen key> 0
+slot link-sequence <source-chosen key> 0
+slot link-generation <source-chosen key> 0
+slot module-entry <source-chosen key>
+
+abi-kind void void
+abi-kind integer integer
+abi-kind floating floating
+abi-kind pointer pointer
+abi-kind array aggregate
+abi-kind structure aggregate
+abi-kind function pointer
 ```
 
-Production C++ should not need to know hidden registry names or language-specific registry layouts. Temporary seed C++ may know them only as required to build `core.rl` until the seed can be reduced further.
+The strings following those semantic roles are data owned by source, not an ABI
+contract with production C++.
+
+### Stable semantic tags
+
+`compiler/RegistrySchema` defines small image-safe metadata tags:
+
+```text
+Language
+RegistryBinding { RegistryRole }
+SlotBinding     { SlotRole }
+```
+
+`CoreDefinition` materializes the source-declared graph and writes these tags.
+`LanguageState` and `TypeRegistry` locate registries/slots by role instead of by
+physical path/key. Slot updates append/shadow the source-owned key, preserving
+the shared lexicon transaction model.
+
+The semantic role enums are intentionally still C++ at this stage because the
+production compiler algorithms that consume them are still C++. Stage 7 moves
+those semantic actions/algorithms toward `core.rli`; do not reintroduce physical
+key knowledge as an intermediate shortcut.
+
+### Engine image restore
+
+Normal `EngineImage::decode()` no longer synthesizes compiler registry topology
+by calling a C++ `LanguageState::setup()`. The topology is part of the
+serialized/source-built core. Decode validates/locates the source-defined schema
+instead. The minimal Stage-5 seed remains compiler-registry-free.
+
+### Build-time ownership guard
+
+`cmake/ValidateCompilerSchemaOwnership.cmake` is part of the core fixed-point
+build. It fails if production `LanguageState.cpp` or `TypeSystem.cpp` spells any
+of the source-owned physical registry/slot keys.
+
+This guard is architectural, not stylistic: changing a physical key in
+`core/compiler.rl` must not require a production C++ edit.
+
+### Integration proof
+
+`tests/feature/recurloop/language/compiler_schema_source_owned.cmake` copies the
+source core, renames the physical registry and slot keys while leaving semantic
+roles unchanged, then verifies:
+
+```text
+embedded core + renamed core.rl -> renamed core.rli
+renamed core.rli + renamed core.rl -> renamed core-2.rli
+renamed core.rli == renamed core-2.rli
+renamed core.rli executes normal source correctly
+```
+
+A direct manual version of the same test was also used during Stage 6, including
+renaming `functions`, `types`, module/link registries, counters/settings and ABI
+registry keys; the result still reached a byte-for-byte fixed point and executed
+`print 2 + 3 * 4` as `14`.
+
+### Stage 6 non-goals
+
+Do **not** interpret completion of Stage 6 as permission to delete all compiler
+C++. The following are still expected to remain for now:
+
+- typed function/type/module registry algorithms;
+- compiler payload serialization/decoding;
+- overload/linking/compiler working algorithms;
+- standard `action host "..."` implementations;
+- LLVM/native backend implementation.
+
+Those are addressed by Stage 7 onward.
 
 ## Stage 7 — move standard semantic actions/compiler algorithms into core.rli
 

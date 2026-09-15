@@ -20,17 +20,6 @@
 
 namespace compiler {
   namespace {
-    constexpr std::string_view LanguageDictionaryName{"\0compiler-language", 18};
-    constexpr std::string_view ConventionsName{"calling-conventions"};
-    constexpr std::string_view FunctionsName{"functions"};
-    constexpr std::string_view FunctionSourcesName{"function-sources"};
-    constexpr std::string_view ModulesName{"modules"};
-    constexpr std::string_view SettingsName{"settings"};
-    constexpr std::string_view SelectionsName{"module-selections"};
-    constexpr std::string_view LinkObjectsName{"link-objects"};
-    constexpr std::string_view LinkArchivesName{"link-archives"};
-    constexpr std::string_view LinkPathsName{"link-paths"};
-    constexpr std::string_view SharedLibrariesName{"shared-libraries"};
 
     lexicon::Phrase exact(lexicon::Phrase dictionary, std::string_view key) {
       lexicon::Match match = dictionary.matchExact(
@@ -39,36 +28,13 @@ namespace compiler {
       return match.isNull() ? lexicon::Phrase(dictionary.getLexicon()) : match.getPhrase();
     }
 
-    lexicon::Phrase dictionary(lexicon::Phrase parent, std::string_view name) {
-      lexicon::Phrase found = exact(parent, name);
-      if (!found.isNull()) return found;
-      return parent.append(std::string(name))
-          .make()
-          .enableSubdictionary()
-          .setType(lexicon::phrase::type::getData(parent))
-          .save();
-    }
 
     lexicon::Phrase languageRoot(lexicon::Lexicon &lexicon, Size address = 0) {
-      lexicon::Phrase result =
-          address == 0 ? exact(lexicon.phrase(), LanguageDictionaryName) : lexicon::Phrase(&lexicon, address).load();
-      if (result.isNull()) THROW(, "compiler language phrase is not initialized")
-      return result;
+      return RegistrySchema::language(lexicon, address);
     }
 
-    Language languageData(lexicon::Phrase phrase) {
-      if (phrase.payloadSize() != sizeof(Language)) THROW(, "compiler language phrase has invalid metadata")
-      Language result;
-      phrase.fetch(0, result);
-      if (result.magic != Language::Magic || result.version != Language::Version || result.reserved != 0)
-        THROW(, "compiler language phrase has an unsupported schema")
-      return result;
-    }
-
-    lexicon::Phrase registry(lexicon::Lexicon &lexicon, std::string_view name, Size languageAddress = 0) {
-      lexicon::Phrase result = exact(languageRoot(lexicon, languageAddress), name);
-      if (result.isNull()) THROW(, "compiler phrase registry is not initialized: '" << name << "'")
-      return result;
+    lexicon::Phrase registry(lexicon::Lexicon &lexicon, RegistryRole role, Size languageAddress = 0) {
+      return RegistrySchema::registry(lexicon, languageAddress, role);
     }
 
     std::vector<std::string> keys(lexicon::Phrase registry) {
@@ -274,21 +240,12 @@ namespace compiler {
       return result;
     }
 
-    std::uint64_t setting(lexicon::Lexicon &lexicon, Size languageAddress, std::string_view name,
-                          std::uint64_t fallback) {
-      lexicon::Phrase phrase = exact(registry(lexicon, SettingsName, languageAddress), name);
-      if (phrase.isNull()) return fallback;
-      if (phrase.payloadSize() != sizeof(std::uint64_t)) THROW(, "invalid compiler setting phrase")
-      std::uint64_t result;
-      phrase.fetch(0, result);
-      return result;
+    std::uint64_t setting(lexicon::Lexicon &lexicon, Size languageAddress, SlotRole role) {
+      return RegistrySchema::unsignedSlot(lexicon, languageAddress, role);
     }
 
-    void setSetting(lexicon::Lexicon &lexicon, Size languageAddress, std::string_view name, std::uint64_t value) {
-      lexicon::Phrase settings = registry(lexicon, SettingsName, languageAddress);
-      lexicon::Phrase phrase =
-          settings.append(std::string(name)).make().setType(lexicon::phrase::type::getData(settings)).save();
-      phrase.store(value).save();
+    void setSetting(lexicon::Lexicon &lexicon, Size languageAddress, SlotRole role, std::uint64_t value) {
+      RegistrySchema::setUnsignedSlot(lexicon, languageAddress, role, value);
     }
 
     struct Selection {
@@ -297,24 +254,24 @@ namespace compiler {
     };
 
     void select(lexicon::Lexicon &lexicon, Size languageAddress, std::string_view symbol, std::uint8_t state) {
-      lexicon::Phrase selections = registry(lexicon, SelectionsName, languageAddress);
+      lexicon::Phrase selections = registry(lexicon, RegistryRole::ModuleSelections, languageAddress);
       lexicon::Phrase phrase =
           selections.append(std::string(symbol)).make().setType(lexicon::phrase::type::getData(selections)).save();
-      phrase.store(Selection{setting(lexicon, languageAddress, "selection-generation", 0), state}).save();
+      phrase.store(Selection{setting(lexicon, languageAddress, SlotRole::SelectionGeneration), state}).save();
     }
 
     std::uint8_t selection(lexicon::Lexicon &lexicon, Size languageAddress, std::string_view symbol) {
-      lexicon::Phrase phrase = exact(registry(lexicon, SelectionsName, languageAddress), symbol);
+      lexicon::Phrase phrase = exact(registry(lexicon, RegistryRole::ModuleSelections, languageAddress), symbol);
       if (phrase.isNull()) return 0;
       if (phrase.payloadSize() != sizeof(Selection)) THROW(, "invalid module selection phrase")
       Selection result;
       phrase.fetch(0, result);
-      return result.generation == setting(lexicon, languageAddress, "selection-generation", 0) ? result.state : 0;
+      return result.generation == setting(lexicon, languageAddress, SlotRole::SelectionGeneration) ? result.state : 0;
     }
 
     std::vector<std::string> selected(lexicon::Lexicon &lexicon, Size languageAddress, std::uint8_t state) {
       std::vector<std::string> result;
-      for (const std::string &key : keys(registry(lexicon, SelectionsName, languageAddress)))
+      for (const std::string &key : keys(registry(lexicon, RegistryRole::ModuleSelections, languageAddress)))
         if (selection(lexicon, languageAddress, key) == state) result.push_back(key);
       return result;
     }
@@ -328,15 +285,15 @@ namespace compiler {
       return bytes;
     }
 
-    void storeLinkInput(lexicon::Lexicon &lexicon, Size languageAddress, std::string_view registryName,
+    void storeLinkInput(lexicon::Lexicon &lexicon, Size languageAddress, RegistryRole registryRole,
                         const std::string &path, std::span<const std::uint8_t> bytes) {
-      const std::uint64_t sequence = setting(lexicon, languageAddress, "link-sequence", 0);
-      setSetting(lexicon, languageAddress, "link-sequence", sequence + 1);
+      const std::uint64_t sequence = setting(lexicon, languageAddress, SlotRole::LinkSequence);
+      setSetting(lexicon, languageAddress, SlotRole::LinkSequence, sequence + 1);
       Writer writer;
-      writer.number(setting(lexicon, languageAddress, "link-generation", 0));
+      writer.number(setting(lexicon, languageAddress, SlotRole::LinkGeneration));
       writer.text(path);
       writer.data(bytes);
-      store(registry(lexicon, registryName, languageAddress), std::to_string(sequence), writer.bytes);
+      store(registry(lexicon, registryRole, languageAddress), std::to_string(sequence), writer.bytes);
     }
 
     struct LinkInput {
@@ -353,11 +310,11 @@ namespace compiler {
       return result;
     }
 
-    std::vector<LinkInput> linkInputs(lexicon::Lexicon &lexicon, Size languageAddress, std::string_view registryName) {
-      const std::uint64_t generation = setting(lexicon, languageAddress, "link-generation", 0);
+    std::vector<LinkInput> linkInputs(lexicon::Lexicon &lexicon, Size languageAddress, RegistryRole registryRole) {
+      const std::uint64_t generation = setting(lexicon, languageAddress, SlotRole::LinkGeneration);
       std::vector<LinkInput> result;
-      for (const std::string &key : keys(registry(lexicon, registryName, languageAddress))) {
-        LinkInput input = decodeLinkInput(exact(registry(lexicon, registryName, languageAddress), key));
+      for (const std::string &key : keys(registry(lexicon, registryRole, languageAddress))) {
+        LinkInput input = decodeLinkInput(exact(registry(lexicon, registryRole, languageAddress), key));
         if (input.generation == generation) result.push_back(std::move(input));
       }
       return result;
@@ -382,7 +339,7 @@ namespace compiler {
 
   LanguageState::LanguageState(lexicon::Phrase language)
       : types(language), lexicon(language.getLexicon()), languageAddress(language.getAddress()) {
-    languageData(language);
+    (void)RegistrySchema::language(*lexicon, languageAddress);
   }
 
   LanguageState LanguageState::locate(lexicon::Lexicon &lexicon) {
@@ -461,55 +418,16 @@ namespace compiler {
     destination.store(value).save();
   }
 
-  void LanguageState::setupStorage(lexicon::Phrase root) {
-    lexicon::Phrase language = dictionary(root, LanguageDictionaryName);
-    if (language.payloadSize() == 0)
-      language.store(Language{}).save();
-    else
-      languageData(language);
-    dictionary(language, ConventionsName);
-    dictionary(language, FunctionsName);
-    dictionary(language, FunctionSourcesName);
-    dictionary(language, ModulesName);
-    dictionary(language, SettingsName);
-    dictionary(language, SelectionsName);
-    dictionary(language, LinkObjectsName);
-    dictionary(language, LinkArchivesName);
-    dictionary(language, LinkPathsName);
-    dictionary(language, SharedLibrariesName);
-    TypeRegistry::setupStorage(root);
-  }
-
-  void LanguageState::setup(lexicon::Phrase root) {
-    setupStorage(root);
-    TypeRegistry::setup(root);
-    lexicon::Phrase language = dictionary(root, LanguageDictionaryName);
-    LanguageState state(language);
-    if (exact(registry(*root.getLexicon(), ConventionsName, language.getAddress()), "sysv-amd64").isNull()) {
-      state.defineConvention(CallingConvention::systemVAMD64());
-      state.defineConvention(CallingConvention::microsoftX64());
-      state.defineConvention(CallingConvention::cdeclX86());
-      state.defineConvention(CallingConvention::stdcallX86());
-      state.defineConvention(CallingConvention::fastcallX86());
-    }
-    for (std::string_view path : {".", "/usr/local/lib", "/usr/lib", "/lib", "/usr/lib64", "/lib64",
-                                  "/usr/lib/x86_64-linux-gnu", "/lib/x86_64-linux-gnu"})
-      state.addLinkSearchPath(std::string(path));
-    if (exact(registry(*root.getLexicon(), SettingsName, language.getAddress()), "automatic-modules").isNull())
-      state.setAutomaticModuleLinking(true);
-    if (exact(registry(*root.getLexicon(), SettingsName, language.getAddress()), "embed-language").isNull())
-      state.setEmbedLanguage(true);
-  }
 
   void LanguageState::defineConvention(CallingConvention value) {
     Abi::validate(value);
-    lexicon::Phrase conventions = registry(*lexicon, ConventionsName, languageAddress);
+    lexicon::Phrase conventions = registry(*lexicon, RegistryRole::CallingConventions, languageAddress);
     if (!exact(conventions, value.name).isNull()) THROW(, "duplicate calling convention: '" << value.name << "'")
     store(conventions, value.name, encode(value));
   }
 
   CallingConvention LanguageState::convention(std::string_view name) const {
-    lexicon::Phrase found = exact(registry(*lexicon, ConventionsName, languageAddress), name);
+    lexicon::Phrase found = exact(registry(*lexicon, RegistryRole::CallingConventions, languageAddress), name);
     if (found.isNull()) THROW(, "unknown calling convention: '" << name << "'")
     return decodeConvention(found);
   }
@@ -519,7 +437,7 @@ namespace compiler {
     if (function.name.empty()) function.name = function.signature.symbol;
     if (function.parameterTypes.size() != function.signature.parameters.size())
       THROW(, "typed function parameter registry is inconsistent")
-    lexicon::Phrase functions = registry(*lexicon, FunctionsName, languageAddress);
+    lexicon::Phrase functions = registry(*lexicon, RegistryRole::Functions, languageAddress);
     lexicon::Phrase overloads = exact(functions, function.name);
     if (overloads.isNull())
       overloads = functions.append(function.name)
@@ -553,7 +471,7 @@ namespace compiler {
   }
 
   std::vector<TypedFunction> LanguageState::findFunctions(std::string_view name) const {
-    lexicon::Phrase overloads = exact(registry(*lexicon, FunctionsName, languageAddress), name);
+    lexicon::Phrase overloads = exact(registry(*lexicon, RegistryRole::Functions, languageAddress), name);
     if (overloads.isNull() || !overloads.containsSubdictionary()) return {};
     std::vector<TypedFunction> result;
     for (const std::string &key : keys(overloads)) result.push_back(decodeFunction(exact(overloads, key)));
@@ -642,7 +560,7 @@ namespace compiler {
   }
 
   std::vector<TypedFunction> LanguageState::functions() const {
-    lexicon::Phrase functions = registry(*lexicon, FunctionsName, languageAddress);
+    lexicon::Phrase functions = registry(*lexicon, RegistryRole::Functions, languageAddress);
     std::vector<TypedFunction> result;
     for (const std::string &name : keys(functions)) {
       lexicon::Phrase overloads = exact(functions, name);
@@ -676,17 +594,17 @@ namespace compiler {
     const Symbol *entry = module.findSymbol(symbol);
     if (entry == nullptr || entry->imported)
       THROW(, "native module does not define its entry symbol: '" << symbol << "'")
-    store(registry(*lexicon, ModulesName, languageAddress), symbol, ElfWriter::write(module));
+    store(registry(*lexicon, RegistryRole::Modules, languageAddress), symbol, ElfWriter::write(module));
   }
 
   std::optional<Module> LanguageState::findModule(std::string_view symbol) const {
-    lexicon::Phrase found = exact(registry(*lexicon, ModulesName, languageAddress), symbol);
+    lexicon::Phrase found = exact(registry(*lexicon, RegistryRole::Modules, languageAddress), symbol);
     if (found.isNull()) return std::nullopt;
     return ElfReader::read(payload(found), std::string(symbol));
   }
 
   std::vector<NativeModule> LanguageState::modules() const {
-    lexicon::Phrase modules = registry(*lexicon, ModulesName, languageAddress);
+    lexicon::Phrase modules = registry(*lexicon, RegistryRole::Modules, languageAddress);
     std::vector<NativeModule> result;
     for (const std::string &key : keys(modules)) result.push_back({key, *findModule(key)});
     return result;
@@ -701,12 +619,12 @@ namespace compiler {
     writer.text(source.body);
     writer.number(static_cast<std::uint64_t>(source.line));
     writer.number(static_cast<std::uint64_t>(source.column));
-    lexicon::Phrase sources = dictionary(languageRoot(*lexicon, languageAddress), FunctionSourcesName);
+    lexicon::Phrase sources = registry(*lexicon, RegistryRole::FunctionSources, languageAddress);
     store(sources, symbol, writer.bytes);
   }
 
   std::optional<FunctionSource> LanguageState::findFunctionSource(std::string_view symbol) const {
-    lexicon::Phrase sources = exact(languageRoot(*lexicon, languageAddress), FunctionSourcesName);
+    lexicon::Phrase sources = registry(*lexicon, RegistryRole::FunctionSources, languageAddress);
     if (sources.isNull()) return std::nullopt;
     lexicon::Phrase found = exact(sources, symbol);
     if (found.isNull()) return std::nullopt;
@@ -728,10 +646,10 @@ namespace compiler {
   }
 
   void LanguageState::setAutomaticModuleLinking(bool enabled) {
-    setSetting(*lexicon, languageAddress, "automatic-modules", enabled);
+    setSetting(*lexicon, languageAddress, SlotRole::AutomaticModules, enabled);
   }
   bool LanguageState::automaticModuleLinking() const {
-    return setting(*lexicon, languageAddress, "automatic-modules", 1) != 0;
+    return setting(*lexicon, languageAddress, SlotRole::AutomaticModules) != 0;
   }
 
   std::vector<std::string> LanguageState::includedModules() const {
@@ -756,20 +674,19 @@ namespace compiler {
     if (symbol.empty()) THROW(, "module entry symbol cannot be empty")
     includeModule(symbol);
     Writer writer;
-    writer.number(setting(*lexicon, languageAddress, "selection-generation", 0));
+    writer.number(setting(*lexicon, languageAddress, SlotRole::SelectionGeneration));
     writer.text(symbol);
-    store(registry(*lexicon, SettingsName, languageAddress), "module-entry", writer.bytes);
+    RegistrySchema::setSlotData(*lexicon, languageAddress, SlotRole::ModuleEntry, writer.bytes);
   }
 
   std::optional<std::string> LanguageState::moduleEntry() const {
-    lexicon::Phrase phrase = exact(registry(*lexicon, SettingsName, languageAddress), "module-entry");
-    if (phrase.isNull()) return std::nullopt;
-    const std::vector<std::uint8_t> bytes = payload(phrase);
+    const std::vector<std::uint8_t> bytes = RegistrySchema::slotData(*lexicon, languageAddress, SlotRole::ModuleEntry);
+    if (bytes.empty()) return std::nullopt;
     Reader reader(bytes);
     const std::uint64_t generation = reader.number<std::uint64_t>();
     const std::string result = reader.text();
     reader.finish();
-    return generation == setting(*lexicon, languageAddress, "selection-generation", 0)
+    return generation == setting(*lexicon, languageAddress, SlotRole::SelectionGeneration)
                ? std::optional<std::string>(result)
                : std::nullopt;
   }
@@ -807,29 +724,29 @@ namespace compiler {
 
     if (!includeLinkInputs) return result;
     StaticLinker linker;
-    for (const LinkInput &input : linkInputs(*lexicon, languageAddress, LinkObjectsName))
+    for (const LinkInput &input : linkInputs(*lexicon, languageAddress, RegistryRole::LinkObjects))
       linker.addObject(ElfReader::read(input.bytes, input.path));
-    for (const LinkInput &input : linkInputs(*lexicon, languageAddress, LinkArchivesName))
+    for (const LinkInput &input : linkInputs(*lexicon, languageAddress, RegistryRole::LinkArchives))
       linker.addArchive(ArchiveReader::read(input.bytes, input.path));
     return linker.link(result);
   }
 
   void LanguageState::clearModuleSelection() {
-    setSetting(*lexicon, languageAddress, "selection-generation",
-               setting(*lexicon, languageAddress, "selection-generation", 0) + 1);
+    setSetting(*lexicon, languageAddress, SlotRole::SelectionGeneration,
+               setting(*lexicon, languageAddress, SlotRole::SelectionGeneration) + 1);
   }
 
   void LanguageState::linkObject(const std::string &path) {
-    storeLinkInput(*lexicon, languageAddress, LinkObjectsName, path, readLinkInput(path));
+    storeLinkInput(*lexicon, languageAddress, RegistryRole::LinkObjects, path, readLinkInput(path));
   }
 
   void LanguageState::linkArchive(const std::string &path) {
-    storeLinkInput(*lexicon, languageAddress, LinkArchivesName, path, readLinkInput(path));
+    storeLinkInput(*lexicon, languageAddress, RegistryRole::LinkArchives, path, readLinkInput(path));
   }
 
   void LanguageState::addLinkSearchPath(const std::string &path) {
     if (path.empty()) THROW(, "link search path cannot be empty")
-    lexicon::Phrase paths = registry(*lexicon, LinkPathsName, languageAddress);
+    lexicon::Phrase paths = registry(*lexicon, RegistryRole::LinkPaths, languageAddress);
     if (exact(paths, path).isNull()) store(paths, path, {});
   }
 
@@ -852,13 +769,13 @@ namespace compiler {
     if (name.empty() || name.find('/') != std::string::npos)
       THROW(, "shared library name must be non-empty and must not contain '/'")
     Writer writer;
-    writer.number(setting(*lexicon, languageAddress, "link-generation", 0));
-    store(registry(*lexicon, SharedLibrariesName, languageAddress), name, writer.bytes);
+    writer.number(setting(*lexicon, languageAddress, SlotRole::LinkGeneration));
+    store(registry(*lexicon, RegistryRole::SharedLibraries, languageAddress), name, writer.bytes);
   }
 
   std::vector<std::string> LanguageState::sharedLibraries() const {
-    const std::uint64_t generation = setting(*lexicon, languageAddress, "link-generation", 0);
-    lexicon::Phrase libraries = registry(*lexicon, SharedLibrariesName, languageAddress);
+    const std::uint64_t generation = setting(*lexicon, languageAddress, SlotRole::LinkGeneration);
+    lexicon::Phrase libraries = registry(*lexicon, RegistryRole::SharedLibraries, languageAddress);
     std::vector<std::string> result;
     for (const std::string &key : keys(libraries)) {
       const std::vector<std::uint8_t> bytes = payload(exact(libraries, key));
@@ -870,26 +787,26 @@ namespace compiler {
   }
 
   std::vector<std::string> LanguageState::linkerSearchPaths() const {
-    return keys(registry(*lexicon, LinkPathsName, languageAddress));
+    return keys(registry(*lexicon, RegistryRole::LinkPaths, languageAddress));
   }
 
   std::vector<NativeLinkInput> LanguageState::nativeLinkInputs() const {
     std::vector<NativeLinkInput> result;
-    for (LinkInput &input : linkInputs(*lexicon, languageAddress, LinkObjectsName))
+    for (LinkInput &input : linkInputs(*lexicon, languageAddress, RegistryRole::LinkObjects))
       result.push_back({std::move(input.path), std::move(input.bytes), false});
-    for (LinkInput &input : linkInputs(*lexicon, languageAddress, LinkArchivesName))
+    for (LinkInput &input : linkInputs(*lexicon, languageAddress, RegistryRole::LinkArchives))
       result.push_back({std::move(input.path), std::move(input.bytes), true});
     return result;
   }
 
   void LanguageState::clearLinkInputs() {
-    setSetting(*lexicon, languageAddress, "link-generation",
-               setting(*lexicon, languageAddress, "link-generation", 0) + 1);
+    setSetting(*lexicon, languageAddress, SlotRole::LinkGeneration,
+               setting(*lexicon, languageAddress, SlotRole::LinkGeneration) + 1);
   }
 
   bool LanguageState::hasLinkInputs() const {
-    return !linkInputs(*lexicon, languageAddress, LinkObjectsName).empty() ||
-           !linkInputs(*lexicon, languageAddress, LinkArchivesName).empty() || hasSharedLibraries();
+    return !linkInputs(*lexicon, languageAddress, RegistryRole::LinkObjects).empty() ||
+           !linkInputs(*lexicon, languageAddress, RegistryRole::LinkArchives).empty() || hasSharedLibraries();
   }
 
   bool LanguageState::hasSharedLibraries() const {
@@ -897,9 +814,9 @@ namespace compiler {
   }
 
   void LanguageState::setEmbedLanguage(bool enabled) {
-    setSetting(*lexicon, languageAddress, "embed-language", enabled);
+    setSetting(*lexicon, languageAddress, SlotRole::EmbedLanguage, enabled);
   }
   bool LanguageState::embedsLanguage() const {
-    return setting(*lexicon, languageAddress, "embed-language", 1) != 0;
+    return setting(*lexicon, languageAddress, SlotRole::EmbedLanguage) != 0;
   }
 } // namespace compiler

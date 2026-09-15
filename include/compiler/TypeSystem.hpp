@@ -59,8 +59,6 @@ namespace compiler {
   class TypeRegistry {
   public:
     explicit TypeRegistry(lexicon::Phrase language);
-    static void setupStorage(lexicon::Phrase root);
-    static void setup(lexicon::Phrase root);
 
     TypeId find(std::string_view name) const;
     TypeDescriptor get(TypeId id) const;

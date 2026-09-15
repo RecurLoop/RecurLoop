@@ -63,6 +63,19 @@ process-local native implementations required by those source declarations.
 After the fresh stage-0 graph exists, source-defined `control-flow.rl` is parsed
 by that newly built language and the result is exported as `core.rli`.
 
+### Source-owned compiler registry schema
+
+`core/compiler.rl` also owns the physical compiler-registry schema. It declares
+the language-registry root, registry keys, setting/counter slots and defaults,
+and the ABI-kind mapping. The image stores stable semantic role metadata beside
+those source-chosen keys. Production `LanguageState` and `TypeRegistry` locate
+registry objects through those roles; they do not spell the physical keys.
+
+The C++ side still implements typed compiler algorithms and payload codecs at
+this stage. Moving those algorithms/actions into `core.rli` is a later
+self-hosting step; source ownership here means the lexicon topology/layout is no
+longer a production-C++ schema.
+
 ## Self-hosting fixed point
 
 The build intentionally does **not** require the seed to equal the final core.

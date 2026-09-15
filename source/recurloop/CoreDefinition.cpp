@@ -8,6 +8,7 @@
 
 #include <compiler/Assembler.hpp>
 #include <compiler/LanguageState.hpp>
+#include <compiler/RegistrySchema.hpp>
 #include <compiler/Module.hpp>
 
 #include <context/Lookup.hpp>
@@ -75,13 +76,31 @@ namespace recurloop::internal {
       bool imported = false;
     };
 
+    struct RegistrySpec {
+      compiler::RegistryRole role;
+      std::string key;
+    };
+
+    struct SlotSpec {
+      compiler::SlotRole role;
+      std::string key;
+      std::optional<std::uint64_t> initial;
+    };
+
+    struct AbiKindSpec {
+      compiler::TypeKind typeKind;
+      compiler::ValueKind valueKind;
+    };
+
     struct CompilerSpec {
+      std::optional<std::string> languageKey;
+      std::vector<RegistrySpec> registries;
+      std::vector<SlotSpec> slots;
+      std::vector<AbiKindSpec> abiKinds;
       std::vector<std::string> abis;
       std::vector<TypeSpec> types;
       std::vector<FunctionSpec> functions;
       std::vector<std::string> linkerPaths;
-      std::optional<bool> automaticModules;
-      std::optional<bool> embedLanguage;
     };
 
     struct Definition {
@@ -191,6 +210,62 @@ namespace recurloop::internal {
       return output.str();
     }
 
+    compiler::RegistryRole registryRole(std::string_view name, std::size_t lineNumber) {
+      static const std::unordered_map<std::string_view, compiler::RegistryRole> roles{
+          {"calling-conventions", compiler::RegistryRole::CallingConventions},
+          {"functions", compiler::RegistryRole::Functions},
+          {"function-sources", compiler::RegistryRole::FunctionSources},
+          {"modules", compiler::RegistryRole::Modules},
+          {"settings", compiler::RegistryRole::Settings},
+          {"module-selections", compiler::RegistryRole::ModuleSelections},
+          {"link-objects", compiler::RegistryRole::LinkObjects},
+          {"link-archives", compiler::RegistryRole::LinkArchives},
+          {"link-paths", compiler::RegistryRole::LinkPaths},
+          {"shared-libraries", compiler::RegistryRole::SharedLibraries},
+          {"types", compiler::RegistryRole::Types},
+          {"type-ids", compiler::RegistryRole::TypeIds},
+          {"abi-kinds", compiler::RegistryRole::AbiKinds},
+      };
+      const auto found = roles.find(name);
+      if (found == roles.end()) THROW(, "core definition line " << lineNumber << ": unknown compiler registry role '" << name << "'")
+      return found->second;
+    }
+
+    compiler::SlotRole slotRole(std::string_view name, std::size_t lineNumber) {
+      static const std::unordered_map<std::string_view, compiler::SlotRole> roles{
+          {"type-next-id", compiler::SlotRole::TypeNextId},
+          {"automatic-modules", compiler::SlotRole::AutomaticModules},
+          {"embed-language", compiler::SlotRole::EmbedLanguage},
+          {"selection-generation", compiler::SlotRole::SelectionGeneration},
+          {"link-sequence", compiler::SlotRole::LinkSequence},
+          {"link-generation", compiler::SlotRole::LinkGeneration},
+          {"module-entry", compiler::SlotRole::ModuleEntry},
+      };
+      const auto found = roles.find(name);
+      if (found == roles.end()) THROW(, "core definition line " << lineNumber << ": unknown compiler slot role '" << name << "'")
+      return found->second;
+    }
+
+    compiler::TypeKind schemaTypeKind(std::string_view name, std::size_t lineNumber) {
+      if (name == "void") return compiler::TypeKind::Void;
+      if (name == "integer") return compiler::TypeKind::Integer;
+      if (name == "floating") return compiler::TypeKind::FloatingPoint;
+      if (name == "pointer") return compiler::TypeKind::Pointer;
+      if (name == "array") return compiler::TypeKind::Array;
+      if (name == "structure") return compiler::TypeKind::Structure;
+      if (name == "function") return compiler::TypeKind::Function;
+      THROW(, "core definition line " << lineNumber << ": unknown ABI type kind '" << name << "'")
+    }
+
+    compiler::ValueKind schemaValueKind(std::string_view name, std::size_t lineNumber) {
+      if (name == "void") return compiler::ValueKind::Void;
+      if (name == "integer") return compiler::ValueKind::Integer;
+      if (name == "floating") return compiler::ValueKind::FloatingPoint;
+      if (name == "pointer") return compiler::ValueKind::Pointer;
+      if (name == "aggregate") return compiler::ValueKind::Aggregate;
+      THROW(, "core definition line " << lineNumber << ": unknown ABI value kind '" << name << "'")
+    }
+
     Definition parse(std::string_view source, std::string_view sourcePath) {
       std::filesystem::path base = std::filesystem::current_path();
       if (!sourcePath.empty() && sourcePath.front() != '<') base = std::filesystem::path(sourcePath).parent_path();
@@ -227,6 +302,28 @@ namespace recurloop::internal {
 
         if (compiler) {
           if (f.size() == 1 && f[0] == "}") { compiler = false; continue; }
+          if (f[0] == "language-root" && f.size() == 2) {
+            if (result.compiler.languageKey) THROW(, "core definition line " << lineNumber << ": duplicate compiler language root")
+            result.compiler.languageKey = f[1];
+            continue;
+          }
+          if (f[0] == "registry" && f.size() == 3) {
+            result.compiler.registries.push_back({registryRole(f[1], lineNumber), f[2]});
+            continue;
+          }
+          if (f[0] == "slot" && (f.size() == 3 || f.size() == 4)) {
+            SlotSpec slot{slotRole(f[1], lineNumber), f[2], std::nullopt};
+            if (f.size() == 4) {
+              if (f[3] == "true" || f[3] == "false") slot.initial = boolean(f[3], lineNumber) ? 1 : 0;
+              else slot.initial = integer(f[3], lineNumber);
+            }
+            result.compiler.slots.push_back(std::move(slot));
+            continue;
+          }
+          if (f[0] == "abi-kind" && f.size() == 3) {
+            result.compiler.abiKinds.push_back({schemaTypeKind(f[1], lineNumber), schemaValueKind(f[2], lineNumber)});
+            continue;
+          }
           if (f[0] == "abi" && f.size() == 2) { result.compiler.abis.push_back(f[1]); continue; }
           if (f[0] == "type" && f.size() >= 3) {
             TypeSpec type{f[1], f[2], {}};
@@ -252,12 +349,6 @@ namespace recurloop::internal {
             continue;
           }
           if (f[0] == "linker-path" && f.size() == 2) { result.compiler.linkerPaths.push_back(f[1]); continue; }
-          if (f[0] == "setting" && f.size() == 3) {
-            if (f[1] == "automatic-modules") result.compiler.automaticModules = boolean(f[2], lineNumber);
-            else if (f[1] == "embed-language") result.compiler.embedLanguage = boolean(f[2], lineNumber);
-            else THROW(, "core definition line " << lineNumber << ": unknown compiler setting")
-            continue;
-          }
           THROW(, "core definition line " << lineNumber << ": unknown compiler declaration '" << f[0] << "'")
         }
 
@@ -338,6 +429,86 @@ namespace recurloop::internal {
       return fields;
     }
 
+    lexicon::Phrase materializeCompilerSchema(context::Context &context, lexicon::Phrase root,
+                                                   const CompilerSpec &spec) {
+      if (!spec.languageKey) THROW(, "source core compiler schema is missing language-root")
+
+      std::unordered_set<compiler::RegistryRole> registryRoles;
+      for (const RegistrySpec &entry : spec.registries)
+        if (!registryRoles.insert(entry.role).second) THROW(, "source core compiler schema duplicates a registry role")
+      for (compiler::RegistryRole required : {
+               compiler::RegistryRole::CallingConventions, compiler::RegistryRole::Functions,
+               compiler::RegistryRole::FunctionSources, compiler::RegistryRole::Modules,
+               compiler::RegistryRole::Settings, compiler::RegistryRole::ModuleSelections,
+               compiler::RegistryRole::LinkObjects, compiler::RegistryRole::LinkArchives,
+               compiler::RegistryRole::LinkPaths, compiler::RegistryRole::SharedLibraries,
+               compiler::RegistryRole::Types, compiler::RegistryRole::TypeIds,
+               compiler::RegistryRole::AbiKinds})
+        if (!registryRoles.contains(required)) THROW(, "source core compiler schema is missing a required registry role")
+
+      std::unordered_set<compiler::SlotRole> slotRoles;
+      for (const SlotSpec &entry : spec.slots)
+        if (!slotRoles.insert(entry.role).second) THROW(, "source core compiler schema duplicates a setting slot role")
+      for (compiler::SlotRole required : {
+               compiler::SlotRole::TypeNextId, compiler::SlotRole::AutomaticModules,
+               compiler::SlotRole::EmbedLanguage, compiler::SlotRole::SelectionGeneration,
+               compiler::SlotRole::LinkSequence, compiler::SlotRole::LinkGeneration,
+               compiler::SlotRole::ModuleEntry})
+        if (!slotRoles.contains(required)) THROW(, "source core compiler schema is missing a required setting slot role")
+
+      std::unordered_set<compiler::TypeKind> abiKinds;
+      for (const AbiKindSpec &entry : spec.abiKinds)
+        if (!abiKinds.insert(entry.typeKind).second) THROW(, "source core compiler schema duplicates an ABI-kind mapping")
+      for (compiler::TypeKind required : {compiler::TypeKind::Void, compiler::TypeKind::Integer,
+                                          compiler::TypeKind::FloatingPoint, compiler::TypeKind::Pointer,
+                                          compiler::TypeKind::Array, compiler::TypeKind::Structure,
+                                          compiler::TypeKind::Function})
+        if (!abiKinds.contains(required)) THROW(, "source core compiler schema is missing an ABI-kind mapping")
+
+      lexicon::Phrase dataType = lexicon::phrase::type::getData(root);
+      lexicon::Phrase language = root.append(*spec.languageKey)
+                                     .make()
+                                     .enableSubdictionary()
+                                     .setType(dataType)
+                                     .save();
+      compiler::RegistrySchema::initializeLanguage(language);
+
+      for (const RegistrySpec &entry : spec.registries) {
+        lexicon::Phrase registry = language.append(entry.key)
+                                        .make()
+                                        .enableSubdictionary()
+                                        .setType(dataType)
+                                        .save();
+        compiler::RegistrySchema::bindRegistry(registry, entry.role);
+      }
+
+      lexicon::Phrase settings = compiler::RegistrySchema::registry(context.lexicon, language.getAddress(),
+                                                                    compiler::RegistryRole::Settings);
+      for (const SlotSpec &entry : spec.slots) {
+        lexicon::Phrase slot = settings.append(entry.key).make().setType(dataType).save();
+        if (entry.initial) {
+          const std::uint64_t value = *entry.initial;
+          compiler::RegistrySchema::bindSlot(
+              slot, entry.role,
+              std::span<const std::uint8_t>(reinterpret_cast<const std::uint8_t *>(&value), sizeof(value)));
+        } else {
+          compiler::RegistrySchema::bindSlot(slot, entry.role);
+        }
+      }
+
+      lexicon::Phrase kinds = compiler::RegistrySchema::registry(context.lexicon, language.getAddress(),
+                                                                 compiler::RegistryRole::AbiKinds);
+      for (const AbiKindSpec &entry : spec.abiKinds) {
+        kinds.append(std::string(1, static_cast<char>(entry.typeKind)))
+            .make()
+            .setType(dataType)
+            .save()
+            .store(entry.valueKind)
+            .save();
+      }
+      return language;
+    }
+
     void materializeCompiler(context::Context &context, const CompilerSpec &spec) {
       compiler::LanguageState language = context.language();
       for (const std::string &abi : spec.abis) language.defineConvention(compilerConvention(abi));
@@ -400,9 +571,6 @@ namespace recurloop::internal {
       }
 
       for (const std::string &path : spec.linkerPaths) language.addLinkSearchPath(path);
-      if (!spec.automaticModules || !spec.embedLanguage) THROW(, "source core must declare both compiler settings")
-      language.setAutomaticModuleLinking(*spec.automaticModules);
-      language.setEmbedLanguage(*spec.embedLanguage);
 
       // Native addresses are process-local and deliberately absent from the
       // image. The source declarations above must already be complete here.
@@ -485,10 +653,6 @@ namespace recurloop::internal {
       std::sort(actualPaths.begin(), actualPaths.end());
       std::sort(expectedPaths.begin(), expectedPaths.end());
       if (actualPaths != expectedPaths) THROW(, "source core linker path contract mismatch")
-      if (!spec.automaticModules || language.automaticModuleLinking() != *spec.automaticModules)
-        THROW(, "source core automatic-modules setting mismatch")
-      if (!spec.embedLanguage || language.embedsLanguage() != *spec.embedLanguage)
-        THROW(, "source core embed-language setting mismatch")
     }
 
     std::uint8_t sectionTypeValue(std::string_view name) {
@@ -603,7 +767,7 @@ namespace recurloop::internal {
     root.setSuccessor(root).save();
 
     setup_phrase_types(context, root);
-    compiler::LanguageState::setupStorage(root);
+    materializeCompilerSchema(context, root, definition.compiler);
     materializeCompiler(context, definition.compiler);
 
     std::unordered_map<std::string, lexicon::Phrase> phrases;

@@ -1,4 +1,5 @@
 #include <compiler/TypeSystem.hpp>
+#include <compiler/RegistrySchema.hpp>
 
 #include <lexicon/Lexicon.hpp>
 #include <utilities/Exception.hpp>
@@ -10,11 +11,6 @@
 
 namespace compiler {
   namespace {
-    constexpr std::string_view LanguageDictionaryName{"\0compiler-language", 18};
-    constexpr std::string_view TypesName{"types"};
-    constexpr std::string_view TypeIdsName{"by-id"};
-    constexpr std::string_view NextTypeIdName{"next-id"};
-    constexpr std::string_view AbiKindsName{"abi-kinds"};
 
     bool powerOfTwo(std::size_t value) {
       return value != 0 && (value & (value - 1)) == 0;
@@ -33,21 +29,9 @@ namespace compiler {
       return match.isNull() ? lexicon::Phrase(dictionary.getLexicon()) : match.getPhrase();
     }
 
-    lexicon::Phrase dictionary(lexicon::Phrase parent, std::string_view name) {
-      lexicon::Phrase found = exact(parent, name);
-      if (!found.isNull()) return found;
-      return parent.append(std::string(name))
-          .make()
-          .enableSubdictionary()
-          .setType(lexicon::phrase::type::getData(parent))
-          .save();
-    }
 
     lexicon::Phrase languageRoot(lexicon::Lexicon &lexicon, Size address) {
-      lexicon::Phrase result(&lexicon, address);
-      result.load();
-      if (result.isNull()) THROW(, "compiler language phrase is unavailable")
-      return result;
+      return RegistrySchema::language(lexicon, address);
     }
 
     class Writer {
@@ -250,97 +234,49 @@ namespace compiler {
       phrase.save();
     }
 
-    void storeAbiKind(lexicon::Phrase dictionary, TypeKind kind, ValueKind abiKind) {
-      dictionary.append(std::string(1, static_cast<char>(kind)))
-          .make()
-          .setType(lexicon::phrase::type::getData(dictionary))
-          .save()
-          .store(abiKind)
-          .save();
-    }
 
     std::string idKey(TypeId id) {
       return std::string(reinterpret_cast<const char *>(&id), sizeof(id));
     }
 
-    TypeId nextId(lexicon::Phrase types) {
-      lexicon::Phrase next = exact(types, NextTypeIdName);
-      if (next.isNull()) return 1;
-      if (next.payloadSize() != sizeof(TypeId)) THROW(, "invalid next type id phrase")
-      TypeId result;
-      next.fetch(0, result);
-      return result;
+    TypeId nextId(lexicon::Lexicon &lexicon, Size languageAddress) {
+      return static_cast<TypeId>(RegistrySchema::unsignedSlot(lexicon, languageAddress, SlotRole::TypeNextId));
     }
 
-    void setNextId(lexicon::Phrase types, TypeId value) {
-      lexicon::Phrase next =
-          types.append(std::string(NextTypeIdName)).make().setType(lexicon::phrase::type::getData(types)).save();
-      next.store(value).save();
+    void setNextId(lexicon::Lexicon &lexicon, Size languageAddress, TypeId value) {
+      RegistrySchema::setUnsignedSlot(lexicon, languageAddress, SlotRole::TypeNextId, value);
     }
+
   } // namespace
 
   TypeRegistry::TypeRegistry(lexicon::Phrase language)
       : lexicon(language.getLexicon()), languageAddress(language.getAddress()) {}
 
-  void TypeRegistry::setupStorage(lexicon::Phrase root) {
-    lexicon::Phrase language = dictionary(root, LanguageDictionaryName);
-    lexicon::Phrase types = dictionary(language, TypesName);
-    dictionary(language, TypeIdsName);
-    lexicon::Phrase abiKinds = dictionary(language, AbiKindsName);
-    if (exact(abiKinds, std::string(1, static_cast<char>(TypeKind::Void))).isNull()) {
-      storeAbiKind(abiKinds, TypeKind::Void, ValueKind::Void);
-      storeAbiKind(abiKinds, TypeKind::Integer, ValueKind::Integer);
-      storeAbiKind(abiKinds, TypeKind::FloatingPoint, ValueKind::FloatingPoint);
-      storeAbiKind(abiKinds, TypeKind::Pointer, ValueKind::Pointer);
-      storeAbiKind(abiKinds, TypeKind::Array, ValueKind::Aggregate);
-      storeAbiKind(abiKinds, TypeKind::Structure, ValueKind::Aggregate);
-      storeAbiKind(abiKinds, TypeKind::Function, ValueKind::Pointer);
-    }
-    if (exact(types, NextTypeIdName).isNull()) setNextId(types, 1);
-  }
-
-  void TypeRegistry::setup(lexicon::Phrase root) {
-    setupStorage(root);
-    lexicon::Phrase language = dictionary(root, LanguageDictionaryName);
-    TypeRegistry registry(language);
-    if (registry.find("void") != InvalidType) return;
-    registry.defineVoid();
-    registry.defineInteger("i8", 8, true);
-    registry.defineInteger("u8", 8, false);
-    registry.defineInteger("i16", 16, true);
-    registry.defineInteger("u16", 16, false);
-    registry.defineInteger("i32", 32, true);
-    registry.defineInteger("u32", 32, false);
-    registry.defineInteger("i64", 64, true);
-    registry.defineInteger("u64", 64, false);
-    registry.defineFloatingPoint("f32", 32);
-    registry.defineFloatingPoint("f64", 64);
-  }
 
   TypeId TypeRegistry::append(TypeDescriptor descriptor) {
     if (descriptor.name.empty()) THROW(, "type name cannot be empty")
     if (find(descriptor.name) != InvalidType) THROW(, "duplicate type: '" << descriptor.name << "'")
     if (!powerOfTwo(descriptor.alignment)) THROW(, "type alignment must be a non-zero power of two")
     lexicon::Phrase language = languageRoot(*lexicon, languageAddress);
-    lexicon::Phrase names = exact(language, TypesName);
-    lexicon::Phrase ids = exact(language, TypeIdsName);
-    descriptor.id = nextId(names);
+    lexicon::Phrase names = RegistrySchema::registry(*lexicon, languageAddress, RegistryRole::Types);
+    lexicon::Phrase ids = RegistrySchema::registry(*lexicon, languageAddress, RegistryRole::TypeIds);
+    descriptor.id = nextId(*lexicon, languageAddress);
     if (descriptor.id == std::numeric_limits<TypeId>::max()) THROW(, "type registry is full")
     store(names, descriptor.name, descriptor);
     store(ids, idKey(descriptor.id), descriptor);
-    setNextId(names, descriptor.id + 1);
+    setNextId(*lexicon, languageAddress, descriptor.id + 1);
     return descriptor.id;
   }
 
   TypeId TypeRegistry::find(std::string_view name) const {
-    lexicon::Phrase names = exact(languageRoot(*lexicon, languageAddress), TypesName);
+    lexicon::Phrase names = RegistrySchema::registry(*lexicon, languageAddress, RegistryRole::Types);
     lexicon::Phrase found = exact(names, name);
     return found.isNull() ? InvalidType : decode(found).id;
   }
 
   TypeDescriptor TypeRegistry::get(TypeId id) const {
     if (id == InvalidType) THROW(, "invalid type id")
-    lexicon::Phrase ids = exact(languageRoot(*lexicon, languageAddress), TypeIdsName);
+    lexicon::Phrase ids = RegistrySchema::registry(*lexicon, languageAddress, RegistryRole::TypeIds);
     lexicon::Phrase found = exact(ids, idKey(id));
     if (found.isNull()) THROW(, "invalid type id")
     return decode(found);
@@ -462,8 +398,8 @@ namespace compiler {
     descriptor.alignment = structureAlignment;
     descriptor.fields = std::move(fields);
     lexicon::Phrase language = languageRoot(*lexicon, languageAddress);
-    store(exact(language, TypesName), descriptor.name, descriptor);
-    store(exact(language, TypeIdsName), idKey(descriptor.id), descriptor);
+    store(RegistrySchema::registry(*lexicon, languageAddress, RegistryRole::Types), descriptor.name, descriptor);
+    store(RegistrySchema::registry(*lexicon, languageAddress, RegistryRole::TypeIds), idKey(descriptor.id), descriptor);
   }
 
   TypeId TypeRegistry::defineStructure(std::string name, std::span<const FieldDeclaration> declarations, bool packed,
@@ -518,14 +454,14 @@ namespace compiler {
       return left.signature.variadic < right.signature.variadic;
     });
     lexicon::Phrase language = languageRoot(*lexicon, languageAddress);
-    store(exact(language, TypesName), type.name, type);
-    store(exact(language, TypeIdsName), idKey(type.id), type);
+    store(RegistrySchema::registry(*lexicon, languageAddress, RegistryRole::Types), type.name, type);
+    store(RegistrySchema::registry(*lexicon, languageAddress, RegistryRole::TypeIds), idKey(type.id), type);
   }
 
   ValueType TypeRegistry::abiType(TypeId id) const {
     const TypeDescriptor type = get(id);
     lexicon::Phrase language = languageRoot(*lexicon, languageAddress);
-    lexicon::Phrase kinds = exact(language, AbiKindsName);
+    lexicon::Phrase kinds = RegistrySchema::registry(*lexicon, languageAddress, RegistryRole::AbiKinds);
     lexicon::Phrase behavior = exact(kinds, std::string(1, static_cast<char>(type.kind)));
     if (behavior.isNull() || behavior.payloadSize() != sizeof(ValueKind))
       THROW(, "type has no phrase-defined ABI behavior: '" << type.name << "'")
@@ -536,8 +472,8 @@ namespace compiler {
 
   std::vector<TypeDescriptor> TypeRegistry::types() const {
     lexicon::Phrase language = languageRoot(*lexicon, languageAddress);
-    lexicon::Phrase names = exact(language, TypesName);
-    const TypeId next = nextId(names);
+    lexicon::Phrase names = RegistrySchema::registry(*lexicon, languageAddress, RegistryRole::Types);
+    const TypeId next = nextId(*lexicon, languageAddress);
     std::vector<TypeDescriptor> result(next);
     for (TypeId id = 1; id < next; ++id) result[id] = get(id);
     return result;

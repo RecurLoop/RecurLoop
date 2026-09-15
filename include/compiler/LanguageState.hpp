@@ -1,6 +1,7 @@
 #pragma once
 
 #include <compiler/Module.hpp>
+#include <compiler/RegistrySchema.hpp>
 #include <compiler/TypeSystem.hpp>
 
 #include <utilities/Size.hpp>
@@ -18,18 +19,6 @@ namespace lexicon {
 
 namespace compiler {
   inline constexpr std::string_view LanguageBindingPhraseName{"\0language", 9};
-
-  struct Language {
-    static constexpr std::uint64_t Magic = 0x524C4C414E475545ull;
-    static constexpr std::uint32_t Version = 3;
-
-    std::uint64_t magic = Magic;
-    std::uint32_t version = Version;
-    // Persisted language metadata is copied byte-for-byte into engine images.
-    // Keep the trailing word explicit instead of relying on struct padding so
-    // identical source always produces identical images.
-    std::uint32_t reserved = 0;
-  };
 
   struct LanguageBinding {
     static constexpr std::uint64_t Magic = 0x524C4C414E474249ull;
@@ -70,8 +59,6 @@ namespace compiler {
   class LanguageState {
   public:
     explicit LanguageState(lexicon::Phrase language);
-    static void setupStorage(lexicon::Phrase root);
-    static void setup(lexicon::Phrase root);
     static LanguageState locate(lexicon::Lexicon &lexicon);
     static LanguageState resolve(lexicon::Lexicon &lexicon, lexicon::Phrase *invoked);
     static LanguageBinding binding(lexicon::Lexicon &lexicon);

@@ -712,6 +712,13 @@ dump: phrase references are symbolic and Host ABI primitives are named. Numeric
 phrase ids, numeric parent/prototype/successor ids and serialized payload dumps
 are rejected from the checked-in source core.
 
+The compiler registry topology is source-owned as well. `core/compiler.rl`
+declares the physical keys, registry roles, setting/counter slots and ABI-kind
+mapping. Production `LanguageState` and `TypeRegistry` discover those objects by
+stable semantic tags stored in the lexicon rather than by hard-coded registry
+paths. A build-time audit rejects reintroduction of those physical keys into
+production compiler code.
+
 There is no public `--bootstrap`, `--language-image`, `--engine-image`, `--core`,
 or `--no-core` mode. The final runtime registers process-local Host ABI action
 names, restores the embedded source-built core image, and binds native
