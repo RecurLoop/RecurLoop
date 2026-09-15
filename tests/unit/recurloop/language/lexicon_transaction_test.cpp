@@ -7,6 +7,7 @@
 #include <recurloop/LexiconTransaction.hpp>
 #include <recurloop/Recurloop.hpp>
 
+#include <array>
 #include <stdexcept>
 #include <utilities/Exception.hpp>
 
@@ -188,4 +189,56 @@ TEST_F(LexiconTransactionTesting, StoredWatermarkCanBeRestoredAcrossParserCallba
 
   EXPECT_TRUE(find("stage2_callback_phrase").isNull());
   EXPECT_EQ(recurloop::EngineImage::encode(context), imageBefore);
+}
+
+TEST_F(LexiconTransactionTesting, SelectivePromotionKeepsOnlyChosenSemanticGraph) {
+  lexicon::Phrase root = context.lexicon.phrase();
+  lexicon::Phrase data = lexicon::phrase::type::getData(root);
+  lexicon::Phrase schema = root.append("stage3_promotion_schema").make().setType(data).save();
+  recurloop::EngineImage::declarePayloadField(context, schema, 0,
+                                               recurloop::EngineImage::PayloadFieldKind::PhraseReference);
+  const std::vector<std::uint8_t> parentImage = recurloop::EngineImage::encode(context);
+
+  recurloop::LexiconTransaction transaction(context.lexicon);
+  root.append("stage3_discarded").make().setType(data).save();
+  lexicon::Phrase promoted = root.append("stage3_promoted")
+                                  .make()
+                                  .enableSubdictionary()
+                                  .setPrototype(schema)
+                                  .setType(data)
+                                  .save();
+  promoted.store(Size{0}).save();
+  lexicon::Phrase child = promoted.append("child").make().setType(data).save();
+  promoted.update(0, child.getAddress()).save();
+
+  const std::array<lexicon::Phrase, 1> selected{promoted};
+  transaction.promote(context, selected);
+
+  EXPECT_FALSE(transaction.isActive());
+  EXPECT_TRUE(find("stage3_discarded").isNull());
+  lexicon::Phrase restored = find("stage3_promoted");
+  ASSERT_FALSE(restored.isNull());
+  lexicon::Match restoredChild = restored.matchExact(Byte(const_cast<char *>("child")), 0, 5 * Byte::length);
+  ASSERT_FALSE(restoredChild.isNull());
+  Size reference = 0;
+  restored.fetch(0, reference);
+  EXPECT_EQ(reference, restoredChild.getPhrase().getAddress());
+  EXPECT_NE(recurloop::EngineImage::encode(context), parentImage);
+}
+
+TEST_F(LexiconTransactionTesting, PromotionRejectsDependencyOnUnselectedTransactionState) {
+  lexicon::Phrase root = context.lexicon.phrase();
+  lexicon::Phrase data = lexicon::phrase::type::getData(root);
+  recurloop::LexiconTransaction transaction(context.lexicon);
+  lexicon::Phrase dependency = root.append("stage3_unselected_dependency").make().setType(data).save();
+  lexicon::Phrase promoted = root.append("stage3_invalid_promotion")
+                                  .make()
+                                  .setPrototype(dependency)
+                                  .setType(data)
+                                  .save();
+  const std::array<lexicon::Phrase, 1> selected{promoted};
+  EXPECT_THROW(transaction.promote(context, selected), Exception);
+  transaction.rollback();
+  EXPECT_TRUE(find("stage3_unselected_dependency").isNull());
+  EXPECT_TRUE(find("stage3_invalid_promotion").isNull());
 }

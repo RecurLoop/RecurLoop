@@ -4,6 +4,11 @@
 #include <radix/Checkpoint.hpp>
 #include <utilities/Size.hpp>
 
+#include <span>
+
+namespace context { class Context; }
+namespace lexicon { class Phrase; }
+
 namespace recurloop {
   // One rollback watermark over the shared RecurLoop lexicon.
   //
@@ -66,6 +71,12 @@ namespace recurloop {
     void commit() noexcept {
       active = false;
     }
+
+    // Preserve only the selected semantic graph while discarding every other
+    // allocation made by this transaction. This is the selective counterpart
+    // to commit(): capture selected state, rollback to the watermark, replay
+    // only that state into the parent lexicon.
+    void promote(context::Context &context, std::span<const lexicon::Phrase> roots);
 
   private:
     lexicon::Lexicon *lexicon;

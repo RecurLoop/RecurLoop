@@ -2,6 +2,7 @@
 #include <recurloop/BitString.hpp>
 #include <recurloop/Blocks.hpp>
 #include <recurloop/Expressions.hpp>
+#include <recurloop/EngineImage.hpp>
 #include <recurloop/Functions.hpp>
 #include <recurloop/LexiconTransaction.hpp>
 #include <recurloop/PhraseAction.hpp>
@@ -712,6 +713,28 @@ namespace recurloop {
     template <bool Serializable>
     std::uint64_t contextPhraseSetSerializableNamed(context::Context *context, std::uint64_t address) noexcept {
       return contextPhraseSet(context, address, context_phrase::SetSerializable, Serializable ? 1 : 0);
+    }
+
+    extern "C" std::uint64_t contextPhraseImageReference(context::Context *context, std::uint64_t schemaAddress,
+                                                            std::uint64_t offset) noexcept {
+      return checked(context, std::uint64_t{0}, [&](context::Context &value) {
+        lexicon::Phrase schema = phraseAt(value, schemaAddress);
+        if (schema.isNull()) THROW(, "image payload layout references an invalid schema phrase")
+        EngineImage::declarePayloadField(value, schema, static_cast<std::size_t>(offset),
+                                         EngineImage::PayloadFieldKind::PhraseReference);
+        return schemaAddress;
+      });
+    }
+
+    extern "C" std::uint64_t contextPhraseImageNative(context::Context *context, std::uint64_t schemaAddress,
+                                                       std::uint64_t offset) noexcept {
+      return checked(context, std::uint64_t{0}, [&](context::Context &value) {
+        lexicon::Phrase schema = phraseAt(value, schemaAddress);
+        if (schema.isNull()) THROW(, "image payload layout references an invalid schema phrase")
+        EngineImage::declarePayloadField(value, schema, static_cast<std::size_t>(offset),
+                                         EngineImage::PayloadFieldKind::NativePointer);
+        return schemaAddress;
+      });
     }
 
     extern "C" std::uint64_t contextPhraseData(context::Context *context, std::uint64_t address,
@@ -1666,6 +1689,11 @@ namespace recurloop {
                         reinterpret_cast<std::uintptr_t>(&contextPhraseSetNamed<context_phrase::SetPermanent>));
     declareHostFunction(context, "context:phrase:set:rewrite", "context:phrase:set:rewrite", {contextPointer, u64, u64},
                         u64, reinterpret_cast<std::uintptr_t>(&contextPhraseSetNamed<context_phrase::SetRewritable>));
+    declareHostFunction(context, "context:phrase:image:reference", "context:phrase:image:reference",
+                        {contextPointer, u64, u64}, u64,
+                        reinterpret_cast<std::uintptr_t>(&contextPhraseImageReference));
+    declareHostFunction(context, "context:phrase:image:native", "context:phrase:image:native",
+                        {contextPointer, u64, u64}, u64, reinterpret_cast<std::uintptr_t>(&contextPhraseImageNative));
     declareHostFunction(context, DataPhrase, "context:phrase:data$text", {contextPointer, u64, bytePointer}, u64,
                         reinterpret_cast<std::uintptr_t>(&contextPhraseDataText));
     declareHostFunction(context, DataPhrase, "context:phrase:data", {contextPointer, u64, bytePointer, u64, u64}, u64,

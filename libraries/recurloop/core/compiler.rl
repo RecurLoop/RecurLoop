@@ -209,6 +209,8 @@ compiler {
   extern "context:phrase:invoke" symbol "context:phrase:invoke" params [ "Context*" "u64" ] result "u64" abi "sysv-amd64" imported
   extern "context:phrase:key" symbol "context:phrase:key" params [ "Context*" "u64" "u8*" "u64" ] result "u64" abi "sysv-amd64" imported
   extern "context:phrase:parent" symbol "context:phrase:parent" params [ "Context*" "u64" ] result "u64" abi "sysv-amd64" imported
+  extern "context:phrase:image:native" symbol "context:phrase:image:native" params [ "Context*" "u64" "u64" ] result "u64" abi "sysv-amd64" imported
+  extern "context:phrase:image:reference" symbol "context:phrase:image:reference" params [ "Context*" "u64" "u64" ] result "u64" abi "sysv-amd64" imported
   extern "context:phrase:payload:bytes" symbol "context:phrase:payload:bytes" params [ "Context*" "u64" ] result "u64" abi "sysv-amd64" imported
   extern "context:phrase:prototype" symbol "context:phrase:prototype" params [ "Context*" "u64" ] result "u64" abi "sysv-amd64" imported
   extern "context:phrase:read" symbol "context:phrase:read" params [ "Context*" "u64" "u64" "u8*" "u64" ] result "u64" abi "sysv-amd64" imported

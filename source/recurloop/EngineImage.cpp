@@ -22,6 +22,7 @@
 namespace recurloop {
   namespace {
     constexpr std::array<std::uint8_t, 8> Magic = {'R', 'L', 'E', 'N', 'G', 0, 1, 0};
+    constexpr std::string_view ImageLayoutsName{"\0image-layouts", 14};
     enum class RelocationKind : std::uint8_t { Phrase, Action };
 
     struct Relocation {
@@ -58,6 +59,13 @@ namespace recurloop {
     struct Snapshot {
       std::vector<Record> phrases;
     };
+
+    struct PayloadLayoutField {
+      std::size_t offset = 0;
+      EngineImage::PayloadFieldKind kind = EngineImage::PayloadFieldKind::PhraseReference;
+    };
+
+    using PayloadLayouts = std::unordered_map<Size, std::vector<PayloadLayoutField>>;
 
     class Writer {
     public:
@@ -125,6 +133,70 @@ namespace recurloop {
       }
     }
 
+    lexicon::Phrase imageLayouts(context::Context &context, bool create) {
+      lexicon::Phrase root = context.lexicon.phrase();
+      lexicon::Phrase layouts = exact(root, std::string(ImageLayoutsName));
+      if (!layouts.isNull() || !create) return layouts;
+      return root.append(std::string(ImageLayoutsName))
+          .make()
+          .enableSubdictionary()
+          .setType(lexicon::phrase::type::getData(root))
+          .save();
+    }
+
+    std::string binaryKey(std::uint64_t value) {
+      return std::string(reinterpret_cast<const char *>(&value), sizeof(value));
+    }
+
+    PayloadLayouts loadPayloadLayouts(context::Context &context) {
+      PayloadLayouts result;
+      lexicon::Phrase layouts = imageLayouts(context, false);
+      if (layouts.isNull() || !layouts.containsSubdictionary()) return result;
+      auto populated = [](radix::Node *, radix::Node *candidate) { return !candidate->isEmpty(); };
+      for (lexicon::Dictionary entry = layouts.fore(populated); !entry.isNull(); entry = entry.next(populated)) {
+        lexicon::Phrase layout = entry.getPhrase();
+        if (!layout.containsSuccessor() || !layout.containsSubdictionary()) continue;
+        lexicon::Phrase schema = layout.getSuccessor();
+        if (schema.isNull()) continue;
+        std::vector<PayloadLayoutField> fields;
+        for (lexicon::Dictionary child = layout.fore(populated); !child.isNull(); child = child.next(populated)) {
+          lexicon::Phrase descriptor = child.getPhrase();
+          if (descriptor.getNode().keyBits() != sizeof(std::uint64_t) * Byte::length ||
+              descriptor.getKey().size() != sizeof(std::uint64_t) || descriptor.payloadSize() != sizeof(std::uint8_t))
+            THROW(, "invalid engine image payload-layout descriptor")
+          std::uint64_t offset = 0;
+          const std::string key = descriptor.getKey();
+          std::memcpy(&offset, key.data(), sizeof(offset));
+          std::uint8_t kind = 0;
+          descriptor.fetch(0, kind);
+          if (kind != static_cast<std::uint8_t>(EngineImage::PayloadFieldKind::PhraseReference) &&
+              kind != static_cast<std::uint8_t>(EngineImage::PayloadFieldKind::NativePointer))
+            THROW(, "invalid engine image payload-layout field kind")
+          fields.push_back({static_cast<std::size_t>(offset), static_cast<EngineImage::PayloadFieldKind>(kind)});
+        }
+        std::sort(fields.begin(), fields.end(), [](const auto &left, const auto &right) {
+          return left.offset < right.offset;
+        });
+        result[schema.getAddress()] = std::move(fields);
+      }
+      return result;
+    }
+
+    const std::vector<PayloadLayoutField> *payloadLayout(const PayloadLayouts &layouts, lexicon::Phrase phrase) {
+      if (!phrase.containsPrototype()) return nullptr;
+      lexicon::Phrase schema = phrase.getPrototype();
+      if (schema.isNull()) return nullptr;
+      const auto found = layouts.find(schema.getAddress());
+      return found == layouts.end() ? nullptr : &found->second;
+    }
+
+    void validatePayloadField(const std::vector<std::uint8_t> &bytes, const PayloadLayoutField &field) {
+      const std::size_t width = field.kind == EngineImage::PayloadFieldKind::PhraseReference ? sizeof(Size)
+                                                                                           : sizeof(std::uintptr_t);
+      if (field.offset > bytes.size() || width > bytes.size() - field.offset)
+        THROW(, "engine image payload-layout field points outside phrase payload")
+    }
+
     std::vector<Record> capture(context::Context &context, Size since = 0) {
       lexicon::Phrase root = context.lexicon.phrase();
       if (root.isNull()) THROW(, "cannot export an empty lexicon")
@@ -157,6 +229,7 @@ namespace recurloop {
               ? std::unordered_set<Size>{}
               : std::unordered_set<Size>{exact(types, "elaborate").getAddress(), exact(types, "callable").getAddress(),
                                          exact(types, "scoped-callable").getAddress()};
+      const PayloadLayouts layouts = loadPayloadLayouts(context);
 
       const auto payload = [](lexicon::Phrase phrase) {
         std::vector<std::uint8_t> result(phrase.payloadSize());
@@ -182,6 +255,21 @@ namespace recurloop {
         } else if (behaviorTypes.contains(phrase.getAddress()) &&
                    bytes.size() < sizeof(lexicon::phrase::type::Behavior)) {
           THROW(, "phrase behavior type has a truncated payload")
+        }
+        if (const auto *fields = payloadLayout(layouts, phrase); fields != nullptr) {
+          for (const PayloadLayoutField &field : *fields) {
+            validatePayloadField(bytes, field);
+            if (field.kind == EngineImage::PayloadFieldKind::PhraseReference) {
+              Size address = 0;
+              std::memcpy(&address, bytes.data() + field.offset, sizeof(address));
+              if (address != 0) result.push_back(address);
+            } else {
+              std::uintptr_t pointer = 0;
+              std::memcpy(&pointer, bytes.data() + field.offset, sizeof(pointer));
+              if (pointer != 0)
+                THROW(, "engine image cannot serialize a non-zero native pointer declared by payload layout")
+            }
+          }
         }
         return result;
       };
@@ -347,6 +435,35 @@ namespace recurloop {
             const std::size_t offset = field * sizeof(lexicon::Phrase::Action);
             record.relocations.push_back({RelocationKind::Action, offset, 0, context.actions().name(actions[field])});
             std::memset(record.payload.data() + offset, 0, sizeof(lexicon::Phrase::Action));
+          }
+        }
+
+        lexicon::Phrase sourcePhrase(&context.lexicon, record.sourceAddress);
+        sourcePhrase.load();
+        if (const auto *fields = payloadLayout(layouts, sourcePhrase); fields != nullptr) {
+          for (const PayloadLayoutField &field : *fields) {
+            validatePayloadField(record.payload, field);
+            const std::size_t width = field.kind == EngineImage::PayloadFieldKind::PhraseReference ? sizeof(Size)
+                                                                                                  : sizeof(std::uintptr_t);
+            for (const Relocation &existing : record.relocations)
+              if (existing.offset < field.offset + width && field.offset < existing.offset +
+                      (existing.kind == RelocationKind::Phrase ? sizeof(Size) : sizeof(lexicon::Phrase::Action)))
+                THROW(, "engine image payload-layout field overlaps an existing relocation")
+            if (field.kind == EngineImage::PayloadFieldKind::PhraseReference) {
+              Size address = 0;
+              std::memcpy(&address, record.payload.data() + field.offset, sizeof(address));
+              const auto target = address == 0 ? ids.end() : ids.find(address);
+              if (address != 0 && target == ids.end())
+                THROW(, "engine image payload-layout phrase reference points outside the engine image")
+              record.relocations.push_back(
+                  {RelocationKind::Phrase, field.offset, address == 0 ? 0 : target->second, {}});
+              std::memset(record.payload.data() + field.offset, 0, sizeof(Size));
+            } else {
+              std::uintptr_t pointer = 0;
+              std::memcpy(&pointer, record.payload.data() + field.offset, sizeof(pointer));
+              if (pointer != 0)
+                THROW(, "engine image cannot serialize a non-zero native pointer declared by payload layout")
+            }
           }
         }
       }
@@ -810,6 +927,98 @@ namespace recurloop {
       }
     }
 
+    std::unordered_set<Size> promotionSelection(std::span<const lexicon::Phrase> roots, Size checkpoint,
+                                                       lexicon::Lexicon &lexicon) {
+      std::unordered_set<Size> selected;
+      auto populated = [](radix::Node *, radix::Node *candidate) { return !candidate->isEmpty(); };
+      std::vector<lexicon::Phrase> pending;
+      for (lexicon::Phrase root : roots) {
+        if (root.isNull() || root.getLexicon() != &lexicon) THROW(, "promotion root does not belong to this lexicon")
+        root.load();
+        if (root.getAddress() < checkpoint) THROW(, "promotion root predates the transaction checkpoint")
+        pending.push_back(root);
+      }
+      while (!pending.empty()) {
+        lexicon::Phrase phrase = pending.back();
+        pending.pop_back();
+        if (!selected.insert(phrase.getAddress()).second) continue;
+        if (!phrase.isSerializable()) THROW(, "promotion cannot preserve an unserializable phrase")
+        if (!phrase.containsSubdictionary()) continue;
+        for (lexicon::Dictionary child = phrase.fore(populated); !child.isNull(); child = child.next(populated)) {
+          lexicon::Phrase nested = child.getPhrase();
+          if (nested.isSerializable()) pending.push_back(nested);
+        }
+      }
+      return selected;
+    }
+
+    void replayPromotion(context::Context &context, Size checkpoint, const std::vector<Record> &records,
+                         const std::unordered_map<std::uint64_t, Size> &addresses,
+                         const std::unordered_set<Size> &selected) {
+      std::unordered_map<Size, lexicon::Phrase> replayed;
+      lexicon::Phrase undefined(&context.lexicon);
+
+      const auto resolveAddress = [&](Size address) -> lexicon::Phrase {
+        if (address == 0) return undefined;
+        if (const auto found = replayed.find(address); found != replayed.end()) return found->second;
+        if (address >= checkpoint) THROW(, "promoted state depends on discarded post-checkpoint state")
+        lexicon::Phrase phrase(&context.lexicon, address);
+        phrase.load();
+        if (phrase.isNull()) THROW(, "promotion dependency is unavailable after rollback")
+        return phrase;
+      };
+      const auto resolveId = [&](std::uint64_t id) -> lexicon::Phrase {
+        if (id == 0) return undefined;
+        const auto found = addresses.find(id);
+        if (found == addresses.end()) THROW(, "promotion contains an unknown phrase reference")
+        return resolveAddress(found->second);
+      };
+
+      for (const Record &record : records) {
+        if (!selected.contains(record.sourceAddress)) continue;
+        lexicon::Phrase owner = resolveAddress(record.parentAddress);
+        if (owner.isNull() || !owner.containsSubdictionary()) THROW(, "promotion owner is unavailable after rollback")
+        lexicon::Draft draft = owner.append(Byte(const_cast<char *>(record.key.data())), 0, record.keyBits).make();
+        if (record.subdictionary) draft.enableSubdictionary();
+        if (record.prototype) draft.setPrototype(undefined);
+        if (record.type) draft.setType(undefined);
+        if (record.action) {
+          if (record.actionName.empty()) THROW(, "promotion contains an unnamed phrase action")
+          draft.setAction(context.actions().get(record.actionName));
+        }
+        if (record.successor) draft.setSuccessor(undefined);
+        lexicon::Phrase phrase = draft.save();
+        if (!record.payload.empty()) {
+          Byte output = phrase.allocate(record.payload.size());
+          std::memcpy(output.toPtr(), record.payload.data(), record.payload.size());
+        }
+        replayed.emplace(record.sourceAddress, phrase);
+      }
+
+      for (const Record &record : records) {
+        if (!selected.contains(record.sourceAddress)) continue;
+        lexicon::Phrase phrase = replayed.at(record.sourceAddress);
+        if (record.prototype) phrase.setPrototype(resolveId(record.prototypeId));
+        if (record.type) phrase.setType(resolveId(record.typeId));
+        if (record.successor) phrase.setSuccessor(resolveId(record.successorId));
+        if (record.action) phrase.setActionImplementation(resolveId(record.actionImplementationId));
+        if (record.rewritable) phrase.setRewritable(true);
+        if (record.permanent) phrase.setPermanent(true);
+        phrase.save();
+        for (const Relocation &relocation : record.relocations) {
+          if (relocation.kind == RelocationKind::Phrase) {
+            lexicon::Phrase target = resolveId(relocation.phrase);
+            const Size address = target.getAddress();
+            std::memcpy(phrase.content(relocation.offset, sizeof(address)).toPtr(), &address, sizeof(address));
+          } else {
+            const lexicon::Phrase::Action action =
+                relocation.action.empty() ? nullptr : context.actions().get(relocation.action);
+            std::memcpy(phrase.content(relocation.offset, sizeof(action)).toPtr(), &action, sizeof(action));
+          }
+        }
+      }
+    }
+
     void restore(context::Context &context, const Snapshot &snapshot) {
       const std::vector<Record> &records = snapshot.phrases;
       const std::vector<Record> previous = capture(context);
@@ -1000,6 +1209,90 @@ namespace recurloop {
 
   void EngineImage::merge(context::Context &context, lexicon::Phrase source, lexicon::Phrase target) {
     mergeDictionary(context, source, target);
+  }
+
+  void EngineImage::declarePayloadField(context::Context &context, lexicon::Phrase schema, std::size_t offset,
+                                        PayloadFieldKind kind) {
+    if (schema.isNull() || schema.getLexicon() != &context.lexicon)
+      THROW(, "engine image payload layout schema does not belong to this lexicon")
+    if (kind != PayloadFieldKind::PhraseReference && kind != PayloadFieldKind::NativePointer)
+      THROW(, "unsupported engine image payload layout field kind")
+
+    lexicon::Phrase layouts = imageLayouts(context, true);
+    lexicon::Phrase lexiconRoot = context.lexicon.phrase();
+    lexicon::Phrase dataType = lexicon::phrase::type::getData(lexiconRoot);
+    lexicon::Phrase layout(&context.lexicon);
+    auto populated = [](radix::Node *, radix::Node *candidate) { return !candidate->isEmpty(); };
+    for (lexicon::Dictionary entry = layouts.fore(populated); !entry.isNull(); entry = entry.next(populated)) {
+      lexicon::Phrase candidate = entry.getPhrase();
+      if (candidate.containsSuccessor() && candidate.getSuccessor().getAddress() == schema.getAddress()) {
+        layout = candidate;
+        break;
+      }
+    }
+    if (layout.isNull()) {
+      layout = layouts.append(binaryKey(schema.getAddress()))
+                   .make()
+                   .enableSubdictionary()
+                   .setType(dataType)
+                   .setSuccessor(schema)
+                   .save();
+    }
+
+    const std::string key = binaryKey(static_cast<std::uint64_t>(offset));
+    layout.append(key)
+        .make()
+        .setType(dataType)
+        .save()
+        .store(static_cast<std::uint8_t>(kind))
+        .save();
+  }
+
+  void EngineImage::promote(context::Context &context, Size checkpoint, std::span<const lexicon::Phrase> roots) {
+    if (roots.empty()) {
+      radix::Checkpoint(&context.lexicon, checkpoint).restore();
+      return;
+    }
+    const std::unordered_set<Size> selected = promotionSelection(roots, checkpoint, context.lexicon);
+    const std::vector<Record> captured = capture(context, checkpoint);
+    std::unordered_map<std::uint64_t, Size> addresses;
+    addresses.reserve(captured.size());
+    std::unordered_set<Size> available;
+    for (const Record &record : captured) {
+      addresses.emplace(record.id, record.sourceAddress);
+      available.insert(record.sourceAddress);
+    }
+    for (Size address : selected)
+      if (!available.contains(address))
+        THROW(, "promotion selected a phrase that is not serializable from the transaction delta")
+
+    const auto requireReference = [&](std::uint64_t id) {
+      if (id == 0) return;
+      const auto found = addresses.find(id);
+      if (found == addresses.end()) THROW(, "promotion contains an unresolved phrase reference")
+      if (found->second >= checkpoint && !selected.contains(found->second))
+        THROW(, "promoted state depends on unselected post-checkpoint state")
+    };
+    for (const Record &record : captured) {
+      if (!selected.contains(record.sourceAddress)) continue;
+      if (record.parentAddress >= checkpoint && !selected.contains(record.parentAddress))
+        THROW(, "promoted phrase is owned by unselected post-checkpoint state")
+      if (record.prototype) requireReference(record.prototypeId);
+      if (record.type) requireReference(record.typeId);
+      if (record.successor) requireReference(record.successorId);
+      if (record.action) requireReference(record.actionImplementationId);
+      for (const Relocation &relocation : record.relocations)
+        if (relocation.kind == RelocationKind::Phrase) requireReference(relocation.phrase);
+    }
+
+    radix::Checkpoint(&context.lexicon, checkpoint).restore();
+    const Size replayCheckpoint = context.lexicon.checkpoint().getAddress();
+    try {
+      replayPromotion(context, checkpoint, captured, addresses, selected);
+    } catch (...) {
+      radix::Checkpoint(&context.lexicon, replayCheckpoint).restore();
+      throw;
+    }
   }
 
   std::string EngineImage::source(context::Context &context) {

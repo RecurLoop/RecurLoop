@@ -372,3 +372,34 @@ TEST_F(EngineImageTesting, PersistsInvokedCompiledFunctionsWithoutTheirProcessEn
   recurloop::executeSource(context, "print twice(21)\n", "<binary-image-test>", 1);
   EXPECT_EQ(output.str(), "42\n");
 }
+
+TEST_F(EngineImageTesting, RelocatesGenericPayloadLayoutsAndRejectsNativePointers) {
+  initializeWith("");
+  lexicon::Phrase root = context.lexicon.phrase();
+  lexicon::Phrase data = lexicon::phrase::type::getData(root);
+  lexicon::Phrase schema = root.append("generic-image-schema").make().setType(data).save();
+  recurloop::EngineImage::declarePayloadField(context, schema, 0,
+                                               recurloop::EngineImage::PayloadFieldKind::PhraseReference);
+  recurloop::EngineImage::declarePayloadField(context, schema, sizeof(Size),
+                                               recurloop::EngineImage::PayloadFieldKind::NativePointer);
+
+  lexicon::Phrase target = root.append("generic-image-target").make().setType(data).save();
+  lexicon::Phrase object = root.append("generic-image-object").make().setPrototype(schema).setType(data).save();
+  object.store(target.getAddress(), std::uintptr_t{0}).save();
+
+  const std::vector<std::uint8_t> image = recurloop::EngineImage::encode(context);
+  recurloop::EngineImage::decode(context, image);
+
+  lexicon::Phrase restoredObject = rootPhrase("generic-image-object");
+  lexicon::Phrase restoredTarget = rootPhrase("generic-image-target");
+  ASSERT_FALSE(restoredObject.isNull());
+  ASSERT_FALSE(restoredTarget.isNull());
+  Size relocated = 0;
+  std::uintptr_t native = 0;
+  restoredObject.fetch(0, relocated, native);
+  EXPECT_EQ(relocated, restoredTarget.getAddress());
+  EXPECT_EQ(native, 0u);
+
+  restoredObject.update(sizeof(Size), std::uintptr_t{0x1234}).save();
+  EXPECT_ANY_THROW(recurloop::EngineImage::encode(context));
+}

@@ -1,6 +1,6 @@
 # RecurLoop autonomy migration
 
-Status after this overlay: **Stage 2 COMPLETE. Stage 3 is NEXT.**
+Status after this overlay: **Stage 4 COMPLETE. Stage 5 is NEXT.**
 
 This file is temporary migration state for an AI agent. Update it after every autonomy overlay. The final autonomy overlay must delete `todo.md`.
 
@@ -437,46 +437,134 @@ compiled function scope
   generated native/LLVM runtime semantics
 ```
 
-Stage 3 may add selective semantic escape across a `LexiconTransaction`, but must not alter this separation.
+Stage 3 adds selective semantic escape across `LexiconTransaction` while preserving this separation.
 
-## Stage 3 — generic semantic promotion/escape
+## Stage 3 — generic semantic promotion/escape — COMPLETE
 
-Goal: support the case where selected semantic state created inside an explicit compile-time transaction must survive its rollback.
+Implemented selective semantic escape for explicit `LexiconTransaction` scopes.
 
-Correct model:
+### 3.1 API and semantics
 
-```text
-parent semantic state
-  checkpoint C
-    temporary semantic state
-    selected object/subtree to escape
-    more temporary state
-  capture selected state as relocatable data
-  rollback C
-  relocate/merge/replay only selected state into parent
-```
-
-Promotion is for compiler/elaboration semantic state such as future `global`/`export`/`publish` behavior across a rollback boundary.
-
-It is **not** for ordinary assignment to a runtime variable inside a compiled function.
-
-Do not implement selective promotion by advancing the checkpoint or by `commit()`.
-
-## Stage 4 — image-safe arbitrary `.rl` objects/references
-
-Goal: `.rl`-defined compiler data structures can live in the lexicon/object graph and survive `.rli` save/load/relocation without C++ knowing every record layout.
-
-Raw bytes are already possible; arbitrary raw addresses are not portable. Add generic metadata/representation sufficient to distinguish at least:
+`LexiconTransaction::promote(context, roots)` is the selective counterpart to `commit()`:
 
 ```text
-scalar/raw serializable bytes
-relocatable phrase/object reference
-process/native pointer (explicitly non-serializable)
+transaction checkpoint C
+  temporary state A
+  selected semantic graph P
+  temporary state B
+promote(P)
+  capture P + visible serializable descendants + relocations
+  reject dependencies on unselected state created after C
+  rollback exactly to C
+  replay only P into the restored parent lexicon
 ```
 
-The image layer must not require a new hard-coded C++ relocation case for every future `.rl` record type.
+`commit()` still means keep the entire post-checkpoint allocation range. Do not use it for selective escape.
 
-This stage should enable general compiler collections and object graphs defined in RecurLoop.
+Promotion is compile-time/compiler semantic machinery only. It does not participate in ordinary generated-function runtime scopes.
+
+### 3.2 Dependency rules
+
+A promoted phrase may reference:
+
+```text
+another promoted phrase
+or
+any phrase whose address predates the transaction checkpoint
+```
+
+A promoted phrase may NOT reference an unselected phrase created after the checkpoint. Such a dependency would become dangling after rollback and is rejected before rollback occurs.
+
+A selected root may be nested under another selected phrase. If its dictionary owner was created after the checkpoint and is not selected, promotion is rejected.
+
+Promotion always re-appends the selected records after rollback; it does not reuse an existing same-key phrase. This preserves the lexicon's append/shadow version semantics.
+
+### 3.3 Failure behavior
+
+Validation happens before the original transaction is destroyed. If validation fails, the transaction remains active and the caller may rollback normally.
+
+After the parent rollback, replay itself is protected by a second watermark. If replay fails, all partial replay allocations are removed and the parent state remains restored.
+
+### 3.4 Tests
+
+`lexicon_transaction_test.cpp` now requires:
+
+- selected dictionary/subtree survives while unrelated transaction state disappears;
+- a payload `PhraseReference` inside the promoted graph is relocated to the replayed child;
+- dependencies on unselected post-checkpoint state are rejected;
+- the transaction becomes inactive only after successful selective promotion.
+
+## Stage 4 — image-safe arbitrary `.rl` objects/references — COMPLETE
+
+Implemented generic payload-layout metadata in the lexicon. Future `.rl` object schemas can declare image semantics for payload fields without adding a new `EngineImage.cpp` hard-coded struct case.
+
+### 4.1 Layout model
+
+`EngineImage::declarePayloadField(context, schema, offset, kind)` declares a field for phrases whose **direct prototype is `schema`**.
+
+Supported generic field kinds:
+
+```text
+PhraseReference
+  payload contains a Size phrase address
+  EngineImage converts it to/from a relocatable phrase id
+
+NativePointer
+  payload contains a process pointer
+  zero is allowed
+  non-zero explicitly makes image serialization fail
+```
+
+Plain bytes/scalars need no layout declaration.
+
+The layout metadata is itself stored in `context.lexicon` under the hidden kernel namespace:
+
+```text
+\0image-layouts
+  layout entry --successor--> schema phrase
+    field keyed by binary offset -> field kind
+```
+
+The schema relation uses normal phrase metadata and therefore relocates through `.rli` without an address-stable registry key. The binary child key is only an opaque unique descriptor key; lookup is by the relocated schema relation.
+
+No new `.rli` binary format/version was required: generic phrase references use the existing `RelocationKind::Phrase` encoding.
+
+### 4.2 `.rl` / Host ABI access
+
+The source-built core declares two generic host primitives:
+
+```text
+context:phrase:image:reference(Context*, schema, offset) -> schema
+context:phrase:image:native(Context*, schema, offset) -> schema
+```
+
+They only declare image ownership/relocation semantics. They do not define compiler registry schema or a second store.
+
+These primitives are intentionally generic kernel/image facilities and may remain in the final host primitive whitelist.
+
+### 4.3 Engine image behavior
+
+During capture, `EngineImage` now:
+
+1. loads generic payload layouts from the lexicon;
+2. discovers `PhraseReference` targets so referenced shadowed phrases remain reachable;
+3. emits standard phrase relocations for those offsets;
+4. zeroes serialized process addresses as required by relocation;
+5. rejects a non-zero declared `NativePointer` instead of accidentally persisting a process-local address.
+
+The metadata survives image decode, so a subsequent encode still knows the layout without C++ re-registering it.
+
+The same generic relocation metadata is consumed by Stage-3 promotion because promotion captures through the engine-image relocation model before rollback.
+
+### 4.4 Tests / verification
+
+`engine_image_test.cpp` now requires:
+
+- a schema-defined generic phrase reference round-trips through `.rli` and points at the relocated target;
+- the schema/layout metadata itself survives decode and is usable by subsequent capture/promotion;
+- a declared non-zero native pointer is rejected by image serialization.
+
+Standalone Stage-3/4 harnesses also verified selective replay, internal reference relocation and rejected unselected transaction dependencies.
 
 ## Stage 5 — change bootstrap proof from parity to self-hosting
 
