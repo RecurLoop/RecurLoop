@@ -19,9 +19,10 @@ utilities → radix → lexicon → context → compiler → recurloop → CLI
 
 There is no independent fixed grammar above this process. The final executable
 restores its standard language from the embedded `core.rli`; source-defined
-phrases and the standard language use the same lookup and dispatch path. The
-legacy `recurloop::Language` builder exists only as a private clean-build tool
-while the remaining language subsystems migrate to source libraries.
+phrases and the standard language use the same lookup and dispatch path. A
+private minimal C++ seed exists only for clean builds and can enter
+`engine define`; it is not the standard language and is never linked into the
+production runtime.
 
 ## Layers
 
@@ -58,13 +59,14 @@ functions, native modules, link inputs, and output policy in the lexicon.
 
 ### RecurLoop runtime layer
 
-`source/recurloop` contains the runtime/image bridge, semantic source-core
-interpreter, Host ABI actions, compiler-facing language services, and native
-backend integration. The standard-language construction itself is not part of
-the production runtime. `bootstrap/` contains only a minimal C++ seed capable
-of entering the semantic `engine define` block; the canonical language
-definition lives under `libraries/recurloop/core/`. The installed executable
-starts from Host ABI registration plus the embedded self-hosted `core.rli`.
+`source/recurloop` contains the runtime/image bridge, the frozen Host ABI,
+compiler-kernel services and native/backend integration. The standard-language
+construction itself is not part of the production runtime. `bootstrap/` contains
+only a minimal C++ seed capable of entering the semantic `engine define` block;
+the canonical language definition, compiler registry schema, source-owned
+actions and compiler work collections live under `libraries/recurloop/core/`.
+The installed executable registers only the production Host ABI and restores the
+embedded self-hosted `core.rli`. See [host-abi.md](host-abi.md).
 
 ## Native module flow
 

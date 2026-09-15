@@ -23,13 +23,26 @@ namespace recurloop {
 
     struct TypedPhraseData {
       compiler::TypeId type = compiler::InvalidType;
-      std::size_t storageBytes = 0;
+      std::uint32_t reserved = 0;
+      std::uint64_t storageBytes = 0;
+
+      TypedPhraseData() = default;
+      TypedPhraseData(compiler::TypeId type, std::size_t storageBytes)
+          : type(type), reserved(0), storageBytes(static_cast<std::uint64_t>(storageBytes)) {}
     };
 
     struct TypedFieldData {
       compiler::TypeId type = compiler::InvalidType;
-      std::size_t offset = 0;
+      std::uint32_t reserved = 0;
+      std::uint64_t offset = 0;
+
+      TypedFieldData() = default;
+      TypedFieldData(compiler::TypeId type, std::size_t offset)
+          : type(type), reserved(0), offset(static_cast<std::uint64_t>(offset)) {}
     };
+
+    static_assert(sizeof(TypedPhraseData) == 16);
+    static_assert(sizeof(TypedFieldData) == 16);
 
     char peek(context::Context &context) {
       while (context.source.buffer.bits == 0 && context.source.more) context::Source::load(context, false);

@@ -1146,6 +1146,25 @@ let Shell:state_set_text = fn (state:Context*, name:u8*, value:u8*) -> i64 {
     return LanguageKit:publish_text(state, name, value)
 }
 
+// A top-level shell command spans multiple phrase invocations.  Interactive
+// input may recover after one of those invocations reports an error, so the
+// heap builder and the lookup state must be reset *before* publishing the
+// diagnostic.  Otherwise the next REPL line would continue the abandoned
+// command with a stale Build pointer.
+let Shell:abort_top_command = fn (state:Context*) -> void {
+    let build = Shell:active_build(state)
+    if build { Shell:Build:destroy(build) }
+    Shell:state_set(state, "__shell_phrase_build", 0)
+    Shell:state_set(state, "__shell_assignment_kind", 0)
+    Shell:state_set_text(state, "__shell_assignment_name", "")
+    context:source:root(state)
+}
+
+let Shell:top_command_error = fn (state:Context*, message:u8*) -> void {
+    Shell:abort_top_command(state)
+    context:diagnostic:error(state, message)
+}
+
 let Shell:source_line_end = fn (state:Context*, start:i64) -> i64 {
     var finish = start
     var quote = 0
@@ -1303,7 +1322,7 @@ let Shell:Internal:token_byte = phrase {
         }
         let build = Shell:active_build(state)
         if !build {
-            context:diagnostic:error(state, "shell phrase state is unavailable")
+            Shell:top_command_error(state, "shell phrase state is unavailable")
             return
         }
         let byte = LanguageKit:Source:peek(state, 0)
@@ -1328,7 +1347,7 @@ let Shell:Internal:token_escape_byte = phrase {
         }
         let build = Shell:active_build(state)
         if !build {
-            context:diagnostic:error(state, "shell phrase state is unavailable")
+            Shell:top_command_error(state, "shell phrase state is unavailable")
             return
         }
         let byte = LanguageKit:Source:peek(state, 0)
@@ -1342,7 +1361,7 @@ let Shell:Internal:token_expression_byte = phrase {
     action = fn (state:Context*, called:Phrase*) -> void {
         if context:syntax:active(state) { context:syntax:copy(state, 1); return }
         let build = Shell:active_build(state)
-        if !build { context:diagnostic:error(state, "shell interpolation state is unavailable"); return }
+        if !build { Shell:top_command_error(state, "shell interpolation state is unavailable"); return }
         let byte = LanguageKit:Source:peek(state, 0)
         LanguageKit:Source:advance(state, 1)
         build.expression.append_byte(byte)
@@ -1364,7 +1383,7 @@ let Shell:Internal:token_pipe = phrase {
         if context:syntax:active(state) { Shell:emit(state, "Shell:Build:pipe(__shell_build)\n"); return }
         let build = Shell:active_build(state)
         if !build || !build.pipe() {
-            context:diagnostic:error(state, "shell pipe expects a command on both sides")
+            Shell:top_command_error(state, "shell pipe expects a command on both sides")
         }
     }
 }
@@ -1375,7 +1394,7 @@ let Shell:Internal:token_redirect = phrase {
         if context:syntax:active(state) { Shell:emit(state, "Shell:Build:redirect_to(__shell_build, 0)\n"); return }
         let build = Shell:active_build(state)
         if !build || !build.redirect_to(0) {
-            context:diagnostic:error(state, "shell redirection expects a command and one output path")
+            Shell:top_command_error(state, "shell redirection expects a command and one output path")
         }
     }
 }
@@ -1386,7 +1405,7 @@ let Shell:Internal:token_append = phrase {
         if context:syntax:active(state) { Shell:emit(state, "Shell:Build:redirect_to(__shell_build, 1)\n"); return }
         let build = Shell:active_build(state)
         if !build || !build.redirect_to(1) {
-            context:diagnostic:error(state, "shell redirection expects a command and one output path")
+            Shell:top_command_error(state, "shell redirection expects a command and one output path")
         }
     }
 }
@@ -1448,7 +1467,7 @@ let Shell:Internal:token_interpolation = phrase {
             return
         }
         let build = Shell:active_build(state)
-        if !build { context:diagnostic:error(state, "shell interpolation state is unavailable"); return }
+        if !build { Shell:top_command_error(state, "shell interpolation state is unavailable"); return }
         build.expression.clear()
         context:phrase:elaborate(state, Shell:natural_grammar(state, "interpolation"))
     }
@@ -1462,7 +1481,7 @@ let Shell:Internal:token_double_interpolation = phrase {
             return
         }
         let build = Shell:active_build(state)
-        if !build { context:diagnostic:error(state, "shell interpolation state is unavailable"); return }
+        if !build { Shell:top_command_error(state, "shell interpolation state is unavailable"); return }
         build.expression.clear()
         context:phrase:elaborate(state, Shell:natural_grammar(state, "double_interpolation"))
     }
@@ -1471,7 +1490,7 @@ let Shell:Internal:token_double_interpolation = phrase {
 let Shell:finish_interpolation = fn (state:Context*) -> void {
     let build = Shell:active_build(state)
     if !build || !build.expression.data {
-        context:diagnostic:error(state, "shell interpolation expects a RecurLoop expression")
+        Shell:top_command_error(state, "shell interpolation expects a RecurLoop expression")
         return
     }
     let value = context:expression:format(state, build.expression.data)
@@ -1589,24 +1608,37 @@ let Shell:dispatch_hook = fn (state:Context*, name:u8*) -> void {
 
 let Shell:finish_top_command = fn (state:Context*) -> void {
     let build = Shell:active_build(state)
-    if !build { context:diagnostic:error(state, "shell phrase state is unavailable"); return }
-    let pipeline = build.finish()
-    if !pipeline {
-        Shell:Build:destroy(build)
-        Shell:state_set(state, "__shell_phrase_build", 0)
-        context:diagnostic:error(state, "shell command is incomplete")
+    if !build {
+        Shell:top_command_error(state, "shell phrase state is unavailable")
         return
     }
-    defer Shell:Pipeline:destroy(pipeline)
+
     let assignment_kind = Shell:state_get(state, "__shell_assignment_kind")
     var assignment_name = cast(u8*, 0)
     if assignment_kind != 0 {
         assignment_name = context:value:format(state, "__shell_assignment_name")
     }
+    defer free(assignment_name)
+
+    let capture_mode = build.capture
+    let pipeline = build.finish()
+    if !pipeline {
+        Shell:top_command_error(state, "shell command is incomplete")
+        return
+    }
+    defer Shell:Pipeline:destroy(pipeline)
+
+    // The pipeline owns everything needed for execution after Build:finish().
+    // Clear all parser state before running hooks, processes or value writes so
+    // any later diagnostic leaves the interactive parser at a clean root.
+    Shell:Build:destroy(build)
+    Shell:state_set(state, "__shell_phrase_build", 0)
+    Shell:state_set(state, "__shell_assignment_kind", 0)
+    Shell:state_set_text(state, "__shell_assignment_name", "")
 
     Shell:dispatch_hook(state, "before_run")
 
-    if build.capture {
+    if capture_mode {
         if Shell:active_parallel(state) {
             context:diagnostic:error(state, "capture is not available inside parallel")
         } else {
@@ -1649,26 +1681,20 @@ let Shell:finish_top_command = fn (state:Context*) -> void {
     }
 
     Shell:dispatch_hook(state, "after_run")
-
-    if assignment_name { free(assignment_name) }
-    Shell:state_set(state, "__shell_assignment_kind", 0)
-    Shell:state_set_text(state, "__shell_assignment_name", "")
-    Shell:Build:destroy(build)
-    Shell:state_set(state, "__shell_phrase_build", 0)
 }
 
 let Shell:Internal:token_finish = phrase {
     type = <phrase-types:elaborate>
     action = fn (state:Context*, called:Phrase*) -> void {
         if context:syntax:active(state) { return }
-        Shell:finish_top_command(state)
         context:source:root(state)
+        Shell:finish_top_command(state)
     }
 }
 
 let Shell:begin_top_command = fn (state:Context*, capture:i64) -> void {
     if Shell:active_build(state) {
-        context:diagnostic:error(state, "a shell command is already being assembled")
+        Shell:top_command_error(state, "a shell command is already being assembled")
         return
     }
     let build = Shell:Build:new()
@@ -1736,6 +1762,20 @@ let Shell:top_level_assignment = fn (
     let name = Shell:copy_slice(source, name_start, name_end)
     if !name { context:diagnostic:error(state, "shell assignment could not copy its name"); return }
     defer free(name)
+
+    // Detect declaration/assignment errors before the shell command starts.
+    // Waiting until captured stdout is written would leave the command grammar
+    // active when ContextApi publishes the pending exception.
+    let exists = context:value:contains(state, name)
+    if define_value && exists {
+        context:diagnostic:error(state, "shell assignment variable is already defined in this scope")
+        return
+    }
+    if !define_value && !exists {
+        context:diagnostic:error(state, "shell assignment variable is not defined")
+        return
+    }
+
     Shell:state_set_text(state, "__shell_assignment_name", name)
     if define_value { Shell:state_set(state, "__shell_assignment_kind", mode) }
     else { Shell:state_set(state, "__shell_assignment_kind", mode + 2) }

@@ -22,7 +22,8 @@ set(migrated_actions
   "workspace.pass-lf"
   "workspace.pass-tab"
   "workspace.pass-vtab"
-  "hex.byte")
+  "hex.byte"
+  "typed.instantiate")
 foreach(action IN LISTS migrated_actions)
   string(FIND "${dump}" "action \"${action}\"" position)
   if(NOT position EQUAL -1)

@@ -147,6 +147,11 @@ compiler {
   type "fn(Context*,u64,u64,u64,u64)->u64 abi sysv-amd64" function
   type "fn(Context*,u8*,u8*,u8*)->u64 abi sysv-amd64" function
   type "fn(Context*,u64,u64,u8*)->u64 abi sysv-amd64" function
+  type "fn(Context*,u64)->u8* abi sysv-amd64" function
+  type "fn(Context*,u8*,u64)->u8* abi sysv-amd64" function
+  type "fn(Context*,u8*)->void abi sysv-amd64" function
+  type "fn(Context*,u8*,u8*,u64)->u8* abi sysv-amd64" function
+  type "fn(Context*,Phrase*)->u64 abi sysv-amd64" function
 
   extern "Context:phrase_define_data" symbol "Context:phrase_define_data" params [ "Context*" "u64" "u8*" ] result "u64" abi "sysv-amd64" imported
   extern "Context:phrase_define_data" symbol "Context:phrase_define_data$root" params [ "Context*" "u8*" ] result "u64" abi "sysv-amd64" imported
@@ -174,6 +179,11 @@ compiler {
   extern "context:diagnostic:error:at" symbol "context:diagnostic:error:at" params [ "Context*" "u8*" "u64" "u64" "u8*" ] result "u64" abi "sysv-amd64" imported
   extern "context:actions:bind_root" symbol "context:actions:bind-root" params [ "Context*" "u64" ] result "u64" abi "sysv-amd64" imported
   extern "context:io:write" symbol "context:io:write" params [ "Context*" "u8*" ] result "u64" abi "sysv-amd64" imported
+  extern "context:memory:allocate" symbol "context:memory:allocate" params [ "Context*" "u64" ] result "u8*" abi "sysv-amd64" imported
+  extern "context:memory:reallocate" symbol "context:memory:reallocate" params [ "Context*" "u8*" "u64" ] result "u8*" abi "sysv-amd64" imported
+  extern "context:memory:release" symbol "context:memory:release" params [ "Context*" "u8*" ] result "void" abi "sysv-amd64" imported
+  extern "context:memory:copy" symbol "context:memory:copy" params [ "Context*" "u8*" "u8*" "u64" ] result "u8*" abi "sysv-amd64" imported
+  extern "context:memory:move" symbol "context:memory:move" params [ "Context*" "u8*" "u8*" "u64" ] result "u8*" abi "sysv-amd64" imported
   extern "context:workspace:key:append_byte" symbol "context:workspace:key:append-byte" params [ "Context*" "u64" ] result "u64" abi "sysv-amd64" imported
   extern "context:workspace:code:append_byte" symbol "context:workspace:code:append-byte" params [ "Context*" "u64" ] result "u64" abi "sysv-amd64" imported
   extern "context:expression:boolean:at" symbol "context:expression:boolean:at" params [ "Context*" "u8*" "u8*" "u64" "u64" ] result "u64" abi "sysv-amd64" imported
@@ -254,6 +264,7 @@ compiler {
   extern "context:phrase:payload:bytes" symbol "context:phrase:payload:bytes" params [ "Context*" "u64" ] result "u64" abi "sysv-amd64" imported
   extern "context:phrase:prototype" symbol "context:phrase:prototype" params [ "Context*" "u64" ] result "u64" abi "sysv-amd64" imported
   extern "context:phrase:read" symbol "context:phrase:read" params [ "Context*" "u64" "u64" "u8*" "u64" ] result "u64" abi "sysv-amd64" imported
+  extern "context:phrase:address" symbol "context:phrase:address" params [ "Context*" "Phrase*" ] result "u64" abi "sysv-amd64" imported
   extern "context:phrase:set" symbol "context:phrase:set$action" params [ "Context*" "u64" "u64" "PhraseAction*" ] result "u64" abi "sysv-amd64" imported
   extern "context:phrase:set" symbol "context:phrase:set$value" params [ "Context*" "u64" "u64" "u64" ] result "u64" abi "sysv-amd64" imported
   extern "context:phrase:set:action" symbol "context:phrase:set:action$inline" params [ "Context*" "u64" "PhraseAction*" ] result "u64" abi "sysv-amd64" imported

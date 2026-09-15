@@ -1,5 +1,7 @@
 # RecurLoop
 
+> This package supersedes the earlier final autonomy overlay. It also includes the Stage 7A runtime/action-binding fixes: source-owned action JIT uses separate process-local executable memory, copied phrase actions preserve their implementation binding, and applying the overlay invalidates stale generated core images/core-runner artifacts.
+
 **An extensible native programming language where syntax, semantics, and namespaces share the same phrase system.**
 
 RecurLoop is an experimental programming language and language runtime for
@@ -637,9 +639,10 @@ RecurLoop is deliberately experimental. In particular:
 - examples such as the shell language demonstrate the extensibility model and
   are not intended to be complete replacements for mature production tools.
 
-The project is currently focused on making source-defined language extensions
-more robust, composable, serializable, debuggable, and suitable for building
-larger domain-specific and general-purpose language layers.
+The host boundary is intentionally frozen: new language constructs, compiler
+registries and ordinary compiler collections are expected to be implemented in
+RecurLoop source. The remaining C++ surface is the reviewed kernel/process/backend
+ABI; its exact direct-action set is audited during the core build.
 
 ## Project goals
 
@@ -718,6 +721,13 @@ mapping. Production `LanguageState` and `TypeRegistry` discover those objects by
 stable semantic tags stored in the lexicon rather than by hard-coded registry
 paths. A build-time audit rejects reintroduction of those physical keys into
 production compiler code.
+
+Compiler scratch collections are also source-owned. `core/collections.rl`
+provides byte buffers, vectors, deques, maps and arenas over a minimal raw-memory
+Host ABI. Source-owned phrase actions are compiled into `core.rli`; final phrases
+use those compiled implementations. Stable compatibility action names remain in
+the process registry so `core.rl` can rebuild itself from a running executable.
+See `docs/host-abi.md` for the frozen boundary.
 
 There is no public `--bootstrap`, `--language-image`, `--engine-image`, `--core`,
 or `--no-core` mode. The final runtime registers process-local Host ABI action

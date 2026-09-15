@@ -14,6 +14,11 @@ engine define {
 // lexicon exists, so it is parsed by the language that was just constructed.
 include "core/control-flow.rl"
 
+// Compiler working collections are implemented in RecurLoop and persisted as
+// compiled functions in the core image. Live collection instances remain
+// process-local scratch memory.
+include "core/collections.rl"
+
 // Standard actions that can be expressed in RecurLoop are compiled into the
 // image after the fresh source-defined language exists.
 include "core/actions.rl"

@@ -71,10 +71,12 @@ and the ABI-kind mapping. The image stores stable semantic role metadata beside
 those source-chosen keys. Production `LanguageState` and `TypeRegistry` locate
 registry objects through those roles; they do not spell the physical keys.
 
-The C++ side still implements typed compiler algorithms and payload codecs at
-this stage. Moving those algorithms/actions into `core.rli` is a later
-self-hosting step; source ownership here means the lexicon topology/layout is no
-longer a production-C++ schema.
+The C++ compiler kernel still implements established parser/backend algorithms
+that remain in the reviewed Host ABI. New source-owned actions use compiled
+`fn(Context*, Phrase*)` implementations persisted in `core.rli`, and compiler
+working collections are implemented in `core/collections.rl`. The exact direct
+host-action surface is frozen by `core/host-actions.allow`; adding an unreviewed
+action fails the build. See [host-abi.md](host-abi.md).
 
 ## Self-hosting fixed point
 
