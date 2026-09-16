@@ -42,7 +42,7 @@ namespace recurloop {
     }
 
     bool qualifiedIdentifierByte(unsigned char value) {
-      return identifierByte(value) || value == ':' || value == '.';
+      return identifierByte(value) || value == '.';
     }
 
     bool hasBoundary(std::string_view source, std::size_t offset, std::string_view spelling) {

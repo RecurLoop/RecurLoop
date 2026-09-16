@@ -170,13 +170,11 @@ assert read_answer() == 42
   EXPECT_TRUE(answer.isRewritable());
 }
 
-TEST_F(RecurloopTesting, RootRewriteDoesNotMatchQualifiedOrMemberNames) {
+TEST_F(RecurloopTesting, RootRewriteDoesNotMatchMemberNamesAndStillMatchesTypePositions) {
   const char *argv[] = {"Recurloop", "--string", R"(
 record Runner {
   run:i64
 }
-let Api = []
-let Api:run = fn () -> i64 { return 7 }
 let run = phrase {
   type = <phrase-types:elaborate>
   rewrite = true
@@ -184,10 +182,17 @@ let run = phrase {
     context:syntax:emit(state, "42")
   }
 }
+let number = phrase {
+  type = <phrase-types:elaborate>
+  rewrite = true
+  action = fn (state:Context*, called:Phrase*) -> void {
+    context:syntax:emit(state, "i64")
+  }
+}
 let read_member = fn (runner:Runner*) -> i64 { return runner.run }
-let call_qualified = fn () -> i64 { return Api:run() }
+let identity = fn (value:number) -> number { return value }
 let read_rewrite = fn () -> i64 { return run }
-assert call_qualified() == 7
+assert identity(7) == 7
 assert read_rewrite() == 42
 )"};
 
