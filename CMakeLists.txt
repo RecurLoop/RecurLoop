@@ -50,6 +50,16 @@ endif()
 
 add_compile_definitions(PROJECT_VERSION="${PROJECT_VERSION}")
 
+# Release-like host builds use glibc/compiler object-size checks where they can
+# be proven. Native RecurLoop HTTP code additionally calls the corresponding
+# __*_chk entry points directly for dynamically generated code paths.
+if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang" AND CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    add_compile_options(
+        "$<$<NOT:$<CONFIG:Debug>>:-U_FORTIFY_SOURCE>"
+        "$<$<NOT:$<CONFIG:Debug>>:-D_FORTIFY_SOURCE=3>"
+    )
+endif()
+
 function(recurloop_add_library target directory)
     file(GLOB_RECURSE sources CONFIGURE_DEPENDS "${RECURLOOP_SOURCE_DIR}/${directory}/*.cpp")
     add_library(${target} STATIC ${sources})

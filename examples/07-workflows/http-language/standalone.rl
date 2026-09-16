@@ -17,8 +17,21 @@ let health = fn (request:Http:Request*, response:Http:Response*) -> void {
 
 module auto
 module clear
+module strip
 emit executable "/tmp/recurloop-http-server" http_server_main = fn () -> i64 {
-    http "127.0.0.1" 8080 {
+    http "127.0.0.1" 8080 limits {
+        request_line = 16KiB,
+        headers_total = 64KiB,
+        header_count = 100,
+        body = 1MiB,
+        header_timeout = 10s,
+        body_timeout = 30s,
+        write_timeout = 30s,
+        workers = 0,
+        queue_capacity = 0,
+        listen_backlog = 1024,
+        chunk_line = 4KiB
+    } {
         GET  "/"       -> home
         GET  "/health" -> health
         POST "/echo"   -> fn (request:Http:Request*, response:Http:Response*) -> void {

@@ -497,6 +497,16 @@ namespace recurloop {
           if (entry == nullptr || entry->imported)
             THROW(, description << ": module symbol '" << entryName << "' is missing")
         }
+        if (outputData.kind == NativeOutputKind::Executable && !outputData.debug) {
+          // Production executables must not carry RecurLoop's source/debug map.
+          // --strip-all removes ELF symbols but intentionally preserves unknown
+          // non-ALLOC sections, so clear our custom section before linking.
+          if (const compiler::SectionId *debugSection = module.findSection(".recurloop.debug")) {
+            compiler::Section &debug = module.section(*debugSection);
+            debug.bytes.clear();
+            debug.memorySize = 0;
+          }
+        }
         if (context.language().embedsLanguage()) compiler::LanguageImage::embed(context.language(), module);
       }
 
