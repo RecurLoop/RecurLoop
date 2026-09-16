@@ -181,6 +181,69 @@ namespace recurloop {
     THROW_AT(origin, "fn syntax rewrite did not converge after " << MaximumExpansionPasses << " passes")
   }
 
+  SyntaxRewriteResult SyntaxExtension::rewriteAt(context::Context &context, std::string &source,
+                                                  std::vector<std::size_t> &originalOffsets,
+                                                  std::string_view originalSource, SourceLocation origin,
+                                                  std::size_t offset) {
+    if (originalOffsets.empty()) {
+      originalOffsets.resize(source.size() + 1);
+      std::iota(originalOffsets.begin(), originalOffsets.end(), std::size_t{0});
+    }
+    if (originalOffsets.size() != source.size() + 1) THROW(, "syntax rewrite offset map is inconsistent")
+    if (offset >= source.size()) return {};
+
+    lexicon::Phrase rewrites = dictionary(context);
+    if (rewrites.isNull() || !rewrites.containsSubdictionary()) return {};
+
+    bool changed = false;
+    for (std::size_t pass = 0; pass < MaximumExpansionPasses; ++pass) {
+      if (offset >= source.size() || protectedEnd(source, offset) != offset) return {changed, false};
+
+      lexicon::Phrase rewrite = longest(rewrites, source, offset);
+      if (rewrite.isNull()) return {changed, false};
+
+      const std::string key = rewrite.getKey();
+      ExpansionFrame local;
+      local.context = &context;
+      local.source = source;
+      local.originalSource = originalSource;
+      local.originalOffsets = originalOffsets;
+      local.origin = origin;
+      local.cursor = offset + key.size();
+      local.rewriteOffset = originalOffsets[offset];
+
+      ExpansionFrame *previous = currentExpansion;
+      currentExpansion = &local;
+      try {
+        rewrite.elaborate(context);
+      } catch (...) {
+        currentExpansion = previous;
+        throw;
+      }
+      currentExpansion = previous;
+
+      if (!local.handled) {
+        const SourceLocation location = sourceLocationAt(origin, originalSource, originalOffsets[offset]);
+        THROW_AT(location, "syntax rewrite '" << key << "' did not emit or consume source")
+      }
+      if (local.cursor < offset || local.cursor > source.size()) THROW(, "syntax rewrite consumed an invalid source range")
+
+      const std::size_t consumed = local.cursor - offset;
+      if (local.output == source.substr(offset, consumed)) return {changed, true};
+
+      source.replace(offset, consumed, local.output);
+      originalOffsets.erase(originalOffsets.begin() + static_cast<std::ptrdiff_t>(offset),
+                            originalOffsets.begin() + static_cast<std::ptrdiff_t>(local.cursor));
+      originalOffsets.insert(originalOffsets.begin() + static_cast<std::ptrdiff_t>(offset),
+                             local.outputOffsets.begin(), local.outputOffsets.end());
+      changed = true;
+    }
+
+    const std::size_t mapped = originalOffsets[std::min(offset, originalOffsets.size() - 1)];
+    THROW_AT(sourceLocationAt(origin, originalSource, mapped),
+             "fn syntax rewrite did not converge after " << MaximumExpansionPasses << " local rewrites")
+  }
+
   const std::uint8_t *SyntaxExtension::data(context::Context &context) {
     ExpansionFrame &current = frame(context);
     return reinterpret_cast<const std::uint8_t *>(current.source.data() + current.cursor);

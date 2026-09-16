@@ -22,6 +22,11 @@ namespace recurloop {
     std::vector<std::size_t> originalOffsets;
   };
 
+  struct SyntaxRewriteResult {
+    bool changed = false;
+    bool stable = false;
+  };
+
   // Root phrases marked rewritable are the extension boundary of compiled fn
   // syntax. The same phrase can elaborate source directly and lower fn source.
   class SyntaxExtension {
@@ -29,6 +34,13 @@ namespace recurloop {
     SyntaxExtension() = delete;
 
     static ExpandedSyntax expand(context::Context &context, std::string_view source, SourceLocation origin);
+
+    // Rewrite only the construct beginning at offset. Replacements are spliced
+    // into source in place, so callers can consume compiled syntax lazily from
+    // left to right without materializing whole-function expansion passes.
+    static SyntaxRewriteResult rewriteAt(context::Context &context, std::string &source,
+                                         std::vector<std::size_t> &originalOffsets, std::string_view originalSource,
+                                         SourceLocation origin, std::size_t offset);
     static lexicon::Phrase dictionary(context::Context &context);
     static bool active(context::Context &context);
 

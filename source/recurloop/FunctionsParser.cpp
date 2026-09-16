@@ -2,7 +2,6 @@
 
 #include <recurloop/Functions.hpp>
 #include <recurloop/LanguageGrammar.hpp>
-#include <recurloop/SyntaxExtension.hpp>
 #include <recurloop/TypeSyntax.hpp>
 
 #include <charconv>
@@ -66,7 +65,8 @@ namespace recurloop {
                    intrinsics, primaries, postfixes,
                    exact(exact(context.lexicon.phrase(), std::string_view{"\0type-syntax", 12}), "prefix"),
                    exact(exact(context.lexicon.phrase(), std::string_view{"\0type-syntax", 12}), "suffix")},
-                  lexerFail, {.preserveNewlines = true, .bitStrings = true}),
+                  lexerFail, {.preserveNewlines = true, .bitStrings = true, .rewriteSyntax = true},
+                  {sourcePath, sourceLine, sourceColumn}),
             scope(std::move(scope)), sourcePath(std::move(sourcePath)), sourceText(source), sourceLine(sourceLine),
             sourceColumn(sourceColumn) {}
 
@@ -198,7 +198,8 @@ namespace recurloop {
         return blockContents();
       }
 
-      std::vector<Statement> blockContents(std::size_t *closingOffset = nullptr) {
+      std::vector<Statement> blockContents(std::size_t *closingOffset = nullptr,
+                                           std::size_t *closingExpandedOffset = nullptr) {
         lexer.skipNewlines();
         std::vector<Statement> result;
         while (!LanguageGrammar::matches(context, lexer.current().text, "}")) {
@@ -207,6 +208,7 @@ namespace recurloop {
           lexer.skipNewlines();
         }
         if (closingOffset != nullptr) *closingOffset = lexer.current().offset;
+        if (closingExpandedOffset != nullptr) *closingExpandedOffset = lexer.current().expandedOffset;
         lexer.take();
         return result;
       }
@@ -467,18 +469,26 @@ namespace recurloop {
       std::unique_ptr<Expression> parseFunctionLiteral(const Token &start) {
         const SourceLocation literalOrigin =
             sourceLocationAt({sourcePath, sourceLine, sourceColumn}, sourceText, start.offset);
-        const std::string symbol = stableActionSymbol(scope, literalOrigin, "function-literal", sourceText, start.offset);
+        // Several function literals emitted by one rewrite may map to the same
+        // original source offset. The physical offset in the lazy-expanded
+        // stream keeps their generated symbols distinct.
+        const std::string symbol =
+            stableActionSymbol(scope, literalOrigin, "function-literal", sourceText, start.expandedOffset);
         FunctionDefinition definition = signature(symbol, false);
         definition.scope = scope;
         lexer.skipNewlines();
         const Token opening = lexer.current();
         lexer.expect("{");
         std::size_t closing = opening.offset + opening.text.size();
-        const std::vector<Statement> statements = blockContents(&closing);
-        const std::size_t bodyBegin = opening.offset + opening.text.size();
+        std::size_t closingExpanded = opening.expandedOffset + opening.text.size();
+        const std::vector<Statement> statements = blockContents(&closing, &closingExpanded);
+        const std::size_t bodyBeginExpanded = opening.expandedOffset + opening.text.size();
         const SourceLocation bodyOrigin =
-            sourceLocationAt({sourcePath, sourceLine, sourceColumn}, sourceText, bodyBegin);
-        definition.sourceText = std::string(sourceText.substr(bodyBegin, closing - bodyBegin));
+            sourceLocationAt({sourcePath, sourceLine, sourceColumn}, sourceText, opening.offset);
+        // Keep the materialized lazy-expanded body. It is what dependency
+        // recompilation must parse later; slicing the original source by mapped
+        // offsets is invalid for function literals synthesized by a rewrite.
+        definition.sourceText = lexer.expandedSlice(bodyBeginExpanded, closingExpanded);
         definition.sourceLine = bodyOrigin.line;
         definition.sourceColumn = bodyOrigin.column;
         const compiler::TypedFunction implementation =
@@ -835,9 +845,8 @@ namespace recurloop {
         sourceColumn = context.source.position;
       }
       const SourceLocation origin{sourcePath, sourceLine, sourceColumn};
-      const ExpandedSyntax expanded = SyntaxExtension::expand(context, source, origin);
-      DiagnosticScope diagnostics(expanded.source, origin, source, expanded.originalOffsets);
-      Parser parser(context, expanded.source, {}, std::move(sourcePath), sourceLine, sourceColumn);
+      DiagnosticScope diagnostics(source, origin);
+      Parser parser(context, source, {}, std::move(sourcePath), sourceLine, sourceColumn);
       return parser.signature(symbol, true, parameterNamesOptional);
     }
 
@@ -849,9 +858,8 @@ namespace recurloop {
         sourceColumn = context.source.position;
       }
       const SourceLocation origin{sourcePath, sourceLine, sourceColumn};
-      const ExpandedSyntax expanded = SyntaxExtension::expand(context, source, origin);
-      DiagnosticScope diagnostics(expanded.source, origin, source, expanded.originalOffsets);
-      Parser parser(context, expanded.source, std::move(scope), std::move(sourcePath), sourceLine, sourceColumn);
+      DiagnosticScope diagnostics(source, origin);
+      Parser parser(context, source, std::move(scope), std::move(sourcePath), sourceLine, sourceColumn);
       return parser.body();
     }
 
