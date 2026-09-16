@@ -25,6 +25,7 @@ link shared "pthread"
 let Http = phrase { dictionary = true permanent = true }
 let Http:Internal = phrase { dictionary = true serializable = false }
 let Http:ThreadMain = fn (argument:u8*) -> u8*
+let Http:TopLevelMain = fn () -> i64
 
 // LanguageKit supplies allocation/text helpers and the SliceLexer. The HTTP
 // runtime stays source-defined; only POSIX/glibc primitives are imported.
@@ -1593,6 +1594,102 @@ let HttpSyntax:emit_route = fn (
     context:syntax:emit(state, ")\n")
 }
 
+let HttpSyntax:header_ends_with_limits = fn (header:u8*) -> i64 {
+    if !header { return 0 }
+    var length = Http:strlen(header)
+    while length > 0 && (header[length - 1] == 32 || header[length - 1] == 9 || header[length - 1] == 10 || header[length - 1] == 13) {
+        length -= 1
+    }
+    if length < 6 { return 0 }
+    let start = length - 6
+    if header[start] != 108 || header[start + 1] != 105 || header[start + 2] != 109 ||
+       header[start + 3] != 105 || header[start + 4] != 116 || header[start + 5] != 115 {
+        return 0
+    }
+    if start == 0 { return 1 }
+    let before = header[start - 1]
+    return before == 32 || before == 9 || before == 10 || before == 13
+}
+
+let HttpSyntax:append_block = fn (text:LanguageKit:Text*, block:SourceBlock*) -> i64 {
+    if !text || !block { return 0 }
+    let header = context:source:block:header(block)
+    let body = context:source:block:body(block)
+    if header && !text.append(header) { return 0 }
+    if !text.append("{") { return 0 }
+    if body && !text.append(body) { return 0 }
+    return text.append("}")
+}
+
+// At root level `http ... { ... }` is an executable form, not a declaration.
+// Capture the surface form, compile the exact same rewrite inside a tiny native
+// entry function, and invoke it immediately. This keeps one implementation of
+// HTTP parsing/routing syntax for both function bodies and the interactive/root
+// form while still allowing inline `fn` route handlers.
+let HttpSyntax:run_top_level = fn (state:Context*) -> void {
+    let first = context:source:block:capture(state)
+    if !first { HttpSyntax:error(state, "http expects a route block"); return }
+    defer context:source:block:release(first)
+
+    let source = LanguageKit:Text:new()
+    if !source { HttpSyntax:error(state, "http could not allocate top-level source"); return }
+    defer source.destroy()
+
+    if !source.append("http") || !HttpSyntax:append_block(source, first) {
+        HttpSyntax:error(state, "http could not build top-level source")
+        return
+    }
+
+    if HttpSyntax:header_ends_with_limits(context:source:block:header(first)) {
+        let routes = context:source:block:capture(state)
+        if !routes { HttpSyntax:error(state, "http limits expects a route block"); return }
+        defer context:source:block:release(routes)
+        if !HttpSyntax:append_block(source, routes) {
+            HttpSyntax:error(state, "http could not build top-level route source")
+            return
+        }
+    }
+
+    if !source.append("\nreturn 0\n") {
+        HttpSyntax:error(state, "http could not finish top-level source")
+        return
+    }
+
+    var counter = LanguageKit:state_get(state, "__http_top_level_counter") + 1
+    if !LanguageKit:state_set(state, "__http_top_level_counter", counter) {
+        HttpSyntax:error(state, "http could not allocate top-level symbol")
+        return
+    }
+    let counter_text = context:value:format(state, "__http_top_level_counter")
+    if !counter_text { HttpSyntax:error(state, "http could not format top-level symbol"); return }
+    defer free(counter_text)
+
+    let symbol = LanguageKit:Text:new()
+    if !symbol { HttpSyntax:error(state, "http could not allocate top-level symbol"); return }
+    defer symbol.destroy()
+    if !symbol.append("__http_top_level_") || !symbol.append(counter_text) {
+        HttpSyntax:error(state, "http could not build top-level symbol")
+        return
+    }
+
+    let body = source.take()
+    let name = symbol.take()
+    if !body || !name {
+        if body { free(body) }
+        if name { free(name) }
+        HttpSyntax:error(state, "http could not materialize top-level source")
+        return
+    }
+    defer free(body)
+    defer free(name)
+
+    let entry = context:function:compile(state, "() -> i64", body, name)
+    if entry == 0 { HttpSyntax:error(state, "http could not compile top-level server"); return }
+    let main = cast(Http:TopLevelMain, entry)
+    main()
+    context:source:root(state)
+}
+
 // A route handler is either one identifier or an inline function literal. For
 // the latter, consume through its balanced body; SliceReader already keeps
 // braces inside strings and comments out of the token stream.
@@ -1625,6 +1722,10 @@ let http = phrase {
     type = <phrase-types:elaborate>
     rewrite = true
     action = fn (state:Context*, called:Phrase*) -> void {
+        if !context:syntax:active(state) {
+            HttpSyntax:run_top_level(state)
+            return
+        }
         let source = context:syntax:data(state)
         let bytes = context:syntax:bytes(state)
         let reader = LanguageKit:SliceReader:new(state, source, bytes, 136)

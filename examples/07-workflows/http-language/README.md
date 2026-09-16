@@ -97,20 +97,18 @@ The route table is language syntax defined by `library.rl`. The value after
 `->` can be a named handler or an inline function literal:
 
 ```rl
-let main = fn () -> i64 {
-    http "127.0.0.1" 8080 {
-        GET  "/"       -> home
-        GET  "/health" -> health
-        POST "/echo"   -> fn (request:Http:Request*, response:Http:Response*) -> void {
-            response.send(200, "application/octet-stream", request.body, request.body_length)
-        }
+http "127.0.0.1" 8080 {
+    GET  "/"       -> home
+    GET  "/health" -> health
+    POST "/echo"   -> fn (request:Http:Request*, response:Http:Response*) -> void {
+        response.send(200, "application/octet-stream", request.body, request.body_length)
     }
-
-    return 0
 }
-
-main()
 ```
+
+At root/interactive level the `http` form compiles its server entry and invokes
+it immediately, so no wrapper `fn` is required. Inside an ordinary compiled
+function the same syntax still expands in place and behaves as before.
 
 The `http` phrase captures its block and emits ordinary typed RecurLoop calls
 roughly equivalent to:

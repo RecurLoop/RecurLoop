@@ -170,6 +170,30 @@ assert read_answer() == 42
   EXPECT_TRUE(answer.isRewritable());
 }
 
+TEST_F(RecurloopTesting, RootRewriteDoesNotMatchQualifiedOrMemberNames) {
+  const char *argv[] = {"Recurloop", "--string", R"(
+record Runner {
+  run:i64
+}
+let Api = []
+let Api:run = fn () -> i64 { return 7 }
+let run = phrase {
+  type = <phrase-types:elaborate>
+  rewrite = true
+  action = fn (state:Context*, called:Phrase*) -> void {
+    context:syntax:emit(state, "42")
+  }
+}
+let read_member = fn (runner:Runner*) -> i64 { return runner.run }
+let call_qualified = fn () -> i64 { return Api:run() }
+let read_rewrite = fn () -> i64 { return run }
+assert call_qualified() == 7
+assert read_rewrite() == 42
+)"};
+
+  EXPECT_EQ(execute(countof(argv), (char **)argv), 0);
+}
+
 TEST_F(RecurloopTesting, PhraseDescriptorSupportsInlineActionsAndStructuralMutationSugar) {
   const char *argv[] = {"Recurloop", "--string", R"(
 let mutable-action = phrase {

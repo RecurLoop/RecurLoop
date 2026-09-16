@@ -41,14 +41,18 @@ namespace recurloop {
       return std::isalnum(value) || value == '_';
     }
 
+    bool qualifiedIdentifierByte(unsigned char value) {
+      return identifierByte(value) || value == ':' || value == '.';
+    }
+
     bool hasBoundary(std::string_view source, std::size_t offset, std::string_view spelling) {
       if (spelling.empty()) return false;
       if (identifierByte(static_cast<unsigned char>(spelling.front())) && offset != 0 &&
-          identifierByte(static_cast<unsigned char>(source[offset - 1])))
+          qualifiedIdentifierByte(static_cast<unsigned char>(source[offset - 1])))
         return false;
       const std::size_t end = offset + spelling.size();
       return !identifierByte(static_cast<unsigned char>(spelling.back())) || end == source.size() ||
-             !identifierByte(static_cast<unsigned char>(source[end]));
+             !qualifiedIdentifierByte(static_cast<unsigned char>(source[end]));
     }
 
     lexicon::Phrase phraseAt(context::Context &context, std::uint64_t address) {
