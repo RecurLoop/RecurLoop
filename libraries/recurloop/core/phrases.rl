@@ -31,3 +31,8 @@ phrase phrase_types_scoped_callable = "scoped-callable" in phrase_types {
   type phrase_types_data
   phrase-type scoped-callable
 }
+
+phrase syntax_definition = "syntax" in root {
+  type phrase_types_elaborate
+  action host "syntax.define"
+}

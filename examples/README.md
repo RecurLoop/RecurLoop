@@ -56,6 +56,7 @@ their documented result. Generated ELF files and engine images are written to
 | `expression-aliases` | Replacing expression group delimiters |
 | `indentation-syntax` | Python-style blocks assembled from ordinary phrases |
 | `persistent-extensions` | Exporting and restoring source-defined syntax |
+| `declarative-syntax` | Defining reusable syntax patterns, rewrites, and syntax replacement |
 | `switch-extension` | A complete `switch` family implemented in RecurLoop |
 
 ### 04 — Native output

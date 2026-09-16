@@ -49,7 +49,11 @@ compiler-kernel/backend ABI, not an invitation to add new language semantics to
 C++.
 
 The remaining direct actions are existing parser/compiler kernel, assembler,
-debugger and process/backend services. RecurLoop extensions should prefer
+debugger and process/backend services. `syntax.define` is a generic kernel
+mechanism: it compiles declarative syntax patterns into ordinary serializable
+phrases; generated patterns use the process-registered `syntax.pattern` action
+name when user language images are exported. The mechanism does not hard-code
+individual language constructs. RecurLoop extensions should prefer
 source-defined phrase actions plus the generic Context API rather than extending
 this set.
 

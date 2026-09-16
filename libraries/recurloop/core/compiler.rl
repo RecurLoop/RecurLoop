@@ -308,6 +308,8 @@ compiler {
   extern "context:syntax:active" symbol "context:syntax:active" params [ "Context*" ] result "u64" abi "sysv-amd64" imported
   extern "context:syntax:advance" symbol "context:syntax:advance" params [ "Context*" "u64" ] result "u64" abi "sysv-amd64" imported
   extern "context:syntax:bytes" symbol "context:syntax:bytes" params [ "Context*" ] result "u64" abi "sysv-amd64" imported
+  extern "context:syntax:capture" symbol "context:syntax:capture" params [ "Context*" "u8*" ] result "u8*" abi "sysv-amd64" imported
+  extern "context:syntax:capture:exists" symbol "context:syntax:capture:exists" params [ "Context*" "u8*" ] result "u64" abi "sysv-amd64" imported
   extern "context:syntax:copy" symbol "context:syntax:copy" params [ "Context*" "u64" ] result "u64" abi "sysv-amd64" imported
   extern "context:syntax:data" symbol "context:syntax:data" params [ "Context*" ] result "u8*" abi "sysv-amd64" imported
   extern "context:syntax:dictionary" symbol "context:syntax:dictionary" params [ "Context*" ] result "u64" abi "sysv-amd64" imported

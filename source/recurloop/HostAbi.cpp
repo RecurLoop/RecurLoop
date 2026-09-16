@@ -6,6 +6,7 @@
 #include <recurloop/Functions.hpp>
 #include <recurloop/PhraseDefinition.hpp>
 #include <recurloop/PhraseNames.hpp>
+#include <recurloop/SyntaxPattern.hpp>
 #include <recurloop/TypeSyntax.hpp>
 #include <recurloop/Typed.hpp>
 
@@ -22,5 +23,6 @@ namespace recurloop {
     Functions::registerActions(context);
     PhraseDefinition::registerActions(context);
     PhraseNames::registerActions(context);
+    SyntaxPattern::registerActions(context);
   }
 } // namespace recurloop

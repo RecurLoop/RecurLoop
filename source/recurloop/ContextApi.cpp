@@ -7,6 +7,7 @@
 #include <recurloop/LexiconTransaction.hpp>
 #include <recurloop/PhraseAction.hpp>
 #include <recurloop/SyntaxExtension.hpp>
+#include <recurloop/SyntaxPattern.hpp>
 
 #include <compiler/DynamicLinker.hpp>
 #include <compiler/JitLinker.hpp>
@@ -64,6 +65,8 @@ namespace recurloop {
     constexpr std::string_view SyntaxPath{"context:syntax:path"};
     constexpr std::string_view SyntaxLine{"context:syntax:line"};
     constexpr std::string_view SyntaxPosition{"context:syntax:position"};
+    constexpr std::string_view SyntaxCapture{"context:syntax:capture"};
+    constexpr std::string_view SyntaxCaptureExists{"context:syntax:capture:exists"};
     constexpr std::string_view BlockCapture{"context:source:block:capture"};
     constexpr std::string_view BlockHeader{"context:source:block:header"};
     constexpr std::string_view BlockBody{"context:source:block:body"};
@@ -1133,6 +1136,26 @@ namespace recurloop {
                      [&](context::Context &value) { return SyntaxExtension::position(value); });
     }
 
+    extern "C" const std::uint8_t *contextSyntaxCapture(context::Context *context, const std::uint8_t *name) noexcept {
+      if (context == nullptr || name == nullptr) return nullptr;
+      try {
+        return SyntaxPattern::capture(*context, reinterpret_cast<const char *>(name));
+      } catch (...) {
+        if (!context->exec.pendingException) context->exec.pendingException = std::current_exception();
+        return nullptr;
+      }
+    }
+
+    extern "C" std::uint64_t contextSyntaxCaptureExists(context::Context *context, const std::uint8_t *name) noexcept {
+      if (context == nullptr || name == nullptr) return 0;
+      try {
+        return SyntaxPattern::captureExists(*context, reinterpret_cast<const char *>(name)) ? 1 : 0;
+      } catch (...) {
+        if (!context->exec.pendingException) context->exec.pendingException = std::current_exception();
+        return 0;
+      }
+    }
+
     extern "C" SourceBlock *contextSourceBlockCapture(context::Context *context) noexcept {
       return checked(context, static_cast<SourceBlock *>(nullptr),
                      [&](context::Context &value) { return new SourceBlock(Blocks::capture(value)); });
@@ -1883,6 +1906,10 @@ namespace recurloop {
                         reinterpret_cast<std::uintptr_t>(&contextSyntaxLine));
     declareHostFunction(context, SyntaxPosition, "context:syntax:position", {contextPointer}, u64,
                         reinterpret_cast<std::uintptr_t>(&contextSyntaxPosition));
+    declareHostFunction(context, SyntaxCapture, "context:syntax:capture", {contextPointer, bytePointer}, bytePointer,
+                        reinterpret_cast<std::uintptr_t>(&contextSyntaxCapture));
+    declareHostFunction(context, SyntaxCaptureExists, "context:syntax:capture:exists", {contextPointer, bytePointer}, u64,
+                        reinterpret_cast<std::uintptr_t>(&contextSyntaxCaptureExists));
     declareHostFunction(context, BlockCapture, "context:source:block:capture", {contextPointer}, sourceBlockPointer,
                         reinterpret_cast<std::uintptr_t>(&contextSourceBlockCapture));
     declareHostFunction(context, BlockHeader, "context:source:block:header", {sourceBlockPointer}, bytePointer,

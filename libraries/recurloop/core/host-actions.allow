@@ -176,6 +176,7 @@ reference.enter
 reference.whitespace
 scope.enter
 source.include
+syntax.define
 type-syntax.array
 type-syntax.function
 type-syntax.pointer
