@@ -9,7 +9,10 @@ let RecurLoopCompatibility = phrase { dictionary = true permanent = true }
 let RecurLoopCompatibility:if_impl = phrase {
     type = <phrase-types:elaborate>
     action = fn (state:Context*, called:Phrase*) -> void {
-        let accepted = context:source:block:capture(state)
+        // Parse only the condition/header and consume the opening brace.  The
+        // selected body is then consumed directly from Source; it is never
+        // copied into SourceBlock::body.
+        let accepted = context:source:block:begin(state)
         if !accepted { context:diagnostic:error(state, "if expects a condition and block"); return }
         defer context:source:block:release(accepted)
 
@@ -19,10 +22,18 @@ let RecurLoopCompatibility:if_impl = phrase {
         let position = context:source:block:header:position(accepted)
         if !header { context:diagnostic:error(state, "if requires a boolean expression before '{'"); return }
 
-        var rejected = cast(SourceBlock*, 0)
+        let condition = context:expression:boolean:at(state, header, path, line, position)
+        if condition {
+            context:source:block:stream:execute(state, 1)
+        } else {
+            context:source:block:stream:skip(state)
+        }
+
         if context:source:consume(state, "else") {
-            rejected = context:source:block:capture(state)
+            let rejected = context:source:block:begin(state)
             if !rejected { context:diagnostic:error(state, "else expects a block"); return }
+            defer context:source:block:release(rejected)
+
             let else_header = context:source:block:header(rejected)
             if else_header {
                 var header_index = 0
@@ -31,22 +42,20 @@ let RecurLoopCompatibility:if_impl = phrase {
                     header_index += 1
                 }
                 if else_header[header_index] != 0 {
-                    context:source:block:release(rejected)
                     context:diagnostic:error(state, "else must be followed directly by '{'")
                     return
                 }
             }
-        }
 
-        let condition = context:expression:boolean:at(state, header, path, line, position)
-        if condition {
-            context:source:block:execute:scoped(state, accepted)
-        } else if rejected {
-            context:source:block:execute:scoped(state, rejected)
+            if condition {
+                context:source:block:stream:skip(state)
+            } else {
+                context:source:block:stream:execute(state, 1)
+            }
         }
-        if rejected { context:source:block:release(rejected) }
     }
 }
+
 
 let RecurLoopCompatibility:while_impl = phrase {
     type = <phrase-types:elaborate>

@@ -281,7 +281,10 @@ compiler {
   extern "context:phrase:type" symbol "context:phrase:type" params [ "Context*" "u64" ] result "u64" abi "sysv-amd64" imported
   extern "context:source:advance" symbol "context:source:advance" params [ "Context*" "u64" ] result "u64" abi "sysv-amd64" imported
   extern "context:source:block:body" symbol "context:source:block:body" params [ "SourceBlock*" ] result "u8*" abi "sysv-amd64" imported
+  extern "context:source:block:begin" symbol "context:source:block:begin" params [ "Context*" ] result "SourceBlock*" abi "sysv-amd64" imported
   extern "context:source:block:capture" symbol "context:source:block:capture" params [ "Context*" ] result "SourceBlock*" abi "sysv-amd64" imported
+  extern "context:source:block:stream:execute" symbol "context:source:block:stream:execute" params [ "Context*" "u64" ] result "u64" abi "sysv-amd64" imported
+  extern "context:source:block:stream:skip" symbol "context:source:block:stream:skip" params [ "Context*" ] result "u64" abi "sysv-amd64" imported
   extern "context:source:block:execute" symbol "context:source:block:execute" params [ "Context*" "SourceBlock*" "u64" ] result "u64" abi "sysv-amd64" imported
   extern "context:source:block:execute:current" symbol "context:source:block:execute:current" params [ "Context*" "SourceBlock*" ] result "u64" abi "sysv-amd64" imported
   extern "context:source:block:execute:scoped" symbol "context:source:block:execute:scoped" params [ "Context*" "SourceBlock*" ] result "u64" abi "sysv-amd64" imported

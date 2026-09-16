@@ -195,7 +195,7 @@ namespace recurloop {
 
       bool available(std::size_t offset) override {
         while (context.source.buffer.bits / Byte::length <= offset && context.source.more)
-          context::Source::load(context, false);
+          context::Source::load(context, true);
         return context.source.buffer.bits / Byte::length > offset;
       }
       char at(std::size_t offset) override {

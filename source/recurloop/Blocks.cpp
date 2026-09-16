@@ -20,7 +20,7 @@ namespace recurloop {
 
     bool ensure(context::Context &context, std::size_t relative) {
       while (relative >= context.source.buffer.bits / Byte::length && context.source.more)
-        context::Source::load(context, false);
+        context::Source::load(context, true);
       return relative < context.source.buffer.bits / Byte::length;
     }
 
@@ -132,6 +132,79 @@ namespace recurloop {
       }
       context::Context &context;
     };
+
+    void consumeBody(context::Context &context, std::string *body) {
+      const auto append = [&](char character) {
+        if (body != nullptr) body->push_back(character);
+      };
+      const auto appendText = [&](std::string_view text) {
+        if (body != nullptr) body->append(text);
+      };
+
+      std::size_t depth = 1;
+      char quote = '\0';
+      bool escaped = false;
+      bool lineComment = false;
+      bool blockComment = false;
+      while (depth != 0) {
+        if (!lineComment && !blockComment && quote == '\0') {
+          const std::string opening = syntaxAt(context, 0, "{");
+          if (!opening.empty()) {
+            context::Source::progress(context, opening.size() * Byte::length);
+            ++depth;
+            appendText(opening);
+            continue;
+          }
+          const std::string closing = syntaxAt(context, 0, "}");
+          if (!closing.empty()) {
+            context::Source::progress(context, closing.size() * Byte::length);
+            if (--depth != 0) appendText(closing);
+            continue;
+          }
+        }
+
+        const char character = take(context);
+        if (character == '\0') blockFail(context, "unterminated block; expected '}'");
+
+        if (lineComment) {
+          append(character);
+          if (character == '\n') lineComment = false;
+          continue;
+        }
+        if (blockComment) {
+          append(character);
+          if (character == '*' && peek(context) == '/') {
+            append(take(context));
+            blockComment = false;
+          }
+          continue;
+        }
+        if (quote != '\0') {
+          append(character);
+          if (escaped)
+            escaped = false;
+          else if (character == '\\')
+            escaped = true;
+          else if (character == quote)
+            quote = '\0';
+          continue;
+        }
+        if (character == '/' && peek(context) == '/') {
+          append(character);
+          append(take(context));
+          lineComment = true;
+        } else if (character == '/' && peek(context) == '*') {
+          append(character);
+          append(take(context));
+          blockComment = true;
+        } else if (character == '"' || character == '\'') {
+          quote = character;
+          append(character);
+        } else {
+          append(character);
+        }
+      }
+    }
   } // namespace
 
   bool Blocks::hasOpeningBrace(context::Context &context, bool followingLine) {
@@ -251,6 +324,14 @@ namespace recurloop {
       }
       if ((character == '\n' || character == '\r') && closing.empty()) break;
 
+      // A live streamed block keeps its outer closing delimiter in Source.
+      // Historically captureExpression() only saw SourceBlock::body, where
+      // that delimiter had already been removed.  Treat an unmatched block
+      // close as the end of the current expression without consuming it so
+      // executeCurrentBlock() can own and consume the boundary.  Nested `{}`
+      // expression groups are still handled by the closing stack below.
+      if (closing.empty() && !syntaxAt(context, 0, "}").empty()) break;
+
       bool structural = false;
       for (const auto &[opening, close] :
            std::array<std::pair<std::string_view, std::string_view>, 3>{{{"(", ")"}, {"[", "]"}, {"{", "}"}}}) {
@@ -286,7 +367,7 @@ namespace recurloop {
     return begin < end ? std::string(begin, end) : std::string{};
   }
 
-  SourceBlock Blocks::capture(context::Context &context) {
+  SourceBlock Blocks::begin(context::Context &context) {
     SourceBlock result;
     result.path = context.source.path;
     result.headerLine = context.source.line;
@@ -304,8 +385,8 @@ namespace recurloop {
       }
       const char character = take(context);
       if (character == '\0') blockFail(context, "expected '{'");
+      result.header.push_back(character);
       if (quote != '\0') {
-        result.header.push_back(character);
         if (escaped)
           escaped = false;
         else if (character == '\\')
@@ -314,78 +395,17 @@ namespace recurloop {
           quote = '\0';
         continue;
       }
-      if (character == '"' || character == '\'') {
-        quote = character;
-        result.header.push_back(character);
-      } else {
-        result.header.push_back(character);
-      }
+      if (character == '"' || character == '\'') quote = character;
     }
 
     result.line = context.source.line;
     result.position = context.source.position;
-    std::size_t depth = 1;
-    quote = '\0';
-    escaped = false;
-    bool lineComment = false;
-    bool blockComment = false;
-    while (depth != 0) {
-      if (!lineComment && !blockComment && quote == '\0') {
-        const std::string opening = syntaxAt(context, 0, "{");
-        if (!opening.empty()) {
-          context::Source::progress(context, opening.size() * Byte::length);
-          ++depth;
-          result.body += opening;
-          continue;
-        }
-        const std::string closing = syntaxAt(context, 0, "}");
-        if (!closing.empty()) {
-          context::Source::progress(context, closing.size() * Byte::length);
-          if (--depth != 0) result.body += closing;
-          continue;
-        }
-      }
-      const char character = take(context);
-      if (character == '\0') blockFail(context, "unterminated block; expected '}'");
+    return result;
+  }
 
-      if (lineComment) {
-        result.body.push_back(character);
-        if (character == '\n') lineComment = false;
-        continue;
-      }
-      if (blockComment) {
-        result.body.push_back(character);
-        if (character == '*' && peek(context) == '/') {
-          result.body.push_back(take(context));
-          blockComment = false;
-        }
-        continue;
-      }
-      if (quote != '\0') {
-        result.body.push_back(character);
-        if (escaped)
-          escaped = false;
-        else if (character == '\\')
-          escaped = true;
-        else if (character == quote)
-          quote = '\0';
-        continue;
-      }
-      if (character == '/' && peek(context) == '/') {
-        result.body.push_back(character);
-        result.body.push_back(take(context));
-        lineComment = true;
-      } else if (character == '/' && peek(context) == '*') {
-        result.body.push_back(character);
-        result.body.push_back(take(context));
-        blockComment = true;
-      } else if (character == '"' || character == '\'') {
-        quote = character;
-        result.body.push_back(character);
-      } else {
-        result.body.push_back(character);
-      }
-    }
+  SourceBlock Blocks::capture(context::Context &context) {
+    SourceBlock result = begin(context);
+    consumeBody(context, &result.body);
     return result;
   }
 
@@ -477,6 +497,14 @@ namespace recurloop {
     if (!key.empty() && identifierCharacter(key.back()) && identifierCharacter(peek(context, key.size()))) return false;
     context::Source::progress(context, key.size() * Byte::length);
     return true;
+  }
+
+  void Blocks::skip(context::Context &context) {
+    consumeBody(context, nullptr);
+  }
+
+  void Blocks::executeCurrent(context::Context &context, bool scoped) {
+    executeCurrentBlock(context, scoped);
   }
 
   void Blocks::execute(context::Context &context, const SourceBlock &block, bool scoped) {

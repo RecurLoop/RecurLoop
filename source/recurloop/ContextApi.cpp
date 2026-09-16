@@ -68,6 +68,9 @@ namespace recurloop {
     constexpr std::string_view SyntaxCapture{"context:syntax:capture"};
     constexpr std::string_view SyntaxCaptureExists{"context:syntax:capture:exists"};
     constexpr std::string_view BlockCapture{"context:source:block:capture"};
+    constexpr std::string_view BlockBegin{"context:source:block:begin"};
+    constexpr std::string_view BlockStreamExecute{"context:source:block:stream:execute"};
+    constexpr std::string_view BlockStreamSkip{"context:source:block:stream:skip"};
     constexpr std::string_view BlockHeader{"context:source:block:header"};
     constexpr std::string_view BlockBody{"context:source:block:body"};
     constexpr std::string_view BlockPath{"context:source:block:path"};
@@ -1161,6 +1164,26 @@ namespace recurloop {
                      [&](context::Context &value) { return new SourceBlock(Blocks::capture(value)); });
     }
 
+    extern "C" SourceBlock *contextSourceBlockBegin(context::Context *context) noexcept {
+      return checked(context, static_cast<SourceBlock *>(nullptr),
+                     [&](context::Context &value) { return new SourceBlock(Blocks::begin(value)); });
+    }
+
+    extern "C" std::uint64_t contextSourceBlockStreamExecute(context::Context *context,
+                                                              std::uint64_t scoped) noexcept {
+      return checked(context, std::uint64_t{0}, [&](context::Context &value) {
+        Blocks::executeCurrent(value, scoped != 0);
+        return std::uint64_t{1};
+      });
+    }
+
+    extern "C" std::uint64_t contextSourceBlockStreamSkip(context::Context *context) noexcept {
+      return checked(context, std::uint64_t{0}, [&](context::Context &value) {
+        Blocks::skip(value);
+        return std::uint64_t{1};
+      });
+    }
+
     extern "C" const std::uint8_t *contextSourceBlockHeader(SourceBlock *block) noexcept {
       return block == nullptr ? nullptr : reinterpret_cast<const std::uint8_t *>(block->header.c_str());
     }
@@ -1912,6 +1935,12 @@ namespace recurloop {
                         reinterpret_cast<std::uintptr_t>(&contextSyntaxCaptureExists));
     declareHostFunction(context, BlockCapture, "context:source:block:capture", {contextPointer}, sourceBlockPointer,
                         reinterpret_cast<std::uintptr_t>(&contextSourceBlockCapture));
+    declareHostFunction(context, BlockBegin, "context:source:block:begin", {contextPointer}, sourceBlockPointer,
+                        reinterpret_cast<std::uintptr_t>(&contextSourceBlockBegin));
+    declareHostFunction(context, BlockStreamExecute, "context:source:block:stream:execute", {contextPointer, u64}, u64,
+                        reinterpret_cast<std::uintptr_t>(&contextSourceBlockStreamExecute));
+    declareHostFunction(context, BlockStreamSkip, "context:source:block:stream:skip", {contextPointer}, u64,
+                        reinterpret_cast<std::uintptr_t>(&contextSourceBlockStreamSkip));
     declareHostFunction(context, BlockHeader, "context:source:block:header", {sourceBlockPointer}, bytePointer,
                         reinterpret_cast<std::uintptr_t>(&contextSourceBlockHeader));
     declareHostFunction(context, BlockBody, "context:source:block:body", {sourceBlockPointer}, bytePointer,

@@ -27,10 +27,13 @@ namespace recurloop {
 
     static bool hasOpeningBrace(context::Context &context, bool followingLine = false);
     static bool hasIndentedBody(context::Context &context);
+    static SourceBlock begin(context::Context &context);
     static SourceBlock capture(context::Context &context);
     static SourceBlock captureIndented(context::Context &context);
     static std::string captureExpression(context::Context &context, SourceLocation *origin = nullptr);
     static bool consume(context::Context &context, std::string_view keyword);
+    static void skip(context::Context &context);
+    static void executeCurrent(context::Context &context, bool scoped = true);
     static void execute(context::Context &context, const SourceBlock &block, bool scoped = true);
   };
 } // namespace recurloop

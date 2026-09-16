@@ -11,7 +11,6 @@
 #include <cctype>
 #include <filesystem>
 #include <fstream>
-#include <iterator>
 
 namespace recurloop {
   namespace {
@@ -83,8 +82,7 @@ namespace recurloop {
 
     std::ifstream input(includePath, std::ios::binary);
     if (!input.is_open()) THROW(, "include: cannot open file '" << includePath.string() << "'")
-    const std::string source{std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>()};
+    executeStream(context, input, includePath.string(), 1);
     if (input.bad()) THROW(, "include: cannot read file '" << includePath.string() << "'")
-    executeSource(context, source, includePath.string(), 1);
   }
 } // namespace recurloop

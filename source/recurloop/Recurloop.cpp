@@ -2,6 +2,7 @@
   #define __RECURLOOP_RECURLOOP_CPP
   #include <recurloop/Recurloop.hpp>
   #include <recurloop/Assembler.hpp>
+  #include <recurloop/Blocks.hpp>
   #include <recurloop/Debugger.hpp>
   #include <recurloop/Execution.hpp>
   #include <recurloop/EngineImage.hpp>
@@ -19,17 +20,23 @@
 
 namespace recurloop {
   void Recurloop::initializeConfig(int argc, char **argv) {
+    constexpr Size SOURCE_BUFFER_SIZE = (Size)1024 * 64;
     constexpr Size LEXICON_SIZE = (Size)1024 * 1024 * 64;
     constexpr Size RUNTIME_SIZE = (Size)1024 * 1024 * 16;
-    constexpr Size WORKSPACE_SIZE = (Size)1024 * 1024 * 16;
     constexpr Size WORKSPACE_KEY_SIZE = (Size)1024 * 1024 * 8;
     constexpr Size WORKSPACE_CODE_SIZE = (Size)1024 * 1024 * 8;
 
-    context.config = {{{LEXICON_SIZE}},
-                      {{RUNTIME_SIZE}},
-                      {{WORKSPACE_SIZE}},
-                      {{{WORKSPACE_KEY_SIZE}}, {{WORKSPACE_CODE_SIZE}}},
-                      {false}};
+    // Keep source buffering independent from the fixed arenas.  The previous
+    // aggregate initializer accidentally assigned LEXICON_SIZE to the source
+    // buffer and shifted the following sizes by one field.  Besides shrinking
+    // the lexicon to 16 MiB, every source refill reserved 64 MiB.
+    context.config = {};
+    context.config.source.buffer.size = SOURCE_BUFFER_SIZE;
+    context.config.lexicon.memory.size = LEXICON_SIZE;
+    context.config.runtime.memory.size = RUNTIME_SIZE;
+    context.config.workspace.key.memory.size = WORKSPACE_KEY_SIZE;
+    context.config.workspace.code.memory.size = WORKSPACE_CODE_SIZE;
+    context.config.exception.continues = false;
     context.exec.status = 0;
     context.exec.start = std::chrono::high_resolution_clock::now();
     context.exec.args = {1, argc, argv, true};
@@ -219,35 +226,37 @@ namespace recurloop {
     THROW_AT(location, error.what())
   }
 
-  static void processSourceBuffer(context::Context &context) {
+  static void processSourceStep(context::Context &context) {
     auto filter = [](lexicon::Dictionary *dictionary, lexicon::Match *candidate) -> bool {
       return candidate->getPhrase().isElaboratable();
     };
 
-    while (context.source.buffer.bits > 0 || context.source.more) {
-      const SourceLocation sourceLocation{context.source.path, context.source.line, context.source.position};
-      try {
-        if (context.source.buffer.bits > 0) {
-          const DebugLocation debugLocation{context.source.path, context.source.line, context.source.position};
-          if (runSourceHook(context)) continue;
-          lexicon::Dictionary dictionary = context::Lookup::current(context).getSubdictionary();
-          lexicon::Phrase matched = context::Source::matchLongest(context, dictionary, filter, true);
+    const SourceLocation sourceLocation{context.source.path, context.source.line, context.source.position};
+    try {
+      if (context.source.buffer.bits > 0) {
+        const DebugLocation debugLocation{context.source.path, context.source.line, context.source.position};
+        if (runSourceHook(context)) return;
+        lexicon::Dictionary dictionary = context::Lookup::current(context).getSubdictionary();
+        lexicon::Phrase matched = context::Source::matchLongest(context, dictionary, filter, true);
 
-          if (matched.isNull()) handleUndefinedPhrase(context);
+        if (matched.isNull()) handleUndefinedPhrase(context);
 
-          Debugger::beforeElaborate(context, matched, debugLocation);
-          matched.elaborate(context);
-        } else {
-          context::Source::load(context, false);
-        }
-      } catch (const std::exception &error) {
-        rethrowAt(sourceLocation, error);
-      } catch (...) {
-        THROW_AT(sourceLocation, "unknown internal error")
+        Debugger::beforeElaborate(context, matched, debugLocation);
+        matched.elaborate(context);
+      } else if (context.source.more) {
+        // Empty-buffer refill is also a sliding refill.  Without this the
+        // already-consumed prefix survives line after line even though normal
+        // source execution is strictly left-to-right.
+        context::Source::load(context, true);
       }
+    } catch (const std::exception &error) {
+      rethrowAt(sourceLocation, error);
+    } catch (...) {
+      THROW_AT(sourceLocation, "unknown internal error")
     }
+  }
 
-    // All data should be processed
+  static void finishSource(context::Context &context) {
     const SourceLocation endLocation{context.source.path, context.source.line, context.source.position};
     try {
       if (0 < context.source.buffer.bits)
@@ -259,6 +268,42 @@ namespace recurloop {
       rethrowAt(endLocation, error);
     } catch (...) {
       THROW_AT(endLocation, "unknown internal error")
+    }
+  }
+
+  static void processSourceBuffer(context::Context &context) {
+    while (context.source.buffer.bits > 0 || context.source.more) processSourceStep(context);
+    finishSource(context);
+  }
+
+  namespace {
+    struct ValueScope {
+      explicit ValueScope(context::Context &context, bool enabled) : context(context), enabled(enabled) {
+        if (enabled) context.values().pushScope();
+      }
+      ~ValueScope() {
+        if (enabled) context.values().popScope();
+      }
+      context::Context &context;
+      bool enabled;
+    };
+  } // namespace
+
+  void executeCurrentBlock(context::Context &context, bool scoped) {
+    const Size lookup = context::Lookup::current(context).getAddress();
+    ValueScope values(context, scoped);
+
+    while (true) {
+      // The opening brace was consumed by Blocks::begin().  A close brace is
+      // the boundary only after nested source grammars/scopes have returned to
+      // the lookup dictionary in which the block started.
+      if (context::Lookup::current(context).getAddress() == lookup && Blocks::consume(context, "}")) return;
+
+      if (context.source.buffer.bits == 0 && !context.source.more) {
+        const SourceLocation location{context.source.path, context.source.line, context.source.position};
+        THROW_AT(location, "unterminated block; expected '}'")
+      }
+      processSourceStep(context);
     }
   }
 
@@ -282,6 +327,35 @@ namespace recurloop {
     Debugger::sourceLeave(context);
     context.source = outerSource;
     context.io.in = outerInput;
+  }
+
+  void executeStream(context::Context &context, std::istream &source, std::string_view path, Size line,
+                     Size position) {
+    const context::Source outerSource = context.source;
+    std::istream *const outerInput = context.io.in;
+    const int outerArgumentIndex = context.exec.args.index;
+
+    context.source = {std::string(path), line, position, true, {}};
+    context.io.in = &source;
+    // A nested stream is a bounded translation unit.  Prevent Source::load()
+    // from falling through into the caller's remaining command-line inputs
+    // when this stream reaches EOF.
+    context.exec.args.index = context.exec.args.count;
+
+    Debugger::sourceEnter(context);
+    try {
+      processSourceBuffer(context);
+    } catch (...) {
+      Debugger::sourceLeave(context);
+      context.source = outerSource;
+      context.io.in = outerInput;
+      context.exec.args.index = outerArgumentIndex;
+      throw;
+    }
+    Debugger::sourceLeave(context);
+    context.source = outerSource;
+    context.io.in = outerInput;
+    context.exec.args.index = outerArgumentIndex;
   }
 
   static void executeMainLoop(context::Context &context) {
