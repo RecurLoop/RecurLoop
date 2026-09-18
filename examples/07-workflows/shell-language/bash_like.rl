@@ -1,6 +1,6 @@
-// A compact tour of the Bash-like shell after importing library.rl.
+// A compact tour of the Bash-like shell after importing the shell library image.
 //
-//   Recurloop --file examples/07-workflows/shell-language/library.rl
+//   Recurloop --file libraries/shell/library.rl
 //   Recurloop --import /tmp/recurloop-shell-library.rli \
 //       --file examples/07-workflows/shell-language/bash_like.rl
 //

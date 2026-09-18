@@ -1,4 +1,4 @@
-#include "../../source/recurloop/LanguageInternal.hpp"
+#include "recurloop/LanguageInternal.hpp"
 #include <recurloop/bootstrap/SeedLanguage.hpp>
 
 #include <recurloop/Engine.hpp>

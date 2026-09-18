@@ -1,5 +1,5 @@
 // Pipelines, capture and redirection in a top-level automation script.
-// Requires /tmp/recurloop-shell-library.rli built from library.rl.
+// Requires /tmp/recurloop-shell-library.rli built from libraries/shell/library.rl.
 
 var needle = "beta"
 var output = "/tmp/recurloop-shell-filtered.txt"

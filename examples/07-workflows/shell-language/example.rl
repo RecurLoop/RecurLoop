@@ -2,7 +2,7 @@
 // RecurLoop shell DSL - application using a prebuilt language image
 //
 // First build the reusable shell image:
-//   Recurloop --file examples/07-workflows/shell-language/library.rl
+//   Recurloop --file libraries/shell/library.rl
 //
 // Then compile this application in a fresh RecurLoop process:
 //   Recurloop --import /tmp/recurloop-shell-library.rli \\

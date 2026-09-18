@@ -3,7 +3,7 @@
 //
 // Source library that installs an Amber-oriented surface language on top of
 // RecurLoop's phrase system and the native pipeline implementation from
-// examples/07-workflows/shell-language/library.rl.
+// libraries/shell/library.rl.
 //
 // Target: Amber 0.6.x command syntax and the subset of the language that can be
 // represented faithfully by RecurLoop's current public phrase/Context APIs.
@@ -44,7 +44,7 @@
 // command: Amber commands must be explicitly delimited by `$ ... $`.
 //
 // Build reusable image with a RecurLoop executable:
-//   build/Debug/bin/recurloop --file recurloop-amber-library.rl
+//   build/Release/bin/recurloop --file recurloop-amber-library.rl
 //
 // Output:
 //   /tmp/recurloop-amber-library.rli

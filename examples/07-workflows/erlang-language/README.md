@@ -31,7 +31,7 @@ function clauses terminated by `.`, `Pid ! Message`, `receive ... end`, and
 From the repository root:
 
 ```bash
-build/Debug/bin/recurloop \
+build/Release/bin/recurloop \
   --file examples/07-workflows/erlang-language/library.rl
 ```
 
@@ -44,7 +44,7 @@ The library exports:
 Run the showcase in a fresh process:
 
 ```bash
-build/Debug/bin/recurloop \
+build/Release/bin/recurloop \
   --import /tmp/recurloop-erlang-library.rli \
   --file examples/07-workflows/erlang-language/showcase.erl
 ```
@@ -358,7 +358,7 @@ Run directly:
 
 ```bash
 examples/07-workflows/erlang-language/run-tests.sh \
-  "$PWD/build/Debug/bin/recurloop"
+  "$PWD/build/Release/bin/recurloop"
 ```
 
 The suite contains:

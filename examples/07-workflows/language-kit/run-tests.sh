@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-RECURLOOP=${1:-build/Debug/bin/recurloop}
+RECURLOOP=${1:-build/Release/bin/recurloop}
 DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+ROOT=$(cd -- "$DIR/../../.." && pwd)
+LIBRARY="$ROOT/libraries/language-kit/library.rl"
 KIT_IMAGE=/tmp/recurloop-language-kit.rli
 TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT
@@ -17,14 +19,14 @@ if grep -R -n -E 'LanguageKit:(Slice)?Lexer' "$DIR/.." --include='*.rl' >/dev/nu
     exit 1
 fi
 for migrated in inferred-language; do
-    grep -Fq 'LanguageKit:Cursor:' "$DIR/../$migrated/library.rl" || {
+    grep -Fq 'LanguageKit:Cursor:' "$ROOT/libraries/inferred/library.rl" || {
         echo "[language-kit] $migrated is not using LanguageKit:Cursor" >&2
         exit 1
     }
 done
 
 rm -f "$KIT_IMAGE"
-"$RECURLOOP" --file "$DIR/library.rl" >/dev/null
+"$RECURLOOP" --file "$LIBRARY" -- "$KIT_IMAGE" >/dev/null
 [[ -s "$KIT_IMAGE" ]] || { echo '[language-kit] image was not created' >&2; exit 1; }
 
 # The removed Go/C++ polyglot workflows used to own the cross-language matrix

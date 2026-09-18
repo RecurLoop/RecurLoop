@@ -1,4 +1,4 @@
-// Build library.rl first, then import /tmp/recurloop-http-library.rli.
+// Build libraries/http/library.rl first, then import /tmp/recurloop-http-library.rli.
 
 let home = fn (request:Http:Request*, response:Http:Response*) -> void {
     response.header("X-Powered-By", "RecurLoop")

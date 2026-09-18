@@ -13,6 +13,8 @@ static void printHelp(const char *program) {
                "  -s, --string <code>   Read source code from command line\n"
                "  --reset               Reset language state to the empty host kernel\n"
                "  --import <path>       Import an engine image before source input\n"
+               "  --library <name>      Import a library image from the library search path\n"
+               "  --library-path <path> Add a library search directory for this process\n"
                "  -                     Read source code from standard input\n"
                "                        (interactive line editing on a terminal)\n";
 }

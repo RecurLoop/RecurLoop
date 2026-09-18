@@ -135,7 +135,7 @@ source.
 From the repository root:
 
 ```bash
-build/Debug/bin/recurloop \
+build/Release/bin/recurloop \
   --file examples/07-workflows/amber-language/library.rl
 ```
 
@@ -148,7 +148,7 @@ The image is written to:
 Run the showcase:
 
 ```bash
-build/Debug/bin/recurloop \
+build/Release/bin/recurloop \
   --import /tmp/recurloop-amber-library.rli \
   --file examples/07-workflows/amber-language/showcase.ab
 ```
@@ -157,7 +157,7 @@ Run the compatibility regression suite:
 
 ```bash
 examples/07-workflows/amber-language/run-tests.sh \
-  build/Debug/bin/recurloop
+  build/Release/bin/recurloop
 ```
 
 The workflow also participates in the normal repository examples integration:

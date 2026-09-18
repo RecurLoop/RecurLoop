@@ -84,6 +84,7 @@ namespace recurloop {
     constexpr std::string_view DiagnosticErrorAt{"context:diagnostic:error:at"};
     constexpr std::string_view ActionBindRoot{"context:actions:bind_root"};
     constexpr std::string_view IoWrite{"context:io:write"};
+    constexpr std::string_view EngineExport{"context:engine:export"};
     constexpr std::string_view MemoryAllocate{"context:memory:allocate"};
     constexpr std::string_view MemoryReallocate{"context:memory:reallocate"};
     constexpr std::string_view MemoryRelease{"context:memory:release"};
@@ -1237,6 +1238,14 @@ namespace recurloop {
       });
     }
 
+    extern "C" std::uint64_t contextEngineExport(context::Context *context, const std::uint8_t *path) noexcept {
+      return checked(context, std::uint64_t{0}, [&](context::Context &value) {
+        if (path == nullptr || path[0] == 0) THROW(, "context engine export received an empty path")
+        EngineImage::save(value, reinterpret_cast<const char *>(path));
+        return std::uint64_t{1};
+      });
+    }
+
     extern "C" std::uint64_t contextDiagnosticError(context::Context *context, const std::uint8_t *message) noexcept {
       if (context == nullptr || context->exec.pendingException) return 0;
       try {
@@ -1990,6 +1999,8 @@ namespace recurloop {
                         reinterpret_cast<std::uintptr_t>(&contextSourceBlockPosition));
     declareHostFunction(context, "SourceBlock:release", "SourceBlock:release", {sourceBlockPointer}, voidType,
                         reinterpret_cast<std::uintptr_t>(&contextSourceBlockRelease));
+    declareHostFunction(context, EngineExport, "context:engine:export", {contextPointer, bytePointer}, u64,
+                        reinterpret_cast<std::uintptr_t>(&contextEngineExport));
     declareHostFunction(context, DiagnosticError, "context:diagnostic:error", {contextPointer, bytePointer}, u64,
                         reinterpret_cast<std::uintptr_t>(&contextDiagnosticError));
     declareHostFunction(context, DiagnosticErrorAt, "context:diagnostic:error:at",

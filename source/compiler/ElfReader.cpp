@@ -312,6 +312,39 @@ namespace compiler {
     return module;
   }
 
+  std::optional<std::uint64_t> ElfReader::symbolValue(std::span<const std::uint8_t> bytes, std::string_view name,
+                                                       std::string_view origin) {
+    const Elf64_Ehdr header = object<Elf64_Ehdr>(bytes, 0, origin, "ELF header");
+    if (std::memcmp(header.e_ident, ELFMAG, SELFMAG) != 0) THROW(, "file '" << origin << "' is not ELF")
+    if (header.e_ident[EI_CLASS] != ELFCLASS64 || header.e_ident[EI_DATA] != ELFDATA2LSB ||
+        (header.e_type != ET_EXEC && header.e_type != ET_DYN) || header.e_machine != EM_X86_64 ||
+        header.e_shentsize != sizeof(Elf64_Shdr) || header.e_shnum == 0)
+      THROW(, "ELF image '" << origin << "' is not a supported x86-64 ELF64 executable")
+
+    std::vector<Elf64_Shdr> sections;
+    sections.reserve(header.e_shnum);
+    for (std::size_t index = 0; index < header.e_shnum; ++index)
+      sections.push_back(object<Elf64_Shdr>(bytes, header.e_shoff + index * header.e_shentsize, origin,
+                                            "section header"));
+    const auto symbolTable = std::find_if(sections.begin(), sections.end(),
+                                          [](const Elf64_Shdr &section) { return section.sh_type == SHT_SYMTAB; });
+    if (symbolTable == sections.end()) return std::nullopt;
+    if (symbolTable->sh_entsize != sizeof(Elf64_Sym) || symbolTable->sh_link >= sections.size() ||
+        symbolTable->sh_size % sizeof(Elf64_Sym) != 0)
+      THROW(, "ELF image '" << origin << "' has an invalid symbol table")
+    const Elf64_Shdr &stringTable = sections[symbolTable->sh_link];
+    const auto strings = range(bytes, stringTable.sh_offset, stringTable.sh_size, origin, "string table");
+
+    const std::size_t count = symbolTable->sh_size / sizeof(Elf64_Sym);
+    for (std::size_t index = 1; index < count; ++index) {
+      const Elf64_Sym symbol = object<Elf64_Sym>(bytes, symbolTable->sh_offset + index * sizeof(Elf64_Sym), origin,
+                                                 "symbol table entry");
+      if (symbol.st_shndx == SHN_UNDEF || symbol.st_name == 0) continue;
+      if (stringAt(strings, symbol.st_name, origin, "symbol name") == name) return symbol.st_value;
+    }
+    return std::nullopt;
+  }
+
   std::vector<std::string> ElfReader::definitions(std::span<const std::uint8_t> bytes, std::string_view origin) {
     const Elf64_Ehdr header = object<Elf64_Ehdr>(bytes, 0, origin, "ELF header");
     if (std::memcmp(header.e_ident, ELFMAG, SELFMAG) != 0) THROW(, "file '" << origin << "' is not ELF")

@@ -1,5 +1,5 @@
 // Run with:
-//   build/Debug/bin/recurloop --import /tmp/recurloop-phrase-language.rli \
+//   build/Release/bin/recurloop --import /tmp/recurloop-phrase-language.rli \
 //     --file examples/07-workflows/reusable-language-image/use.rl
 
 var answer = 0

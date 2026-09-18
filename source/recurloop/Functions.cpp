@@ -410,7 +410,15 @@ namespace recurloop {
     try {
 #ifdef RECURLOOP_ENABLE_LLVM
       const std::optional<NativeFileRequest> output = Assembler::nativeFileRequest(context);
-      if (output && output->kind != NativeFileKind::Raw) {
+      if (output && output->kind == NativeFileKind::Executable && output->debug) {
+        // RecurLoop's source debugger consumes the exact statement-to-machine-code
+        // map emitted by the built-in backend. LLVM currently emits optimized native
+        // objects without that RecurLoop metadata, so debug executables deliberately
+        // use the built-in code generator and are still linked by the configured LLVM
+        // clang/lld toolchain in Assembler::finalize().
+        module = function_internal::generateModule(context, signature, statements);
+        Assembler::finalize(context, invoked, module);
+      } else if (output && output->kind != NativeFileKind::Raw) {
         function_internal::LlvmProgram program = function_internal::generateLlvmProgram(
             context, signature, statements,
             output->kind == NativeFileKind::Executable ? std::string_view(output->entry) : std::string_view{},

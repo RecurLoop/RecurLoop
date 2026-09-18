@@ -1,9 +1,9 @@
 // Smoke test for /tmp/recurloop-amber-library.rli
 //
 // Build the image first:
-//   build/Debug/bin/recurloop --file recurloop-amber-library.rl
+//   build/Release/bin/recurloop --file recurloop-amber-library.rl
 // Then run:
-//   build/Debug/bin/recurloop --import /tmp/recurloop-amber-library.rli \
+//   build/Release/bin/recurloop --import /tmp/recurloop-amber-library.rli \
 //       --file recurloop-amber-smoke.rl
 
 let project = "RecurLoop"

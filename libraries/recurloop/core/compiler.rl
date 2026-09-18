@@ -175,6 +175,7 @@ compiler {
   extern "SourceBlock:path" symbol "SourceBlock:path" params [ "SourceBlock*" ] result "u8*" abi "sysv-amd64" imported
   extern "SourceBlock:position" symbol "SourceBlock:position" params [ "SourceBlock*" ] result "u64" abi "sysv-amd64" imported
   extern "SourceBlock:release" symbol "SourceBlock:release" params [ "SourceBlock*" ] result "void" abi "sysv-amd64" imported
+  extern "context:engine:export" symbol "context:engine:export" params [ "Context*" "u8*" ] result "u64" abi "sysv-amd64" imported
   extern "context:diagnostic:error" symbol "context:diagnostic:error" params [ "Context*" "u8*" ] result "u64" abi "sysv-amd64" imported
   extern "context:diagnostic:error:at" symbol "context:diagnostic:error:at" params [ "Context*" "u8*" "u64" "u64" "u8*" ] result "u64" abi "sysv-amd64" imported
   extern "context:actions:bind_root" symbol "context:actions:bind-root" params [ "Context*" "u64" ] result "u64" abi "sysv-amd64" imported

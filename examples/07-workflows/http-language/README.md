@@ -14,10 +14,11 @@ quote/comment/operator scanner.
 Build the reusable engine image:
 
 ```bash
-recurloop --file examples/07-workflows/language-kit/library.rl
+recurloop --file libraries/language-kit/library.rl -- /tmp/recurloop-language-kit.rli
 recurloop \
   --import /tmp/recurloop-language-kit.rli \
-  --file examples/07-workflows/http-language/library.rl
+  --file libraries/http/library.rl \
+  -- /tmp/recurloop-http-library.rli
 ```
 
 This writes:
@@ -51,11 +52,13 @@ then compile the server:
 
 ```bash
 build/Release/bin/recurloop \
-  --file examples/07-workflows/language-kit/library.rl
+  --file libraries/language-kit/library.rl \
+  -- /tmp/recurloop-language-kit.rli
 
 build/Release/bin/recurloop \
   --import /tmp/recurloop-language-kit.rli \
-  --file examples/07-workflows/http-language/library.rl
+  --file libraries/http/library.rl \
+  -- /tmp/recurloop-http-library.rli
 
 build/Release/bin/recurloop \
   --import /tmp/recurloop-http-library.rli \
@@ -93,7 +96,7 @@ let health = fn (request:Http:Request*, response:Http:Response*) -> void {
 }
 ```
 
-The route table is language syntax defined by `library.rl`. The value after
+The route table is language syntax defined by `libraries/http/library.rl`. The value after
 `->` can be a named handler or an inline function literal:
 
 ```rl

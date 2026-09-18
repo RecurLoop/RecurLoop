@@ -90,23 +90,15 @@ core.rli + core.rl -> core-2.rli
 core.rli == core-2.rli
 ```
 
-A one-byte difference between `core.rli` and `core-2.rli` fails the build. A
-separate build-time guard also fails if `seed.rli` is equal to, or not smaller
-than, `core.rli`; this prevents accidental regression to bootstrap parity. The
-source tree is still scanned to reject dump-like core declarations.
-
-Only `core.rli` is embedded in the final executable:
+A normal build embeds the first source-built `core.rli` and does not generate a
+second image. `make verify` performs the fixed-point pass; a one-byte
+difference between `core.rli` and `core-2.rli` fails that verification. The same
+target checks that `seed.rli` is distinct and smaller than `core.rli`, and scans
+the source tree to reject dump-like core declarations.
 
 ```text
-minimal C++ seed
-  -> seed.rli
-  -> core.rl
-  -> core.rli
-  -> core.rl
-  -> core-2.rli
-  -> byte-for-byte core/core fixed point
-  -> embed core.rli
-  -> final recurloop
+normal build:  minimal C++ seed -> seed.rli -> core.rl -> core.rli -> embed
+verification:  core.rli -> core.rl -> core-2.rli -> byte-for-byte compare
 ```
 
 The production `RecurloopLib` contains the kernel/runtime/Host ABI and the

@@ -4,3 +4,8 @@
 .debug/
 .tmp/
 program.rl
+/artifacts/
+/recurloop-work.zip
+__pycache__/
+*.pyc
+/.cache/

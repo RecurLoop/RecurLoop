@@ -1,0 +1,46 @@
+function(recurloop_core_fingerprint output)
+    if(ARGC GREATER 1)
+        set(root "${ARGV1}")
+    else()
+        set(root "${CMAKE_SOURCE_DIR}")
+    endif()
+    get_filename_component(root "${root}" ABSOLUTE)
+
+    file(GLOB_RECURSE inputs
+        RELATIVE "${root}"
+        LIST_DIRECTORIES FALSE
+        "${root}/include/*"
+        "${root}/source/*"
+        "${root}/libraries/recurloop/*")
+    list(SORT inputs)
+
+    set(material "recurloop-core-fingerprint-v2\n")
+    foreach(relative IN LISTS inputs)
+        set(path "${root}/${relative}")
+        file(SIZE "${path}" size)
+        file(SHA256 "${path}" digest)
+        string(APPEND material "${relative}\n${size}\n${digest}\n")
+    endforeach()
+    string(SHA256 fingerprint "${material}")
+    set(${output} "${fingerprint}" PARENT_SCOPE)
+endfunction()
+
+function(recurloop_core_image_matches image expected output)
+    if(NOT EXISTS "${image}")
+        set(${output} FALSE PARENT_SCOPE)
+        return()
+    endif()
+    get_filename_component(directory "${image}" DIRECTORY)
+    set(fingerprint_file "${directory}/core.fingerprint")
+    if(NOT EXISTS "${fingerprint_file}")
+        set(${output} FALSE PARENT_SCOPE)
+        return()
+    endif()
+    file(READ "${fingerprint_file}" actual)
+    string(STRIP "${actual}" actual)
+    if(actual STREQUAL expected)
+        set(${output} TRUE PARENT_SCOPE)
+    else()
+        set(${output} FALSE PARENT_SCOPE)
+    endif()
+endfunction()

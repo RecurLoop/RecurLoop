@@ -8,13 +8,13 @@ HTTP_IMAGE=/tmp/recurloop-http-library.rli
 HTTP_KIT_IMAGE=/tmp/recurloop-language-kit.rli
 
 http_prepare() {
-    local recurloop=${1:-build/Debug/bin/recurloop}
+    local recurloop=${1:-build/Release/bin/recurloop}
     [[ -x "$recurloop" ]] || { echo "Recurloop executable not found: $recurloop" >&2; return 2; }
     HTTP_RECURLOOP=$(readlink -f "$recurloop")
 
     if [[ ! -s "$HTTP_IMAGE" || "${HTTP_REBUILD_IMAGE:-0}" == 1 ]]; then
-        "$HTTP_RECURLOOP" --file "$HTTP_DIR/../language-kit/library.rl" >/dev/null
-        "$HTTP_RECURLOOP" --import "$HTTP_KIT_IMAGE" --file "$HTTP_DIR/library.rl" >/dev/null
+        "$HTTP_RECURLOOP" --file "$HTTP_REPO_ROOT/libraries/language-kit/library.rl" -- "$HTTP_KIT_IMAGE" >/dev/null
+        "$HTTP_RECURLOOP" --import "$HTTP_KIT_IMAGE" --file "$HTTP_REPO_ROOT/libraries/http/library.rl" -- "$HTTP_IMAGE" >/dev/null
     fi
     [[ -s "$HTTP_IMAGE" ]] || { echo "HTTP image was not created: $HTTP_IMAGE" >&2; return 1; }
 }

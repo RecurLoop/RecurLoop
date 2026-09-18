@@ -1922,4 +1922,5 @@ let http = phrase {
 
 
 languagekit_native_end
-engine export "/tmp/recurloop-http-library.rli"
+include "../build/export.rl"
+__recurloop_export_library

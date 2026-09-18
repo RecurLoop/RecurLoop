@@ -1,4 +1,7 @@
 #include "AssemblerInternal.hpp"
+
+#include <compiler/DebugInfo.hpp>
+#include <compiler/ElfReader.hpp>
 #ifdef RECURLOOP_ENABLE_LLVM
   #include "LlvmBackend.hpp"
 #endif
@@ -350,6 +353,20 @@ namespace recurloop {
       if (!debug) arguments.push_back("-Wl,--strip-all");
     }
 
+    void append_linked_debug_info(const std::string &path, const compiler::Module &module) {
+      std::ifstream input(path, std::ios::binary);
+      if (!input.is_open()) THROW(, "native executable: cannot reopen debug output '" << path << "'")
+      std::vector<std::uint8_t> executable{std::istreambuf_iterator<char>(input),
+                                           std::istreambuf_iterator<char>()};
+      if (input.bad()) THROW(, "native executable: cannot read debug output '" << path << "'")
+
+      compiler::DebugInfo::appendExecutable(
+          executable, module, [&](std::string_view name) {
+            return compiler::ElfReader::symbolValue(executable, name, path);
+          });
+      write_file(path, executable, "native executable debug metadata");
+    }
+
     void write_shared_executable(context::Context &context, compiler::Module module, std::string_view entryName,
                                  const std::string &path, bool debug) {
       const compiler::Symbol *entry = module.findSymbol(entryName);
@@ -595,6 +612,9 @@ namespace recurloop {
       }
 
       if (!linkedExternally) write_file(path, bytes, description);
+
+      if (outputData.kind == NativeOutputKind::Executable && outputData.debug)
+        append_linked_debug_info(path, module);
 
       if (outputData.kind == NativeOutputKind::Executable) {
         std::error_code error;

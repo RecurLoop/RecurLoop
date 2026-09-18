@@ -39,7 +39,7 @@ existing dictionary.
 At the CLI, imports must precede dependent source:
 
 ```bash
-build/Debug/bin/recurloop --import /tmp/state.rli --file program.rl
+build/Release/bin/recurloop --import /tmp/state.rli --file program.rl
 ```
 
 ## Language metadata in ELF files

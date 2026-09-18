@@ -935,9 +935,11 @@ let Inferred:starts_word_at = fn (state:Context*, offset:i64, text:u8*) -> i64 {
     return !Inferred:is_ident(ch)
 }
 
-let Inferred:accepts_form = fn (state:Context*) -> i64 {
+let Inferred:accepts_form = fn (state:Context*, allow_bare_commands:i64) -> i64 {
     var i = 0; while Inferred:is_space(LanguageKit:Source:peek(state, i)) { i += 1 }
+    var had_poly = 0
     if Inferred:starts_word_at(state, i, "poly") {
+        had_poly = 1
         i += 4; while Inferred:is_space(LanguageKit:Source:peek(state, i)) { i += 1 }
     }
     if Inferred:starts_word_at(state, i, "fn") {
@@ -946,7 +948,11 @@ let Inferred:accepts_form = fn (state:Context*) -> i64 {
         if LanguageKit:Source:peek(state, open) != 123 { return 0 }
         return Inferred:balanced_extent(state, open)
     }
-    if Inferred:starts_word_at(state, i, "print") || Inferred:starts_word_at(state, i, "specializations") {
+    // Bare `print` belongs to the shared RecurLoop/core grammar. Inferred only
+    // claims these command forms when they are explicitly marked with `poly`,
+    // or when the user explicitly selected Inferred with `infer` / `infer {}`.
+    if (had_poly || allow_bare_commands) &&
+       (Inferred:starts_word_at(state, i, "print") || Inferred:starts_word_at(state, i, "specializations")) {
         return LanguageKit:Source:line_extent(state)
     }
     return 0
@@ -983,7 +989,7 @@ let Inferred:top_form = phrase {
     type = <phrase-types:elaborate>
     permanent = true
     action = fn (state:Context*, called:Phrase*) -> void {
-        let extent = Inferred:accepts_form(state)
+        let extent = Inferred:accepts_form(state, 1)
         if extent <= 0 { context:diagnostic:error(state, "Inferred: unsupported top-level form"); LanguageKit:Source:skip_line(state); context:source:root(state); return }
         let source = Inferred:capture_extent(state, extent)
         if source { Inferred:execute_source(state, source); free(source) }
@@ -995,13 +1001,15 @@ let LanguageKit:Forms:Inferred = phrase {
     type = <phrase-types:elaborate>
     permanent = true
     action = fn (state:Context*, called:Phrase*) -> void {
-        let extent = Inferred:accepts_form(state)
+        let probe = LanguageKit:registry_entry(state, "Forms", "Inferred")
+        let explicitly_selected = LanguageKit:preferred_probe(state) == probe
+        let extent = Inferred:accepts_form(state, explicitly_selected)
         if extent > 0 {
             let root = context:phrase:find(state, "Inferred"); let form = context:phrase:find:exact(state, root, "top_form")
             var specificity = 6
             if LanguageKit:Source:starts_with(state, "poly ") { specificity = 10 }
-            else if LanguageKit:Source:starts_with(state, "specializations ") { specificity = 8 }
-            LanguageKit:offer_form(state, form, LanguageKit:registry_entry(state, "Forms", "Inferred"), extent, specificity)
+            else if explicitly_selected && LanguageKit:Source:starts_with(state, "specializations ") { specificity = 8 }
+            LanguageKit:offer_form(state, form, probe, extent, specificity)
         }
     }
 }
@@ -1044,4 +1052,5 @@ let LanguageKit:Selectors:"infer " = <Inferred:explicit_form>
 let LanguageKit:Overrides:Inferred = <LanguageKit:Forms:Inferred>
 
 languagekit_native_end
-engine export "/tmp/recurloop-inferred-library.rli"
+include "../build/export.rl"
+__recurloop_export_library

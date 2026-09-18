@@ -254,5 +254,5 @@ explicitly. `link object`, `link archive`, `link path`,
 
 ## Next steps
 
-Run `make showcase` for the complete executable tour and use
+Run `make examples` for the complete executable tour and use
 [../examples/README.md](../examples/README.md) for focused programs.

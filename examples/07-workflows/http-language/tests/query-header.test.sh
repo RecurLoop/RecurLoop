@@ -2,7 +2,7 @@
 set -euo pipefail
 DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 source "$DIR/http-test-lib.sh"
-http_prepare "${1:-build/Debug/bin/recurloop}"
+http_prepare "${1:-build/Release/bin/recurloop}"
 TMP=$(mktemp -d); trap 'rm -rf "$TMP"' EXIT
 http_start_once "$DIR/once.rl" "$TMP/server.out" "$TMP/server.err"
 pid=$HTTP_SERVER_PID

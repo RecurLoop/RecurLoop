@@ -2792,5 +2792,5 @@ set LanguageKit:install_fallback.serializable = false
 set languagekit_install_fallback.serializable = false
 set LanguageKit:install_source_hook.serializable = false
 set languagekit_install_source_hook.serializable = false
-
-engine export "/tmp/recurloop-language-kit.rli"
+include "../build/export.rl"
+__recurloop_export_library

@@ -81,7 +81,9 @@ the directive, it is:
 - combined with LLVM-generated objects for optimized native output.
 
 LLVM is a conditional implementation layer rather than part of the language
-model. CMake keeps it disabled by default, while `make release` enables it.
+model. CMake keeps it disabled by default. Normal optimized Make builds enable
+it with AUTO toolchain selection, while `make release`/`make verify` require the
+exact pinned release toolchain.
 Handwritten `asm` blocks retain their exact x86-64 instruction semantics; in
 an LLVM build they still use the LLVM object/link toolchain, but their
 instructions are not rewritten as optimizer IR.

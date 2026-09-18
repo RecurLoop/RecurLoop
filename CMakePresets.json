@@ -1,0 +1,122 @@
+{
+  "version": 6,
+  "cmakeMinimumRequired": {
+    "major": 3,
+    "minor": 25,
+    "patch": 0
+  },
+  "configurePresets": [
+    {
+      "name": "debug",
+      "displayName": "RecurLoop Debug (VS Code / LLDB)",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/Debug",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "CMAKE_C_COMPILER": "clang",
+        "CMAKE_CXX_COMPILER": "clang++",
+        "ENABLE_TESTS": "ON",
+        "ENABLE_TESTS_BENCHMARK": "OFF",
+        "RECURLOOP_ENABLE_LLVM": "OFF",
+        "RECURLOOP_USE_CORE_CACHE": "OFF",
+        "RECURLOOP_PREBUILT_CORE_IMAGE": ""
+      }
+    },
+    {
+      "name": "release",
+      "displayName": "RecurLoop Release + LLVM",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/Release",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "CMAKE_C_COMPILER": "clang",
+        "CMAKE_CXX_COMPILER": "clang++",
+        "ENABLE_TESTS": "ON",
+        "ENABLE_TESTS_BENCHMARK": "OFF",
+        "RECURLOOP_ENABLE_LLVM": "ON",
+        "RECURLOOP_LLVM_LINK_TARGETS": "native",
+        "RECURLOOP_USE_CORE_CACHE": "ON",
+        "RECURLOOP_TOOLCHAIN_MODE": "AUTO"
+      }
+    },
+    {
+      "name": "benchmark",
+      "displayName": "RecurLoop Benchmarks",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/Benchmark",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "CMAKE_C_COMPILER": "clang",
+        "CMAKE_CXX_COMPILER": "clang++",
+        "ENABLE_TESTS": "ON",
+        "ENABLE_TESTS_BENCHMARK": "ON",
+        "RECURLOOP_ENABLE_LLVM": "OFF",
+        "RECURLOOP_USE_CORE_CACHE": "OFF",
+        "RECURLOOP_PREBUILT_CORE_IMAGE": ""
+      }
+    },
+    {
+      "name": "ci",
+      "displayName": "RecurLoop CI Release + LLVM",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/CI",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "CMAKE_C_COMPILER": "clang",
+        "CMAKE_CXX_COMPILER": "clang++",
+        "ENABLE_TESTS": "ON",
+        "ENABLE_TESTS_BENCHMARK": "OFF",
+        "RECURLOOP_ENABLE_LLVM": "ON",
+        "RECURLOOP_LLVM_LINK_TARGETS": "native",
+        "RECURLOOP_USE_CORE_CACHE": "ON",
+        "RECURLOOP_TOOLCHAIN_MODE": "PINNED"
+      }
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "debug",
+      "configurePreset": "debug"
+    },
+    {
+      "name": "release",
+      "configurePreset": "release"
+    },
+    {
+      "name": "benchmark",
+      "configurePreset": "benchmark"
+    },
+    {
+      "name": "ci",
+      "configurePreset": "ci"
+    }
+  ],
+  "testPresets": [
+    {
+      "name": "release-unit",
+      "configurePreset": "release",
+      "output": { "outputOnFailure": true },
+      "filter": { "include": { "label": "unit" } },
+      "execution": { "jobs": 0 }
+    },
+    {
+      "name": "release-feature",
+      "configurePreset": "release",
+      "output": { "outputOnFailure": true },
+      "filter": { "include": { "label": "feature" } }
+    },
+    {
+      "name": "ci-unit",
+      "configurePreset": "ci",
+      "output": { "outputOnFailure": true },
+      "filter": { "include": { "label": "unit" } },
+      "execution": { "jobs": 0 }
+    },
+    {
+      "name": "ci-feature",
+      "configurePreset": "ci",
+      "output": { "outputOnFailure": true },
+      "filter": { "include": { "label": "feature" } }
+    }
+  ]
+}

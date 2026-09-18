@@ -110,7 +110,7 @@ namespace recurloop {
                                Size trampolinePatchOffset, Size phraseAddress);
     void write_file(const std::string &path, const std::vector<std::uint8_t> &bytes, std::string_view description);
     void write_shared_executable(context::Context &context, compiler::Module module, std::string_view entryName,
-                                 const std::string &path);
+                                 const std::string &path, bool debug);
     void add_executable_entry(compiler::Module &module, std::string_view definitionSymbol);
     bool write_native_output(context::Context &context, compiler::Module &module);
     void append_native_data_sections(context::Context &context, compiler::Module &module);

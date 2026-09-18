@@ -3,16 +3,17 @@
 Build the reusable language image:
 
 ```bash
-build/Debug/bin/recurloop --file examples/07-workflows/language-kit/library.rl
-build/Debug/bin/recurloop \
+build/Release/bin/recurloop --file libraries/language-kit/library.rl -- /tmp/recurloop-language-kit.rli
+build/Release/bin/recurloop \
   --import /tmp/recurloop-language-kit.rli \
-  --file examples/07-workflows/shell-language/library.rl
+  --file libraries/shell/library.rl \
+  -- /tmp/recurloop-shell-library.rli
 ```
 
 Import the image and start interactive input:
 
 ```text
-$ build/Debug/bin/recurloop --import /tmp/recurloop-shell-library.rli -
+$ build/Release/bin/recurloop --import /tmp/recurloop-shell-library.rli -
 $ echo "hello directly"
 hello directly
 $ echo alpha | tr a-z A-Z
@@ -51,7 +52,7 @@ shell-specific interactive mode.
 Run a top-level automation script without wrapping it in a function:
 
 ```bash
-build/Debug/bin/recurloop \
+build/Release/bin/recurloop \
   --import /tmp/recurloop-shell-library.rli \
   --file examples/07-workflows/shell-language/top_level.rl
 ```

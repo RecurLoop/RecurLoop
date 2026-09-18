@@ -26,9 +26,10 @@ To inspect the server manually instead, build the image and start the `.rl` file
 
 ```bash
 BIN=build/Release/bin/recurloop
-$BIN --file examples/07-workflows/language-kit/library.rl
+$BIN --file libraries/language-kit/library.rl -- /tmp/recurloop-language-kit.rli
 $BIN --import /tmp/recurloop-language-kit.rli \
-  --file examples/07-workflows/http-language/library.rl
+  --file libraries/http/library.rl \
+  -- /tmp/recurloop-http-library.rli
 $BIN --import /tmp/recurloop-http-library.rli \
   --file examples/07-workflows/http-language/tests/echo.rl
 ```

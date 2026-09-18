@@ -26,7 +26,7 @@ architecture question:
 From the repository root:
 
 ```bash
-build/Debug/bin/recurloop \
+build/Release/bin/recurloop \
   --file examples/07-workflows/prolog-language/library.rl
 ```
 
@@ -39,7 +39,7 @@ The library exports:
 Run the showcase in a fresh process:
 
 ```bash
-build/Debug/bin/recurloop \
+build/Release/bin/recurloop \
   --import /tmp/recurloop-prolog-library.rli \
   --file examples/07-workflows/prolog-language/showcase.pl
 ```
@@ -274,7 +274,7 @@ Run directly:
 
 ```bash
 examples/07-workflows/prolog-language/run-tests.sh \
-  build/Debug/bin/recurloop
+  build/Release/bin/recurloop
 ```
 
 The suite currently checks:

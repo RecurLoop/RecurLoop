@@ -59,12 +59,9 @@
 //   glob expansion, && / ||, heredocs, job control, signals, and arbitrary
 //   Bash grammar. PS1 command substitution is handled by the interactive core.
 //
-// Build reusable language image:
-//   Recurloop --file examples/07-workflows/language-kit/library.rl
-//   Recurloop --import /tmp/recurloop-language-kit.rli --file examples/07-workflows/shell-language/library.rl
-//
-// The build writes:
-//   /tmp/recurloop-shell-library.rli
+// Build reusable language images:
+//   Recurloop --file libraries/language-kit/library.rl -- language-kit.rli
+//   Recurloop --library-path . --library language-kit --file libraries/shell/library.rl -- shell.rli
 // ============================================================================
 
 languagekit_native_begin
@@ -2081,4 +2078,5 @@ set setenv.serializable = false
 set unsetenv.serializable = false
 set install_shell_assignments.serializable = false
 languagekit_native_end
-engine export "/tmp/recurloop-shell-library.rli"
+include "../build/export.rl"
+__recurloop_export_library

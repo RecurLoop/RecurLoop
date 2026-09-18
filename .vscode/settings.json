@@ -1,19 +1,11 @@
 {
     "editor.formatOnSave": false,
-    "cmake.buildDirectory": "${workspaceFolder}/build/${buildType}",
-    "cmake.copyCompileCommands": "${workspaceFolder}/build/compile_commands.json",
-    "cmake.generator": "Ninja",
-    "cmake.configureSettings": {
-        "CMAKE_C_COMPILER": "clang",
-        "CMAKE_CXX_COMPILER": "clang++",
-        "CMAKE_EXE_LINKER_FLAGS": "-fuse-ld=lld",
-        "CMAKE_SHARED_LINKER_FLAGS": "-fuse-ld=lld",
-        "CMAKE_MODULE_LINKER_FLAGS": "-fuse-ld=lld",
-        "ENABLE_TESTS": true,
-        "FETCHCONTENT_BASE_DIR": "${workspaceFolder}/build/_deps"
-    },
+    "cmake.useCMakePresets": "always",
+    "cmake.configureOnOpen": false,
+    "cmake.configurePreset": "debug",
+    "cmake.buildPreset": "debug",
     "clangd.arguments": [
-        "--compile-commands-dir=build",
+        "--compile-commands-dir=build/Debug",
         "--clang-tidy",
         "--header-insertion=never"
     ],

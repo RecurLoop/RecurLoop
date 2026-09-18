@@ -1,6 +1,6 @@
 // RecurLoop executable tour and smoke test.
 //
-// Run with `make showcase`. The numbered markers cover values, control flow,
+// Run with `make run`. The numbered markers cover values, control flow,
 // phrases, records, native functions, x86-64 assembly, ABI declarations, ELF
 // linking, and exact byte output. Assertions stop at the first failed check.
 // Generated artifacts are written to /tmp/recurloop-showcase*.

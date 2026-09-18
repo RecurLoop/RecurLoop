@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-RECURLOOP=${1:-build/Debug/bin/recurloop}
+RECURLOOP=${1:-build/Release/bin/recurloop}
 DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 IMAGE=/tmp/recurloop-prolog-library.rli
 TMP=$(mktemp -d)

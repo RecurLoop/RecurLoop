@@ -16,6 +16,9 @@
 
   #include <cerrno>
   #include <cstring>
+  #include <cstdlib>
+  #include <filesystem>
+  #include <sstream>
   #include <string_view>
 
 namespace recurloop {
@@ -397,6 +400,72 @@ namespace recurloop {
     context::Reference::in(context, root);
   }
 
+  namespace {
+    void appendLibraryPathList(std::vector<std::filesystem::path> &paths, const char *value) {
+      if (value == nullptr || *value == '\0') return;
+#if defined(_WIN32)
+      constexpr char separator = ';';
+#else
+      constexpr char separator = ':';
+#endif
+      std::string_view list(value);
+      std::size_t begin = 0;
+      while (begin <= list.size()) {
+        const std::size_t end = list.find(separator, begin);
+        const std::string_view item = list.substr(begin, end == std::string_view::npos ? list.size() - begin : end - begin);
+        if (!item.empty()) paths.emplace_back(item);
+        if (end == std::string_view::npos) break;
+        begin = end + 1;
+      }
+    }
+
+    std::filesystem::path resolveLibraryImage(context::Context &context, std::string_view requested,
+                                               const std::vector<std::filesystem::path> &explicitPaths) {
+      namespace fs = std::filesystem;
+      fs::path name(requested);
+      if (name.has_parent_path() || name.is_absolute()) {
+        if (fs::exists(name)) return fs::absolute(name).lexically_normal();
+        THROW(, "library image not found: " << name.string())
+      }
+      if (name.extension() != ".rli") name += ".rli";
+
+      std::vector<fs::path> paths = explicitPaths;
+      appendLibraryPathList(paths, std::getenv("RECURLOOP_LIBRARY_PATH"));
+
+      if (context.exec.args.ptr != nullptr && context.exec.args.count > 0 && context.exec.args.ptr[0] != nullptr) {
+        fs::path executable(context.exec.args.ptr[0]);
+        if (executable.has_parent_path()) {
+          std::error_code error;
+          executable = fs::absolute(executable, error).lexically_normal();
+          if (!error) {
+            const fs::path prefixOrBuild = executable.parent_path().parent_path();
+            paths.push_back(prefixOrBuild / "libraries");
+            paths.push_back(prefixOrBuild / "share" / "recurloop" / "libraries");
+          }
+        }
+      }
+
+#ifdef RECURLOOP_DEFAULT_LIBRARY_DIR
+      paths.emplace_back(RECURLOOP_DEFAULT_LIBRARY_DIR);
+#endif
+      paths.push_back(fs::current_path() / "libraries");
+
+      for (const fs::path &directory : paths) {
+        std::error_code error;
+        const fs::path candidate = fs::absolute(directory / name, error).lexically_normal();
+        if (!error && fs::exists(candidate)) return candidate;
+      }
+
+      std::ostringstream message;
+      message << "library image '" << requested << "' was not found";
+      if (!paths.empty()) {
+        message << " in";
+        for (const auto &path : paths) message << "\n  " << path.string();
+      }
+      THROW(, message.str())
+    }
+  } // namespace
+
   void Recurloop::initializeBase(int argc, char **argv) {
     initializeConfig(argc, argv);
     initializeLexicon();
@@ -425,6 +494,7 @@ namespace recurloop {
   }
 
   void Recurloop::processStartupOperations() {
+    std::vector<std::filesystem::path> libraryPaths;
     while (context.exec.args.index < context.exec.args.count) {
       const std::string_view option(context.exec.args.ptr[context.exec.args.index]);
       if (option == "--reset") {
@@ -435,6 +505,17 @@ namespace recurloop {
       if (option == "--import") {
         if (++context.exec.args.index >= context.exec.args.count) THROW(, "--import requires a path")
         EngineImage::load(context, context.exec.args.ptr[context.exec.args.index++]);
+        continue;
+      }
+      if (option == "--library-path") {
+        if (++context.exec.args.index >= context.exec.args.count) THROW(, "--library-path requires a path")
+        libraryPaths.emplace_back(context.exec.args.ptr[context.exec.args.index++]);
+        continue;
+      }
+      if (option == "--library") {
+        if (++context.exec.args.index >= context.exec.args.count) THROW(, "--library requires a name or path")
+        const std::string_view name(context.exec.args.ptr[context.exec.args.index++]);
+        EngineImage::load(context, resolveLibraryImage(context, name, libraryPaths).string());
         continue;
       }
       if (option == "--bootstrap" || option == "--language-image" || option == "--engine-image")

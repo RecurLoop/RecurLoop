@@ -1,8 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-RECURLOOP=${1:-build/Debug/bin/recurloop}
+RECURLOOP=${1:-build/Release/bin/recurloop}
 DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+ROOT=$(cd -- "$DIR/../../.." && pwd)
+KIT_LIBRARY="$ROOT/libraries/language-kit/library.rl"
+INFERRED_LIBRARY="$ROOT/libraries/inferred/library.rl"
 KIT_IMAGE=/tmp/recurloop-language-kit.rli
 IMAGE=/tmp/recurloop-inferred-library.rli
 TMP=$(mktemp -d)
@@ -12,8 +15,8 @@ trap 'rm -rf "$TMP"' EXIT
 RECURLOOP=$(readlink -f "$RECURLOOP")
 
 rm -f "$KIT_IMAGE" "$IMAGE"
-"$RECURLOOP" --file "$DIR/../language-kit/library.rl" >/dev/null
-"$RECURLOOP" --import "$KIT_IMAGE" --file "$DIR/library.rl" >/dev/null
+"$RECURLOOP" --file "$KIT_LIBRARY" -- "$KIT_IMAGE" >/dev/null
+"$RECURLOOP" --import "$KIT_IMAGE" --file "$INFERRED_LIBRARY" -- "$IMAGE" >/dev/null
 [[ -s "$IMAGE" ]] || { echo '[inferred] image was not created' >&2; exit 1; }
 
 run_ok() {

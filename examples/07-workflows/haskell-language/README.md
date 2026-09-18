@@ -28,7 +28,7 @@ architecture question:
 From the repository root:
 
 ```bash
-build/Debug/bin/recurloop \
+build/Release/bin/recurloop \
   --file examples/07-workflows/haskell-language/library.rl
 ```
 
@@ -41,7 +41,7 @@ The library exports:
 Run the showcase in a fresh process:
 
 ```bash
-build/Debug/bin/recurloop \
+build/Release/bin/recurloop \
   --import /tmp/recurloop-haskell-library.rli \
   --file examples/07-workflows/haskell-language/showcase.hs
 ```
@@ -307,7 +307,7 @@ Run directly:
 
 ```bash
 examples/07-workflows/haskell-language/run-tests.sh \
-  build/Debug/bin/recurloop
+  build/Release/bin/recurloop
 ```
 
 The suite checks:

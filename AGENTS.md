@@ -14,49 +14,59 @@ Start with `README.md`, `docs/architecture.md`, and `docs/language.md`.
 
 ## Build and test
 
-RecurLoop currently targets Linux. It requires CMake 3.28+, Ninja, Clang with
-lld, and a C++23 standard library.
+RecurLoop's current runtime/native output targets Linux, while the build
+orchestration uses CMake presets so it can be reused on other hosts as runtime
+backends are ported. Development requires CMake 3.25+, Ninja, Clang, and a C++23
+standard library. Python is not part of the build/check/package toolchain.
+
+Normal command-line work uses optimized hosts:
 
 ```bash
 make build
-make examples
-make test
+make check
 ```
 
-The default Debug build is written below `build/Debug/`:
+`make build` and `make check` use the same optimized `build/Release` tree with
+LLVM enabled. Their toolchain policy is `AUTO`: prefer the already prepared
+pinned LLVM/zlib/zstd toolchain, otherwise use a compatible system LLVM and
+system compression libraries. Incremental check selection is expressed in the
+CMake/Ninja graph itself: unit stamps depend on unit executables and feature /
+example stamps use explicit CMake `DEPENDS` inputs. Do not add filename, git-diff,
+or test-timing heuristics to `make check`. Do not replace it with a Debug build:
+running `.rl` workloads on an `-O0` host is intentionally avoided.
 
-- executable: `build/Debug/bin/recurloop`
-- libraries: `build/Debug/lib/`
-- unit tests and benchmarks: `build/Debug/tests/`
-- CMake state and `compile_commands.json`: `build/Debug/`
-
-Downloaded dependency sources are shared by all configurations in
-`build/_deps/`. Generated dependency objects remain configuration-local.
-
-Use a separate directory for another configuration:
+C++ debugging is separate from Make. VS Code/CMake Tools uses the `debug` preset
+(`build/Debug`, LLVM off) together with LLDB. The portable equivalent is:
 
 ```bash
-make release
+cmake --preset debug
+cmake --build --preset debug --target Recurloop
 ```
 
-`make release` enables the LLVM backend and writes to `build/Release/`. CMake
-itself defaults LLVM to `OFF` for every configuration; pass
-`-DRECURLOOP_ENABLE_LLVM=ON` explicitly when configuring without Make.
-Other build types use the same `build/<CMAKE_BUILD_TYPE>/` layout.
-
-The first test-enabled configure may download GoogleTest and Google Benchmark.
-For an offline host-only build, use `make build ENABLE_TESTS=OFF`.
-
-Useful targets:
+Production verification uses Release + LLVM. `make release` and `make verify`
+force the exact pinned LLVM 22.1.6, zlib 1.3.1, and zstd 1.5.7 toolchain:
 
 | Change | Verification |
 |---|---|
-| `source/radix` | `make unit` |
-| `source/lexicon`, `source/context`, `source/compiler` | `make showcase` and `make test` |
-| `source/recurloop` | `make showcase`, `make examples`, and `make test` |
-| CLI behavior | `make feature` |
-| examples or documentation | `make examples` |
+| ordinary local change | `make check` |
+| unit/feature behavior across the production backend | `make test` |
+| libraries/examples/core/bootstrap or broad integration | `make verify` |
+| standard-library images only | `make libraries` |
 
+`make libraries` writes `language-kit.rli`, `shell.rli`, `inferred.rli`, and
+`http.rli` below `build/Release/libraries/`. `make install` installs the Release
+binary and those compiled images using normal CMake/GNUInstallDirs semantics;
+`PREFIX=/usr DESTDIR=/tmp/pkg` is the packaging/staging form.
+
+Dependency sources are cached once below `.cache/deps/` and shared by all
+presets. Pinned LLVM is an upstream prebuilt archive; pinned zlib/zstd are built
+once in a separate helper build below `.cache/deps/` and imported into the main
+project, so they do not appear in RecurLoop's normal Ninja graph. AUTO builds
+prefer that cache and fall back to compatible system packages.
+GoogleTest/Benchmark keep configuration-local build artifacts while reusing the
+same downloaded sources. Google Benchmark is opt-in through `make benchmark`.
+`make bundle` creates a compact review zip without `.git`, build trees, caches,
+or debug output and includes a source-matched cached core image when available.
 ## Source layout
 
 The static-library dependency order is:
@@ -67,7 +77,8 @@ The static-library dependency order is:
 - `source/`, `include/` — C++ host implementation and public headers.
 - `cmake/` — tracked CMake modules; generated build files never go here.
 - `tests/` — unit, feature, benchmark, and LLVM-backend tests.
-- `examples/` — numbered learning path and larger applications.
+- `libraries/` — reusable RecurLoop source libraries and the semantic core.
+- `examples/` — numbered learning path, showcases, and workflow fixtures.
 - `docs/` — maintained design and language documentation.
 
 ## Conventions

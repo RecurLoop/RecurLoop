@@ -386,8 +386,11 @@ simulator, and a ray tracer.
 
 ## LLVM backend
 
-LLVM is disabled by default in direct CMake configurations. The standard
-optimized build enables it:
+LLVM is disabled by default in direct CMake configurations. Normal optimized
+Make builds enable it. Development commands use `RECURLOOP_TOOLCHAIN_MODE=AUTO`:
+an already prepared pinned LLVM 22.1.6 is preferred, otherwise a compatible
+system LLVM (currently >=19 and <23) is used. The release command always uses
+the exact pinned toolchain:
 
 ```bash
 make release
@@ -433,8 +436,8 @@ This allows a language extension to be built once and loaded before application
 source:
 
 ```bash
-build/Debug/bin/recurloop \
-  --import /tmp/recurloop-shell-library.rli \
+build/Release/bin/recurloop \
+  --library shell \
   --file application.rl
 ```
 
@@ -480,52 +483,164 @@ See [`examples/07-workflows/source-debugger/`](examples/07-workflows/source-debu
 
 ### Requirements
 
-- Linux;
-- x86-64 for the built-in native backend;
-- CMake 3.28 or newer;
+- CMake 3.25 or newer;
 - Ninja;
-- Clang 18 or newer with `lld`.
+- Clang 18 or newer;
+- Linux/x86-64 for the current built-in native backend and executable debugger.
 
-Build and run:
+Python is not required by the configure/build/check/bundle toolchain. `make` and
+the shell workflow runners are convenience layers on Linux; CMake presets are
+the portable build interface.
+
+### Normal build
+
+The normal command builds the optimized LLVM-enabled runtime:
 
 ```bash
-make build
-make run
-make example EXAMPLE=01-getting-started/hello-world
-make test
+make
 ```
 
-The default executable is:
+The executable is:
 
 ```text
-build/Debug/bin/recurloop
+build/Release/bin/recurloop
 ```
 
-For an optimized LLVM-enabled build:
+`make build` uses automatic toolchain selection for fast local work. `make release`
+uses the same `build/Release` tree but requires the exact pinned LLVM 22.1.6,
+zlib 1.3.1, and zstd 1.5.7 toolchain. If that pinned toolchain is already
+prepared, it is reused; otherwise it is prepared once below `.cache/deps/`.
+
+### Fast checks
 
 ```bash
-make release
+make check
 ```
 
-Build configurations are isolated below `build/`, for example:
+`make check` operates on the same **Release + LLVM** tree as `make build`:
+`build/Release`. Incremental selection is part of the normal CMake/Ninja graph:
+unit checks depend on their test executables, while feature tests and examples
+declare ordinary `DEPENDS` inputs. Each successful check writes a build-tree
+stamp, so Ninja reruns exactly the checks whose declared inputs became newer.
+There is no git-diff parsing, filename matching, timing threshold, or CTest cost
+heuristic. The check target also covers affected examples and workflows.
+
+For the complete production configuration use:
+
+```bash
+make verify
+```
+
+`make verify` uses **Release + LLVM with the pinned release toolchain**, builds
+all tests and standard libraries, runs the complete unit/feature suites,
+examples, and the core fixed-point verification.
+
+### Debugging the C++ host
+
+Debug is intentionally not a Makefile workflow. VS Code/CMake Tools and LLDB
+use the dedicated preset:
+
+```bash
+cmake --preset debug
+cmake --build --preset debug --target Recurloop
+```
+
+That produces `build/Debug/bin/recurloop`. Keeping Debug out of normal `make`
+commands prevents `.rl` compilation and tests from running on an unoptimized
+host unless C++ debugging is actually needed.
+
+### Standard libraries
+
+Build distributable engine images with the production runtime:
+
+```bash
+make libraries
+```
+
+The outputs are:
 
 ```text
-build/Debug/
-build/Release/
-build/RelWithDebInfo/
+build/Release/libraries/language-kit.rli
+build/Release/libraries/shell.rli
+build/Release/libraries/inferred.rli
+build/Release/libraries/http.rli
 ```
 
-Downloaded dependency sources are shared in `build/_deps/`.
-
-The first test-enabled configure may download GoogleTest and Google Benchmark.
-
-To build only the host executable:
+Library source receives the output path as the single process argument after
+`--`; it does not write to a hard-coded `/tmp` path:
 
 ```bash
-make build ENABLE_TESTS=OFF
+build/Release/bin/recurloop \
+  --file libraries/language-kit/library.rl \
+  -- build/Release/libraries/language-kit.rli
+
+build/Release/bin/recurloop \
+  --library-path build/Release/libraries \
+  --library language-kit \
+  --file libraries/http/library.rl \
+  -- build/Release/libraries/http.rli
 ```
 
-Run `make` to list the common development commands.
+The runtime can resolve built or installed libraries by name:
+
+```bash
+build/Release/bin/recurloop --library shell --library inferred -
+```
+
+Search directories are considered in this order: paths supplied with
+`--library-path`, `RECURLOOP_LIBRARY_PATH`, the library directory next to the
+build tree, the configured installation directory, and `./libraries`.
+
+### Installation and Linux packaging
+
+```bash
+sudo make install
+```
+
+The default CMake prefix installs:
+
+```text
+/usr/local/bin/recurloop
+/usr/local/share/recurloop/libraries/*.rli
+/usr/local/share/doc/RecurLoop/{LICENSE,README.md,TRADEMARKS.md}
+```
+
+A user-local install is:
+
+```bash
+make install PREFIX="$HOME/.local"
+```
+
+For a distro/package staging tree use standard `PREFIX` + `DESTDIR` semantics:
+
+```bash
+make install PREFIX=/usr DESTDIR=/tmp/recurloop-package
+```
+
+which creates paths such as:
+
+```text
+/tmp/recurloop-package/usr/bin/recurloop
+/tmp/recurloop-package/usr/share/recurloop/libraries/*.rli
+```
+
+The library destination is configurable at CMake configure time with
+`RECURLOOP_INSTALL_LIBRARY_DIR`; its default is
+`${CMAKE_INSTALL_DATADIR}/recurloop/libraries`.
+
+Downloaded dependency sources are cached once below `.cache/deps/` and shared
+by every preset, so Debug/Release/CI do not download separate copies. Pinned
+zlib/zstd are built once by a separate helper below `.cache/deps/` (final archives in `.cache/deps/pinned/lib/`) and then
+imported as already-built libraries; they are not part of RecurLoop's main Ninja
+graph. The official pinned LLVM archive is downloaded/extracted once and reused.
+`AUTO` prefers these prepared pinned components and otherwise uses compatible
+system packages. GoogleTest and Google Benchmark reuse the same downloaded
+sources but keep their compiled objects inside the active build tree because
+Debug and Release compile flags differ. Google Benchmark remains opt-in with
+`make benchmark`.
+
+`make bundle` creates a compact review/source archive and includes a
+source-matched cached `core.rli` when one is available.
 
 ## Examples
 
@@ -598,10 +713,9 @@ to return status `0`, or `exit <integer-expression>` to return a status from
 ## Tests
 
 ```bash
-make unit
-make feature
-make examples
-make test
+make check    # incremental affected checks, AUTO LLVM toolchain
+make test     # complete unit + feature suite, AUTO LLVM toolchain
+make verify   # pinned release toolchain + tests + libraries + examples + core fixed point
 ```
 
 The test suite covers the radix tree, compiler, assembler, expressions, engine
@@ -688,29 +802,30 @@ isolated, non-installed C++ **seed** that contains only enough grammar to enter
 `libraries/recurloop/core.rl` replaces that seed lexicon and builds the real core
 from symbolic source declarations.
 
+A normal development build stops after the first source-built core and embeds it:
+
 ```text
 empty kernel
   -> private C++ seed
   -> seed.rli
   -> core.rl
   -> core.rli
-  -> core.rl
-  -> core-2.rli
-  -> byte-for-byte core/core fixed point
   -> embed core.rli
   -> final recurloop
 ```
 
-The build requires `core.rli == core-2.rli` byte-for-byte. It also fails if
-`seed.rli` is equal to, or not smaller than, the final core. Only `core.rli` is
-embedded in the final executable.
+The expensive second self-hosting pass is explicit verification rather than a
+dependency of every executable build. `make verify` builds `core-2.rli`,
+requires `core.rli == core-2.rli` byte-for-byte, and also checks that
+`seed.rli` remains distinct and smaller than the final core. The fixed-point
+target can also be invoked directly with `cmake --build --preset release --target RecurloopCoreVerify`.
 
 The public rebuild path uses the final executable itself:
 
 ```bash
-make core
+libraries/recurloop/build-core.sh build/Release/bin/recurloop build/Release/core.rli
 
-# Equivalent explicit forms:
+# Equivalent source-driven forms:
 recurloop --file libraries/recurloop/core.rl
 recurloop --reset --import core.rli --file libraries/recurloop/core.rl
 ```

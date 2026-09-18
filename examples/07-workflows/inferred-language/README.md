@@ -8,7 +8,7 @@ call site.
 
 The implementation is split deliberately:
 
-- `library.rl` owns the inferred-language parser, type-directed specialization,
+- `libraries/inferred/library.rl` owns the inferred-language parser, type-directed specialization,
   generated RecurLoop source and dispatch cache;
 - the generic host primitive `context:function:compile` accepts a typed
   RecurLoop function signature/body, compiles it with RecurLoop's ordinary
@@ -57,7 +57,9 @@ infer {
 ```
 
 `infer { ... }` is only LanguageKit's dynamically scoped ambiguity preference;
-it does not create another lexicon or language mode.
+it does not create another lexicon or language mode. Bare `print` remains the
+ordinary RecurLoop/core phrase; Inferred claims printing automatically only as
+`poly print ...` (or after an explicit `infer` selector).
 
 ## Native lazy specialization
 
@@ -157,7 +159,7 @@ After applying the overlay, rebuild the host because
 
 ```bash
 make build BUILD_TYPE=Debug
-examples/07-workflows/inferred-language/run-tests.sh build/Debug/bin/recurloop
+examples/07-workflows/inferred-language/run-tests.sh build/Release/bin/recurloop
 ```
 
 Or run the repository integration path:

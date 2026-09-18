@@ -4,9 +4,10 @@ Build LanguageKit and the Shell image once:
 
 ```bash
 BIN=build/Release/bin/recurloop
-$BIN --file examples/07-workflows/language-kit/library.rl
+$BIN --file libraries/language-kit/library.rl -- /tmp/recurloop-language-kit.rli
 $BIN --import /tmp/recurloop-language-kit.rli \
-  --file examples/07-workflows/shell-language/library.rl
+  --file libraries/shell/library.rl \
+  -- /tmp/recurloop-shell-library.rli
 ```
 
 Run a normal source test directly:

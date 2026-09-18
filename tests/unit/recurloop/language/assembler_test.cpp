@@ -1,5 +1,6 @@
 #include <gtest/gtest.h>
 #include <compiler/Assembler.hpp>
+#include <compiler/DebugInfo.hpp>
 #include <compiler/ElfWriter.hpp>
 #include <recurloop/Assembler.hpp>
 #include <recurloop/AssemblerInstructions.hpp>
@@ -2169,6 +2170,7 @@ TEST_F(AssemblerTesting, DebugExecutableKeepsSymbolsWhileRetainingLinkerHardenin
   EXPECT_TRUE(bindsNow(executable));
   EXPECT_TRUE(hasSectionType(executable, SHT_SYMTAB));
   EXPECT_TRUE(hasSymbol(executable, "debug_entry"));
+  EXPECT_FALSE(compiler::DebugInfo::readExecutable(executable).empty());
   std::filesystem::remove(path);
 }
 
@@ -2337,7 +2339,7 @@ let broken = {
 #ifdef RECURLOOP_ENABLE_LLVM
   EXPECT_NE(error().find("LLVM executable: linker exited with status"), std::string::npos);
 #else
-  EXPECT_NE(error().find("ELF executable cannot resolve imported symbol"), std::string::npos);
+  EXPECT_NE(error().find("dynamic linker: C compiler driver exited with status"), std::string::npos);
 #endif
   EXPECT_FALSE(std::filesystem::exists(path));
   EXPECT_EQ(context.runtime.size(), 0u);

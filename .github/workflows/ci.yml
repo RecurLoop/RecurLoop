@@ -32,9 +32,8 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            clang-18 \
+            clang \
             lld \
-            llvm-18-dev \
             ninja-build
 
       - name: Verify compatibility test runners are executable
@@ -44,23 +43,29 @@ jobs:
           test -x examples/07-workflows/haskell-language/run-tests.sh
           test -x examples/07-workflows/erlang-language/run-tests.sh
 
-      - name: Build Release with LLVM
-        run: |
-          make release \
-            CLANG=clang-18 \
-            CLANGXX=clang++-18
+      - name: Configure CI Release with LLVM
+        run: cmake --preset ci
 
-      - name: Run test suite
-        run: make test BUILD_TYPE=Release
+      - name: Build Release with LLVM, unit tests and libraries
+        run: cmake --build --preset ci --target Recurloop RecurloopUnitTests RecurloopLibraries
+
+      - name: Run unit tests
+        run: ctest --preset ci-unit
+
+      - name: Run feature tests
+        run: ctest --preset ci-feature
 
       - name: Run all examples
-        run: make examples BUILD_TYPE=Release
+        run: tools/examples.sh all "$PWD/build/CI/bin/recurloop"
+
+      - name: Verify bootstrap/core fixed point
+        run: cmake --build --preset ci --target RecurloopCoreVerify
 
       - name: Verify source-core self reproduction
-        run: make core-test BUILD_TYPE=Release
+        run: libraries/recurloop/test-core.sh "$PWD/build/CI/bin/recurloop"
 
       - name: Show built version
-        run: build/Release/bin/recurloop --version
+        run: build/CI/bin/recurloop --version
 
       # A GitHub Release is created only from a semantic version tag.
       # The tag must match the version compiled into Recurloop.
@@ -79,7 +84,7 @@ jobs:
 
           VERSION="${TAG#v}"
           BINARY_VERSION="$(
-            build/Release/bin/recurloop --version |
+            build/CI/bin/recurloop --version |
             sed -n 's/^Recurloop v//p'
           )"
 
@@ -97,14 +102,10 @@ jobs:
           fi
 
           PACKAGE="recurloop-${VERSION}-linux-x86_64"
-          mkdir -p "dist/$PACKAGE/bin"
+          rm -rf "dist/$PACKAGE"
+          mkdir -p dist
 
-          cp build/Release/bin/recurloop "dist/$PACKAGE/bin/"
-          cp LICENSE README.md TRADEMARKS.md "dist/$PACKAGE/"
-
-          if [[ -f README.pl.md ]]; then
-            cp README.pl.md "dist/$PACKAGE/"
-          fi
+          cmake --install build/CI --prefix "$PWD/dist/$PACKAGE"
 
           tar -C dist -czf "dist/${PACKAGE}.tar.gz" "$PACKAGE"
           sha256sum "dist/${PACKAGE}.tar.gz" > "dist/${PACKAGE}.tar.gz.sha256"

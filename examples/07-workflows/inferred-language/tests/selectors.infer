@@ -12,3 +12,6 @@ infer fn selected_mul(a, b) {
 poly print selected_mul(6, 7)
 poly specializations block_add
 poly specializations selected_mul
+
+var core_print = "core print"
+print core_print

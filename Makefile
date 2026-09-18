@@ -1,406 +1,131 @@
-SHELL := /bin/bash
+.DEFAULT_GOAL := build
 
-.DEFAULT_GOAL := help
-
-BUILD_TYPE ?= Debug
-BUILD_ROOT ?= build
-CONFIG_DIR ?= $(BUILD_ROOT)/$(BUILD_TYPE)
-DEPS_DIR ?= $(BUILD_ROOT)/_deps
-ENABLE_TESTS ?= ON
-ENABLE_LLVM ?= $(if $(filter Release,$(BUILD_TYPE)),ON,OFF)
-LLVM_LINK_TARGETS ?= native
-
-RECURLOOP := $(CONFIG_DIR)/bin/recurloop
-
-CLANG ?= $(shell command -v clang)
-CLANGXX ?= $(shell command -v clang++)
-
+RECURLOOP := build/Release/bin/recurloop
 EXAMPLE ?=
 ARGS ?= --file program.rl.example
+BUNDLE ?= recurloop-work.zip
+PREFIX ?=
 
+RELEASE_BUILD_FILE := build/Release/build.ninja
 
-.PHONY: \
-	help \
-	configure \
-	build \
-	release \
-	run \
-	showcase \
-	list-examples \
-	example \
-	examples \
-	test \
-	unit \
-	feature \
-	ensure-tests \
-	core \
-	core-test \
-	clean
-
+.PHONY: help build release check test verify libraries install run list-examples example examples bundle benchmark reconfigure clean
 
 help:
-	@echo 'RecurLoop developer commands'
+	@echo 'RecurLoop commands'
 	@echo
-	@echo '  make build                         Configure and build (Debug by default)'
-	@echo '  make release                       Build Release with LLVM in build/Release/'
-	@echo '  make run                           Run program.rl.example'
-	@echo '  make run ARGS='\''--file path/to/program.rl'\'''
-	@echo '  make run ARGS='\''--string "print 42"'\'''
-	@echo '  make list-examples                 List example names'
-	@echo '  make example EXAMPLE=01-getting-started/hello-world'
-	@echo '  make examples                      Validate every example and workflow'
-	@echo '  make test | unit | feature         Run tests'
-	@echo '  make showcase                      Run the complete language tour'
-	@echo '  make core                          Rebuild core.rli with the final recurloop binary'
-	@echo '  make core-test                     Verify embedded/reset/import/self-rebuild flow'
+	@echo '  make                 Build Release + LLVM; prefer cached pinned, else compatible system LLVM'
+	@echo '  make release         Build Release with the exact pinned LLVM/zlib/zstd toolchain'
+	@echo '  make check           Incremental unit + feature + example checks from the CMake/Ninja graph'
+	@echo '  make test            Full unit + feature tests on build/Release using AUTO selection'
+	@echo '  make verify          Full verification using the exact pinned release toolchain'
+	@echo '  make libraries       Build distributable .rli libraries with build/Release'
+	@echo '  make install         Install a pinned-toolchain release + compiled libraries'
+	@echo '  make run [ARGS=...]  Build and run the Release binary'
+	@echo '  make examples        Run examples with the Release binary'
+	@echo '  make bundle          Create a compact source bundle'
+	@echo '  make reconfigure     Re-run Release AUTO configuration explicitly'
 	@echo
-	@echo 'Debug is the default build type for build, run, examples, and tests.'
-	@echo 'To use Release with LLVM:'
-	@echo '  make release'
-	@echo '  make run BUILD_TYPE=Release ARGS='\''--file path/to/program.rl'\'''
-	@echo '  make test BUILD_TYPE=Release'
-	@echo '  make examples BUILD_TYPE=Release'
+	@echo 'AUTO prefers an already prepared pinned LLVM 22.1.6/toolchain cache; otherwise'
+	@echo 'it uses a compatible system LLVM 22.x. make release/verify'
+	@echo 'always require the pinned versions and prepare them once when missing.'
 	@echo
-	@echo 'Normal run/example/test commands only build when recurloop is missing.'
+	@echo 'All normal Make targets share one build tree: build/Release.'
+	@echo 'Debug is separate and intentionally owned by VS Code/CMake Tools (preset: debug).'
 	@echo
-	@echo 'Overrides:'
-	@echo '  BUILD_TYPE=Release'
-	@echo '  BUILD_ROOT=build-custom'
-	@echo '  ENABLE_TESTS=OFF'
-	@echo '  ENABLE_LLVM=ON'
-	@echo '  LLVM_LINK_TARGETS=native|all'
+	@echo 'Installation examples:'
+	@echo '  sudo make install'
+	@echo '  make install PREFIX=$$HOME/.local'
+	@echo '  make install PREFIX=/usr DESTDIR=/tmp/recurloop-package'
 
+$(RELEASE_BUILD_FILE): Makefile CMakePresets.json cmake/Configure.cmake
+	@echo '[configure] Release + LLVM (AUTO toolchain)'
+	@cmake -DPRESET=release -DTOOLCHAIN_MODE=AUTO -P cmake/Configure.cmake
 
-# ---------------------------------------------------------------------------
-# Configuration / build
-# ---------------------------------------------------------------------------
+reconfigure:
+	@echo '[configure] force Release + LLVM (AUTO toolchain)'
+	@cmake -DPRESET=release -DTOOLCHAIN_MODE=AUTO -P cmake/Configure.cmake
 
-configure:
-	cmake -S . -B "$(CONFIG_DIR)" -G Ninja \
-		-DCMAKE_BUILD_TYPE="$(BUILD_TYPE)" \
-		-DCMAKE_C_COMPILER="$(CLANG)" \
-		-DCMAKE_CXX_COMPILER="$(CLANGXX)" \
-		-DCMAKE_EXE_LINKER_FLAGS=-fuse-ld=lld \
-		-DCMAKE_SHARED_LINKER_FLAGS=-fuse-ld=lld \
-		-DCMAKE_MODULE_LINKER_FLAGS=-fuse-ld=lld \
-		-DENABLE_TESTS="$(ENABLE_TESTS)" \
-		-DRECURLOOP_ENABLE_LLVM="$(ENABLE_LLVM)" \
-		-DRECURLOOP_LLVM_LINK_TARGETS="$(LLVM_LINK_TARGETS)" \
-		-DFETCHCONTENT_BASE_DIR="$(abspath $(DEPS_DIR))"
-	cmake -E copy_if_different \
-		"$(CONFIG_DIR)/compile_commands.json" \
-		"$(BUILD_ROOT)/compile_commands.json"
-
-
-build: configure
-	cmake --build "$(CONFIG_DIR)" --parallel --target all
-
+build: $(RELEASE_BUILD_FILE)
+	@echo '[build] build recurloop'
+	@cmake --build --preset release --target Recurloop
+	@echo '[build] ready: $(RECURLOOP)'
 
 release:
-	$(MAKE) build \
-		BUILD_TYPE=Release \
-		ENABLE_TESTS="$(ENABLE_TESTS)" \
-		ENABLE_LLVM=ON
+	@echo '[release] configure exact pinned LLVM toolchain'
+	@cmake -DPRESET=release -DTOOLCHAIN_MODE=PINNED -P cmake/Configure.cmake
+	@echo '[release] build recurloop'
+	@cmake --build --preset release --target Recurloop
+	@echo '[release] ready: $(RECURLOOP)'
 
+check: $(RELEASE_BUILD_FILE)
+	@echo '[check] build and run affected unit, feature, and example checks'
+	@cmake --build --preset release --target RecurloopCheck
+	@echo '[check] passed'
 
-# This is intentionally a real filesystem target, not .PHONY.
-#
-# Commands which only need recurloop depend on this target.
-# If the executable already exists, Make does nothing.
-# If it does not exist, a normal build is performed.
-$(RECURLOOP):
-	@echo 'recurloop executable not found; building it first...'
-	@$(MAKE) build \
-		BUILD_TYPE="$(BUILD_TYPE)" \
-		BUILD_ROOT="$(BUILD_ROOT)" \
-		ENABLE_TESTS="$(ENABLE_TESTS)" \
-		ENABLE_LLVM="$(ENABLE_LLVM)"
+test: $(RELEASE_BUILD_FILE)
+	@echo '[test] build unit tests'
+	@cmake --build --preset release --target Recurloop RecurloopUnitTests
+	@echo '[test] unit'
+	@ctest --test-dir build/Release -L unit --output-on-failure --parallel
+	@echo '[test] feature'
+	@ctest --test-dir build/Release -L feature --output-on-failure
+	@echo '[test] passed'
 
+libraries: $(RELEASE_BUILD_FILE)
+	@echo '[libraries] build compiled libraries'
+	@cmake --build --preset release --target RecurloopLibraries
+	@echo '[libraries] ready: build/Release/libraries'
 
-# ---------------------------------------------------------------------------
-# Running programs
-# ---------------------------------------------------------------------------
+verify:
+	@echo '[verify] configure exact pinned release toolchain'
+	@cmake -DPRESET=release -DTOOLCHAIN_MODE=PINNED -P cmake/Configure.cmake
+	@echo '[verify] build unit tests'
+	@cmake --build --preset release --target Recurloop RecurloopUnitTests
+	@echo '[verify] unit'
+	@ctest --test-dir build/Release -L unit --output-on-failure --parallel
+	@echo '[verify] feature'
+	@ctest --test-dir build/Release -L feature --output-on-failure
+	@echo '[verify] build libraries + core fixed-point verification'
+	@cmake --build --preset release --target RecurloopLibraries RecurloopCoreVerify
+	@echo '[verify] examples'
+	@tools/examples.sh all "$(abspath $(RECURLOOP))"
+	@echo '[verify] core workflow'
+	@libraries/recurloop/test-core.sh "$(abspath $(RECURLOOP))"
+	@echo '[verify] passed'
 
-run: $(RECURLOOP)
-	"$(RECURLOOP)" $(ARGS)
+install:
+	@echo '[install] configure exact pinned release toolchain'
+	@cmake -DPRESET=release -DTOOLCHAIN_MODE=PINNED $(if $(PREFIX),-DINSTALL_PREFIX="$(PREFIX)") -P cmake/Configure.cmake
+	@echo '[install] build recurloop + libraries'
+	@cmake --build --preset release --target Recurloop RecurloopLibraries
+	@echo '[install] install$(if $(PREFIX), to $(PREFIX),)'
+	@DESTDIR="$(DESTDIR)" cmake --install build/Release $(if $(PREFIX),--prefix "$(PREFIX)")
+	@echo '[install] done'
 
-
-showcase: $(RECURLOOP)
-	"$(RECURLOOP)" --file program.rl.example
-
-
-# ---------------------------------------------------------------------------
-# Examples
-# ---------------------------------------------------------------------------
+run: build
+	@"$(RECURLOOP)" $(ARGS)
 
 list-examples:
-	@find examples \
-		-path 'examples/07-workflows' -prune -o \
-		-name main.rl -printf '%h\n' \
-		| sed 's|^examples/||' \
-		| sort
-	@printf '%s\n' \
-		'07-workflows/reusable-language-image' \
-		'07-workflows/reusable-syntax-image' \
-		'07-workflows/language-kit' \
-		'07-workflows/shell-language' \
-		'07-workflows/amber-language' \
-		'07-workflows/prolog-language' \
-		'07-workflows/haskell-language' \
-		'07-workflows/erlang-language' \
-		'07-workflows/inferred-language' \
-		'07-workflows/http-language' \
-		'07-workflows/source-debugger'
+	@tools/examples.sh list
 
+example: build
+	@test -n "$(EXAMPLE)" || { echo 'usage: make example EXAMPLE=01-getting-started/hello-world' >&2; exit 2; }
+	@tools/examples.sh run "$(abspath $(RECURLOOP))" "$(EXAMPLE)"
 
-example: $(RECURLOOP)
-	@test -n "$(EXAMPLE)" || { \
-		echo 'usage: make example EXAMPLE=01-getting-started/hello-world' >&2; \
-		exit 2; \
-	}
+examples: build
+	@tools/examples.sh all "$(abspath $(RECURLOOP))"
 
-	@if test -f "examples/$(EXAMPLE)/main.rl"; then \
-		"$(RECURLOOP)" --file "examples/$(EXAMPLE)/main.rl"; \
-	elif test -x "examples/$(EXAMPLE)/run-showcase.sh"; then \
-		"examples/$(EXAMPLE)/run-showcase.sh" "$(abspath $(RECURLOOP))"; \
-	elif test -x "examples/$(EXAMPLE)/run-tests.sh"; then \
-		"examples/$(EXAMPLE)/run-tests.sh" "$(abspath $(RECURLOOP))"; \
-	else \
-		case "$(EXAMPLE)" in \
-		07-workflows/reusable-language-image) \
-			"$(RECURLOOP)" \
-				--file examples/07-workflows/reusable-language-image/build.rl && \
-			"$(RECURLOOP)" \
-				--import /tmp/recurloop-phrase-language.rli \
-				--file examples/07-workflows/reusable-language-image/use.rl \
-			;; \
-		07-workflows/reusable-syntax-image) \
-			"$(RECURLOOP)" \
-				--file examples/07-workflows/reusable-syntax-image/build.rl && \
-			"$(RECURLOOP)" \
-				--import /tmp/recurloop-phrase-syntax.rli \
-				--file examples/07-workflows/reusable-syntax-image/use.rl \
-			;; \
-		07-workflows/shell-language) \
-			"$(RECURLOOP)" \
-				--file examples/07-workflows/shell-language/library.rl && \
-			for file in top_level.rl pipeline.rl functions.rl example.rl; do \
-				"$(RECURLOOP)" \
-					--import /tmp/recurloop-shell-library.rli \
-					--file "examples/07-workflows/shell-language/$$file" \
-					|| exit; \
-			done \
-			;; \
-		07-workflows/amber-language) \
-			"examples/07-workflows/amber-language/run-tests.sh" "$(abspath $(RECURLOOP))" \
-			;; \
-		07-workflows/prolog-language) \
-			"examples/07-workflows/prolog-language/run-tests.sh" "$(abspath $(RECURLOOP))" \
-			;; \
-		07-workflows/haskell-language) \
-			"examples/07-workflows/haskell-language/run-tests.sh" "$(abspath $(RECURLOOP))" \
-			;; \
-		07-workflows/erlang-language) \
-			"examples/07-workflows/erlang-language/run-tests.sh" "$(abspath $(RECURLOOP))" \
-			;; \
-		07-workflows/http-language) \
-			"examples/07-workflows/http-language/run-tests.sh" "$(abspath $(RECURLOOP))" \
-			;; \
-		07-workflows/source-debugger) \
-			"$(RECURLOOP)" \
-				--file examples/07-workflows/source-debugger/debugger.rl \
-			;; \
-		*) \
-			echo "unknown example: $(EXAMPLE)" >&2; \
-			exit 2 \
-			;; \
-		esac; \
-	fi
+bundle:
+	@echo '[bundle] create $(BUNDLE)'
+	@cmake -DOUTPUT="$(BUNDLE)" -P cmake/Bundle.cmake
+	@echo '[bundle] ready: $(BUNDLE)'
 
-
-# Core examples are kept quiet on success because many of them intentionally
-# print user-facing output. Workflow runners stay visible: they already emit
-# concise per-case status lines and detailed diagnostics/diffs on failure.
-examples: $(RECURLOOP)
-	@set -euo pipefail; \
-	run_quiet() { \
-		local label="$$1"; \
-		shift; \
-		local output; \
-		output="$$(mktemp)"; \
-		printf '    %s\n' "$$label"; \
-		if "$$@" >"$$output" 2>&1; then \
-			rm -f "$$output"; \
-		else \
-			local status=$$?; \
-			printf '\nFAILED: %s (exit %d)\n' "$$label" "$$status" >&2; \
-			printf '%s\n' '----- captured output -----' >&2; \
-			cat "$$output" >&2; \
-			printf '%s\n\n' '---------------------------' >&2; \
-			rm -f "$$output"; \
-			exit "$$status"; \
-		fi; \
-	}; \
-	\
-	mapfile -t files < <( \
-		find examples \
-			-path 'examples/07-workflows' -prune -o \
-			-name main.rl -print \
-			| sort \
-	); \
-	printf '== Core examples (%d) ==\n' "$${#files[@]}"; \
-	for i in "$${!files[@]}"; do \
-		printf '[core %02d/%02d] %s\n' \
-			"$$((i + 1))" \
-			"$${#files[@]}" \
-			"$${files[$$i]}"; \
-		output="$$(mktemp)"; \
-		if "$(RECURLOOP)" --file "$${files[$$i]}" >"$$output" 2>&1; then \
-			rm -f "$$output"; \
-		else \
-			status=$$?; \
-			printf '\nFAILED: %s (exit %d)\n' "$${files[$$i]}" "$$status" >&2; \
-			printf '%s\n' '----- captured output -----' >&2; \
-			cat "$$output" >&2; \
-			printf '%s\n\n' '---------------------------' >&2; \
-			rm -f "$$output"; \
-			exit "$$status"; \
-		fi; \
-	done; \
-	\
-	workflows=( \
-		reusable-language-image \
-		reusable-syntax-image \
-		language-kit \
-		shell-language \
-		inferred-language \
-		http-language \
-		source-debugger \
-		amber-language \
-		prolog-language \
-		haskell-language \
-		erlang-language \
-	); \
-	echo; \
-	printf '== Workflows (%d) ==\n' "$${#workflows[@]}"; \
-	for i in "$${!workflows[@]}"; do \
-		workflow="$${workflows[$$i]}"; \
-		echo; \
-		printf '[workflow %02d/%02d] %s\n' \
-			"$$((i + 1))" \
-			"$${#workflows[@]}" \
-			"$$workflow"; \
-		case "$$workflow" in \
-		reusable-language-image) \
-			run_quiet \
-				'build.rl' \
-				"$(RECURLOOP)" \
-					--file examples/07-workflows/reusable-language-image/build.rl; \
-			run_quiet \
-				'use.rl' \
-				"$(RECURLOOP)" \
-					--import /tmp/recurloop-phrase-language.rli \
-					--file examples/07-workflows/reusable-language-image/use.rl; \
-			;; \
-		reusable-syntax-image) \
-			run_quiet \
-				'build.rl' \
-				"$(RECURLOOP)" \
-					--file examples/07-workflows/reusable-syntax-image/build.rl; \
-			run_quiet \
-				'use.rl' \
-				"$(RECURLOOP)" \
-					--import /tmp/recurloop-phrase-syntax.rli \
-					--file examples/07-workflows/reusable-syntax-image/use.rl; \
-			;; \
-		source-debugger) \
-			output="$$(mktemp)"; \
-			printf '    debugger.rl\n'; \
-			if "$(RECURLOOP)" \
-				--file examples/07-workflows/source-debugger/debugger.rl \
-				</dev/null >"$$output" 2>&1; then \
-				rm -f "$$output"; \
-				echo '    [source-debugger] ok'; \
-			else \
-				status=$$?; \
-				printf '\nFAILED: source-debugger (exit %d)\n' "$$status" >&2; \
-				cat "$$output" >&2; \
-				rm -f "$$output"; \
-				exit "$$status"; \
-			fi; \
-			;; \
-		*) \
-			runner="examples/07-workflows/$$workflow/run-tests.sh"; \
-			if test ! -x "$$runner"; then \
-				echo "missing or non-executable workflow runner: $$runner" >&2; \
-				exit 1; \
-			fi; \
-			"$$runner" "$(abspath $(RECURLOOP))"; \
-			;; \
-		esac; \
-	done; \
-	\
-	echo; \
-	echo '== Core image runtime =='; \
-	libraries/recurloop/test-core.sh "$(abspath $(RECURLOOP))"; \
-	echo; \
-	echo 'Debugger executable controller: checked by make feature when ptrace is available.'; \
-	echo 'All non-interactive examples, workflows, and core image tests passed.'
-
-
-# ---------------------------------------------------------------------------
-# Core image
-# ---------------------------------------------------------------------------
-
-core: $(RECURLOOP)
-	@libraries/recurloop/build-core.sh "$(abspath $(RECURLOOP))" "$(abspath $(CONFIG_DIR))/core.rli"
-
-core-test: $(RECURLOOP)
-	@libraries/recurloop/test-core.sh "$(abspath $(RECURLOOP))"
-
-
-# ---------------------------------------------------------------------------
-# Tests
-# ---------------------------------------------------------------------------
-
-# CTest may retain registrations for unit executables even when an existing
-# build directory was previously configured with tests disabled. Reconfigure
-# and build `all` before every test command so registered tests always exist.
-ensure-tests:
-	@$(MAKE) build \
-		BUILD_TYPE="$(BUILD_TYPE)" \
-		BUILD_ROOT="$(BUILD_ROOT)" \
-		ENABLE_TESTS=ON \
-		ENABLE_LLVM="$(ENABLE_LLVM)" \
-		LLVM_LINK_TARGETS="$(LLVM_LINK_TARGETS)"
-
-test: ensure-tests
-	ctest \
-		--test-dir "$(CONFIG_DIR)" \
-		--output-on-failure \
-		--parallel
-
-
-unit: ensure-tests
-	ctest \
-		--test-dir "$(CONFIG_DIR)" \
-		-R '\[Unit\]' \
-		--output-on-failure \
-		--parallel
-
-
-feature: ensure-tests
-	ctest \
-		--test-dir "$(CONFIG_DIR)" \
-		-R '\[Feature\]' \
-		--output-on-failure
-
-
-# ---------------------------------------------------------------------------
-# Cleanup
-# ---------------------------------------------------------------------------
+benchmark:
+	@echo '[benchmark] configure'
+	@cmake --preset benchmark
+	@echo '[benchmark] build'
+	@cmake --build --preset benchmark --target RecurloopBenchmarks
 
 clean:
-	@if test -f "$(CONFIG_DIR)/CMakeCache.txt"; then \
-		cmake --build "$(CONFIG_DIR)" --target clean; \
-	fi
+	@echo '[clean] remove local build trees (keep shared dependency/toolchain cache)'
+	@cmake -E rm -rf build/Release build/Debug build/Benchmark build/Check build/Verify

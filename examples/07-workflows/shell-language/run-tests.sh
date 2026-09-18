@@ -1,9 +1,12 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-RECURLOOP=${1:-build/Debug/bin/recurloop}
+RECURLOOP=${1:-build/Release/bin/recurloop}
 
 DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+ROOT=$(cd -- "$DIR/../../.." && pwd)
+KIT_LIBRARY="$ROOT/libraries/language-kit/library.rl"
+SHELL_LIBRARY="$ROOT/libraries/shell/library.rl"
 
 KIT_IMAGE=/tmp/recurloop-language-kit.rli
 IMAGE=/tmp/recurloop-shell-library.rli
@@ -35,7 +38,8 @@ rm -f \
 #
 
 "$RECURLOOP" \
-    --file "$DIR/../language-kit/library.rl" \
+    --file "$KIT_LIBRARY" \
+    -- "$KIT_IMAGE" \
     >/dev/null
 
 if [[ ! -s "$KIT_IMAGE" ]]; then
@@ -49,7 +53,8 @@ fi
 
 "$RECURLOOP" \
     --import "$KIT_IMAGE" \
-    --file "$DIR/library.rl" \
+    --file "$SHELL_LIBRARY" \
+    -- "$IMAGE" \
     >/dev/null
 
 if [[ ! -s "$IMAGE" ]]; then

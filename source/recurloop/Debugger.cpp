@@ -9,6 +9,7 @@
 #include <utilities/Byte.hpp>
 #include <utilities/Exception.hpp>
 
+#include <elf.h>
 #include <sys/ptrace.h>
 #include <sys/types.h>
 #include <sys/user.h>
@@ -18,6 +19,7 @@
 #include <algorithm>
 #include <bit>
 #include <cerrno>
+#include <charconv>
 #include <cctype>
 #include <cstring>
 #include <filesystem>
@@ -60,6 +62,8 @@ namespace recurloop {
       pid_t pid = -1;
       std::filesystem::path path;
       std::vector<compiler::DebugPoint> points;
+      bool positionIndependent = false;
+      std::uintptr_t loadBias = 0;
       std::unordered_map<std::uintptr_t, NativeBreakpoint> breakpoints;
       std::optional<std::uintptr_t> currentBreakpoint;
       std::optional<std::size_t> currentPoint;
@@ -246,14 +250,54 @@ namespace recurloop {
       if (ptrace(PTRACE_SETREGS, target.pid, nullptr, &registers) == -1) ptraceFailure("set registers");
     }
 
-    std::vector<compiler::DebugPoint> readDebugPoints(const std::filesystem::path &path) {
+    std::vector<compiler::DebugPoint> readDebugPoints(const std::filesystem::path &path, bool &positionIndependent) {
       std::ifstream input(path, std::ios::binary);
       if (!input.is_open()) THROW(, "cannot open emitted executable '" << path.string() << "'")
       std::vector<std::uint8_t> bytes{std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>()};
       if (input.bad()) THROW(, "cannot read emitted executable '" << path.string() << "'")
+      if (bytes.size() < sizeof(Elf64_Ehdr)) THROW(, "emitted executable has a truncated ELF header")
+      Elf64_Ehdr header{};
+      std::memcpy(&header, bytes.data(), sizeof(header));
+      if (std::memcmp(header.e_ident, ELFMAG, SELFMAG) != 0) THROW(, "emitted executable is not ELF")
+      positionIndependent = header.e_type == ET_DYN;
       std::vector<compiler::DebugPoint> points = compiler::DebugInfo::readExecutable(bytes);
       if (points.empty()) THROW(, "emitted executable contains no debuggable RecurLoop statements")
       return points;
+    }
+
+    std::uintptr_t executableLoadBias(const ExecutableState &target) {
+      if (!target.positionIndependent) return 0;
+      std::ifstream maps("/proc/" + std::to_string(target.pid) + "/maps");
+      if (!maps.is_open()) THROW(, "executable debugger cannot read target memory map")
+
+      std::string line;
+      while (std::getline(maps, line)) {
+        std::istringstream fields(line);
+        std::string addresses;
+        std::string permissions;
+        std::string offsetText;
+        std::string device;
+        std::string inode;
+        if (!(fields >> addresses >> permissions >> offsetText >> device >> inode)) continue;
+        std::string mappedPath;
+        std::getline(fields, mappedPath);
+        mappedPath = trim(std::move(mappedPath));
+        if (mappedPath.empty()) continue;
+        static constexpr std::string_view deleted = " (deleted)";
+        if (mappedPath.ends_with(deleted)) mappedPath.resize(mappedPath.size() - deleted.size());
+        std::error_code equivalentError;
+        if (!std::filesystem::equivalent(target.path, mappedPath, equivalentError) || equivalentError) continue;
+
+        const std::size_t separator = addresses.find('-');
+        if (separator == std::string::npos) continue;
+        std::uintptr_t start = 0;
+        std::uintptr_t offset = 0;
+        const auto startResult = std::from_chars(addresses.data(), addresses.data() + separator, start, 16);
+        const auto offsetResult = std::from_chars(offsetText.data(), offsetText.data() + offsetText.size(), offset, 16);
+        if (startResult.ec != std::errc{} || offsetResult.ec != std::errc{} || start < offset) continue;
+        return start - offset;
+      }
+      THROW(, "executable debugger cannot locate the target executable mapping")
     }
 
     std::optional<std::size_t> pointAt(const ExecutableState &target, std::uintptr_t address) {
@@ -850,7 +894,8 @@ namespace recurloop {
     path = std::filesystem::absolute(path, error).lexically_normal();
     if (error || !std::filesystem::is_regular_file(path))
       THROW(, "debug executable run cannot resolve '" << requested << "'")
-    std::vector<compiler::DebugPoint> points = readDebugPoints(path);
+    bool positionIndependent = false;
+    std::vector<compiler::DebugPoint> points = readDebugPoints(path, positionIndependent);
 
     context::Lookup::leave(context, invoked);
     DebuggerState &runtime = state(context);
@@ -859,6 +904,7 @@ namespace recurloop {
     target = {};
     target.path = path;
     target.points = std::move(points);
+    target.positionIndependent = positionIndependent;
 
     const pid_t pid = fork();
     if (pid == -1) THROW(, "debug executable run cannot fork: " << std::strerror(errno))
@@ -886,6 +932,9 @@ namespace recurloop {
       THROW(, "executable target did not stop after exec")
     }
     try {
+      target.loadBias = executableLoadBias(target);
+      if (target.loadBias != 0)
+        for (compiler::DebugPoint &point : target.points) point.address += target.loadBias;
       installConfiguredBreakpoints(context);
       target.instruction = registersOf(target).rip;
       target.currentPoint = pointAt(target, target.instruction);

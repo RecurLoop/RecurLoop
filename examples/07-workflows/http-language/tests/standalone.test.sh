@@ -2,7 +2,7 @@
 set -euo pipefail
 DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 source "$DIR/http-test-lib.sh"
-http_prepare "${1:-build/Debug/bin/recurloop}"
+http_prepare "${1:-build/Release/bin/recurloop}"
 
 HTTP_EXECUTABLE=/tmp/recurloop-http-server-test
 TMP=$(mktemp -d)

@@ -1,7 +1,7 @@
 // A Bash-like top-level script using the imported shell language image.
 //
 // Build and run:
-//   Recurloop --file examples/07-workflows/shell-language/library.rl
+//   Recurloop --file libraries/shell/library.rl
 //   Recurloop --import /tmp/recurloop-shell-library.rli \
 //       --file examples/07-workflows/shell-language/top_level.rl
 

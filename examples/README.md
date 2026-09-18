@@ -97,21 +97,21 @@ executables: `exchange-simulator`, `json-processor`, and `ray-tracer`. Their
 
 ### 07 — Multi-process workflows
 
-These examples contain several source files because the process boundary is
-the feature being demonstrated:
+This group demonstrates process boundaries and reusable language libraries.
+The reusable implementations themselves live under [`libraries/`](../libraries/);
+this directory contains showcases, fixtures, and workflow test runners.
 
-- `reusable-language-image` builds a language image and consumes it in a fresh
-  RecurLoop process.
-- `reusable-syntax-image` persists compiled syntax rewrites and imports them in
-  a fresh process.
-- `shell-language` builds a reusable shell DSL, then imports it into four
-  independent programs. See its local `README.md` for an interactive tour.
-- `source-debugger` contains source and executable debugger controllers plus
-  their target program. The controller comments list useful prompt commands.
+- `reusable-language-image` and `reusable-syntax-image` demonstrate image
+  creation/import directly.
+- `language-kit`, `shell-language`, `inferred-language`, and `http-language`
+  exercise the reusable source libraries in `libraries/`.
+- `source-debugger` demonstrates source and executable debugger controllers.
+- the compatibility workflows (`amber`, `prolog`, `haskell`, `erlang`) remain
+  examples because they are compatibility demonstrations rather than core
+  reusable RecurLoop libraries.
 
-`make examples` runs the non-interactive validation for all four workflows.
-The executable debugger controller itself is covered by `make feature` and is
-automatically skipped on systems whose security policy blocks `ptrace`.
+`make examples` runs all non-interactive workflow validation. Use
+`make example EXAMPLE=07-workflows/<name>` to run only one workflow.
 
 ## Conventions for new examples
 

@@ -714,7 +714,7 @@ namespace context {
     // Language-state operations are handled by Recurloop before the first
     // source input. Keeping them out of Source makes the public flow explicit:
     // reset/import first, then source files/strings/stdin.
-    if (arg == "--reset" || arg == "--import") {
+    if (arg == "--reset" || arg == "--import" || arg == "--library" || arg == "--library-path") {
       const SourceLocation location{"<command-line>", 1, 1};
       THROW_AT(location, "option '" << arg << "' must appear before source input")
     }

@@ -16,10 +16,10 @@ The library provides:
 Build the reusable image:
 
 ```bash
-build/Debug/bin/recurloop --file examples/07-workflows/language-kit/library.rl
+build/Release/bin/recurloop --file libraries/language-kit/library.rl -- /tmp/recurloop-language-kit.rli
 ```
 
-This writes `/tmp/recurloop-language-kit.rli`. The image can then be imported by
+The output path is supplied explicitly; this example writes `/tmp/recurloop-language-kit.rli`. The image can then be imported by
 a source-defined workflow, for example `inferred-language` or the shell workflow.
 
 The host additions used by LanguageKit are generic Context API primitives. The
@@ -29,7 +29,7 @@ source.
 ## Regression check
 
 ```bash
-examples/07-workflows/language-kit/run-tests.sh build/Debug/bin/recurloop
+examples/07-workflows/language-kit/run-tests.sh build/Release/bin/recurloop
 ```
 
 The focused regression verifies that the reusable image builds, imports in a
