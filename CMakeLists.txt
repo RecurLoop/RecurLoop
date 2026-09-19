@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.25)
-project(RecurLoop VERSION 0.1.0 DESCRIPTION "An extensible programming language and runtime for source-defined language extensions"
+project(RecurLoop VERSION 0.2.0 DESCRIPTION "An extensible programming language and runtime for source-defined language extensions"
         LANGUAGES C CXX)
 
 set(CMAKE_C_STANDARD 17)
