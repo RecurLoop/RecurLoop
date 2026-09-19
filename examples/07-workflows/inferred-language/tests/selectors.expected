@@ -1,7 +1,7 @@
 7
 42
 block_add specializations=1
-  (integer,integer) -> integer hits=1 compiled=1
+  (integer,integer) -> integer compiled=1
 selected_mul specializations=1
-  (integer,integer) -> integer hits=1 compiled=1
+  (integer,integer) -> integer compiled=1
 core print

@@ -3,5 +3,5 @@ combine specializations=0
 3
 RecurLoop
 combine specializations=2
-  (integer,integer) -> integer hits=2 compiled=1
-  (text,text) -> text hits=1 compiled=1
+  (integer,integer) -> integer compiled=1
+  (text,text) -> text compiled=1

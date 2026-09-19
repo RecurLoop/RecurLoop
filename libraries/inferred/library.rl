@@ -63,7 +63,6 @@ record Inferred:Specialization {
     result_kind:i64
     native_entry:i64
     compiled_symbol:u8*
-    hits:i64
     state:i64
     next:Inferred:Specialization*
 }
@@ -817,10 +816,10 @@ let Inferred:invoke_native_scalar = fn (entry:i64, args:LanguageKit:Value**, arg
 }
 
 let Inferred:create_specialization = fn (state:Context*, f:Inferred:Function*, args:LanguageKit:Value**, argc:i64) -> Inferred:Specialization* {
-    let spec = cast(Inferred:Specialization*, malloc(64)); if !spec { return cast(Inferred:Specialization*, 0) }
+    let spec = cast(Inferred:Specialization*, malloc(56)); if !spec { return cast(Inferred:Specialization*, 0) }
     spec.arity = argc; spec.kinds = cast(i64*, malloc(argc * 8)); spec.result_kind = 0
     spec.native_entry = 0; spec.compiled_symbol = Inferred:native_symbol(f, args, argc)
-    spec.hits = 0; spec.state = 1; spec.next = cast(Inferred:Specialization*, 0)
+    spec.state = 1; spec.next = cast(Inferred:Specialization*, 0)
     var types = cast(Inferred:TypeEnv*, 0); var i = 0
     while i < argc { spec.kinds[i] = args[i].kind; types = Inferred:TypeEnv:set(types, f.param_symbols[i], args[i].kind); i += 1 }
     if f.specialization_tail { f.specialization_tail.next = spec } else { f.specializations = spec }
@@ -846,7 +845,6 @@ let Inferred:interop_call = fn (state:Context*, userdata:i64, args:LanguageKit:V
     var spec = Inferred:find_specialization(f, args, argc)
     if !spec { spec = Inferred:create_specialization(state, f, args, argc) }
     if !spec || spec.native_entry == 0 || (spec.state != 2 && spec.state != 3) { context:diagnostic:error(state, "Inferred: native specialization could not be materialized"); return cast(LanguageKit:Value*, 0) }
-    spec.hits += 1
     if spec.state == 3 { return LanguageKit:Value:integer(state, Inferred:invoke_native_scalar(spec.native_entry, args, argc)) }
     let call = cast(LanguageKit:Call, spec.native_entry)
     let result = call(state, userdata, args, argc)
@@ -854,23 +852,6 @@ let Inferred:interop_call = fn (state:Context*, userdata:i64, args:LanguageKit:V
     if spec.result_kind == 0 { spec.result_kind = result.kind }
     else if spec.result_kind != result.kind { context:diagnostic:error(state, "Inferred: specialization changed result kind"); return cast(LanguageKit:Value*, 0) }
     return result
-}
-
-let Inferred:compile_top_expression = fn (state:Context*, expr:Inferred:Expr*) -> LanguageKit:Value* {
-    let typed = Inferred:clone_expr(state, expr, cast(Inferred:TypeEnv*, 0)); if !typed { return cast(LanguageKit:Value*, 0) }
-    let body = LanguageKit:Text:new(); if !body { return cast(LanguageKit:Value*, 0) }
-    body.append("return "); if !Inferred:codegen_expr(state, body, typed) { body.destroy(); return cast(LanguageKit:Value*, 0) }; body.append("\n")
-    let source = body.take(); body.destroy(); if !source { return cast(LanguageKit:Value*, 0) }
-    let id = LanguageKit:state_get(state, "__inferred_native_expression_id") + 1; LanguageKit:state_set(state, "__inferred_native_expression_id", id)
-    let symbol_builder = LanguageKit:Text:new(); if !symbol_builder { free(source); return cast(LanguageKit:Value*, 0) }
-    symbol_builder.append("__inferred_expression_"); Inferred:append_integer(symbol_builder, id)
-    let symbol = symbol_builder.take(); symbol_builder.destroy()
-    let signature = "(__state:Context*, __userdata:i64, __args:LanguageKit:Value**, __argc:i64) -> LanguageKit:Value*"
-    let entry = context:function:compile(state, signature, source, symbol)
-    free(source); free(symbol)
-    if entry == 0 { return cast(LanguageKit:Value*, 0) }
-    let call = cast(LanguageKit:Call, entry)
-    return call(state, 0, cast(LanguageKit:Value**, 0), 0)
 }
 
 let Inferred:add_function = fn (state:Context*, f:Inferred:Function*) -> i64 {
@@ -890,14 +871,6 @@ let Inferred:kind_name = fn (kind:i64) -> u8* {
     return "dynamic"
 }
 
-let Inferred:print_value = fn (value:LanguageKit:Value*) -> void {
-    if !value { printf("<nil>"); return }
-    if value.kind == 1 { printf("%lld", value.number); return }
-    if value.kind == 2 && value.text { printf("%s", value.text); return }
-    if value.kind == 3 && value.text { printf("%s", value.text); return }
-    printf("<value>")
-}
-
 let Inferred:print_specializations = fn (state:Context*, name:u8*) -> void {
     let symbol = LanguageKit:intern(state, name); let f = Inferred:find_function(Inferred:database(state), symbol)
     if !f { context:diagnostic:error(state, "Inferred: unknown function for specialization report"); return }
@@ -907,7 +880,7 @@ let Inferred:print_specializations = fn (state:Context*, name:u8*) -> void {
         printf("  (")
         var i = 0
         while i < spec.arity { if i > 0 { printf(",") }; printf("%s", Inferred:kind_name(spec.kinds[i])); i += 1 }
-        printf(") -> %s hits=%lld compiled=%lld\n", Inferred:kind_name(spec.result_kind), spec.hits, spec.native_entry != 0)
+        printf(") -> %s compiled=%lld\n", Inferred:kind_name(spec.result_kind), spec.native_entry != 0)
         spec = spec.next
     }
 }
@@ -948,11 +921,7 @@ let Inferred:accepts_form = fn (state:Context*, allow_bare_commands:i64) -> i64 
         if LanguageKit:Source:peek(state, open) != 123 { return 0 }
         return Inferred:balanced_extent(state, open)
     }
-    // Bare `print` belongs to the shared RecurLoop/core grammar. Inferred only
-    // claims these command forms when they are explicitly marked with `poly`,
-    // or when the user explicitly selected Inferred with `infer` / `infer {}`.
-    if (had_poly || allow_bare_commands) &&
-       (Inferred:starts_word_at(state, i, "print") || Inferred:starts_word_at(state, i, "specializations")) {
+    if (had_poly || allow_bare_commands) && Inferred:starts_word_at(state, i, "specializations") {
         return LanguageKit:Source:line_extent(state)
     }
     return 0
@@ -966,16 +935,9 @@ let Inferred:capture_extent = fn (state:Context*, extent:i64) -> u8* {
 
 let Inferred:execute_source = fn (state:Context*, source:u8*) -> void {
     let p = Inferred:Parser:new(state, source); if !p { return }; defer free(cast(u8*, p))
-    let had_poly = Inferred:Parser:keyword(p, "poly")
+    Inferred:Parser:keyword(p, "poly")
     if Inferred:Parser:keyword(p, "fn") {
         let f = Inferred:parse_function(state, source); if f { Inferred:add_function(state, f) }
-        return
-    }
-    if Inferred:Parser:keyword(p, "print") {
-        let expr = Inferred:Parser:parse_expr(p); if !expr || p.error { return }
-        let scope = LanguageKit:Lifetime:enter(state); if !scope { return }
-        defer LanguageKit:Lifetime:leave(state, scope)
-        let value = Inferred:compile_top_expression(state, expr); if value { Inferred:print_value(value); printf("\n") }
         return
     }
     if Inferred:Parser:keyword(p, "specializations") {

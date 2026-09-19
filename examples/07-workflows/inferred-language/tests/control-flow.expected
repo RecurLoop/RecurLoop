@@ -1,6 +1,6 @@
 9
 42
 max_value specializations=1
-  (integer,integer) -> integer hits=1 compiled=1
+  (integer,integer) -> integer compiled=1
 twice specializations=1
-  (integer) -> integer hits=1 compiled=1
+  (integer) -> integer compiled=1

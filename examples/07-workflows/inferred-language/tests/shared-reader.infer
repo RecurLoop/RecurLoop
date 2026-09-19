@@ -4,4 +4,4 @@ poly fn add_values(a, b) {
     return result
 }
 
-poly print add_values(20, 22)
+print add_values(20, 22)

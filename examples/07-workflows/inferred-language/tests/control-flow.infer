@@ -11,7 +11,7 @@ poly fn twice(x) {
     return first
 }
 
-poly print max_value(9, 4)
-poly print twice(21)
+print max_value(9, 4)
+print twice(21)
 poly specializations max_value
 poly specializations twice

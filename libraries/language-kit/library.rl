@@ -2027,6 +2027,74 @@ let LanguageKit:publish_text = fn (state:Context*, name:u8*, value:u8*) -> i64 {
     return LanguageKit:publish(state, name, LanguageKit:Value:text_value(state, value))
 }
 
+let LanguageKit:invoke = fn (
+    state:Context*, name:u8*, args:LanguageKit:Value**, argc:i64
+) -> LanguageKit:Value* {
+    let binding = LanguageKit:binding_named(state, name)
+    if !binding || binding.kind != 2 || !binding.call { return cast(LanguageKit:Value*, 0) }
+    if binding.arity >= 0 && binding.arity != argc {
+        context:diagnostic:error(state, "LanguageKit: callable arity mismatch")
+        return cast(LanguageKit:Value*, 0)
+    }
+    let depth = LanguageKit:state_get(state, "__languagekit_call_depth")
+    let depth_limit = LanguageKit:Guard:limit(state, "__languagekit_call_depth_limit", 512)
+    if depth >= depth_limit { context:diagnostic:error(state, "LanguageKit: cross-language call depth limit exceeded"); return cast(LanguageKit:Value*, 0) }
+    let scope = LanguageKit:Lifetime:enter(state)
+    if !scope { return cast(LanguageKit:Value*, 0) }
+    defer LanguageKit:Lifetime:leave(state, scope)
+    LanguageKit:state_set(state, "__languagekit_call_depth", depth + 1)
+    defer LanguageKit:state_set(state, "__languagekit_call_depth", depth)
+    let callback = binding.call
+    let result = callback(state, binding.userdata, args, argc)
+    if result && LanguageKit:Lifetime:managed(state, cast(u8*, result)) {
+        LanguageKit:Lifetime:move_to_parent(state, cast(u8*, result))
+    }
+    return result
+}
+
+
+let LanguageKit:expression_callable = fn (state:Context*, called:Phrase*) -> void {
+    let name = context:expression:builtin:name(state)
+    let argc = cast(i64, context:expression:builtin:count(state))
+    if !name || argc < 0 { return }
+
+    let scope = LanguageKit:Lifetime:enter(state)
+    if !scope { return }
+    defer LanguageKit:Lifetime:leave(state, scope)
+
+    var args = cast(LanguageKit:Value**, 0)
+    if argc > 0 {
+        args = cast(LanguageKit:Value**, malloc(argc * 8))
+        if !args { return }
+    }
+    defer free(cast(u8*, args))
+
+    var i = 0
+    while i < argc {
+        let kind = context:expression:builtin:kind(state, i)
+        if kind == 1 {
+            args[i] = LanguageKit:Value:integer(state, cast(i64, context:expression:builtin:integer(state, i)))
+        } else if kind == 2 {
+            args[i] = LanguageKit:Value:text_value(state, context:expression:builtin:text(state, i))
+        } else {
+            context:diagnostic:error(state, "LanguageKit: core expression callable received an unsupported argument type")
+            return
+        }
+        if !args[i] { return }
+        i += 1
+    }
+
+    let result = LanguageKit:invoke(state, name, args, argc)
+    if !result { return }
+    if result.kind == 1 {
+        context:expression:builtin:result:integer(state, cast(u64, result.number))
+    } else if (result.kind == 2 || result.kind == 3) && result.text {
+        context:expression:builtin:result:text(state, result.text)
+    } else {
+        context:diagnostic:error(state, "LanguageKit: core expression callable returned an unsupported value type")
+    }
+}
+
 let LanguageKit:publish_callable = fn (
     state:Context*, name:u8*, arity:i64, call:LanguageKit:Call, userdata:i64
 ) -> i64 {
@@ -2040,6 +2108,12 @@ let LanguageKit:publish_callable = fn (
     binding.call = call
     binding.arity = arity
     binding.userdata = userdata
+    if !context:expression:builtin:define(
+        state, name,
+        fn (context:Context*, phrase:Phrase*) -> void {
+            LanguageKit:expression_callable(context, phrase)
+        }
+    ) { return 0 }
     return binding.symbol
 }
 
@@ -2066,30 +2140,6 @@ let LanguageKit:value = fn (state:Context*, name:u8*) -> LanguageKit:Value* {
     return cast(LanguageKit:Value*, 0)
 }
 
-let LanguageKit:invoke = fn (
-    state:Context*, name:u8*, args:LanguageKit:Value**, argc:i64
-) -> LanguageKit:Value* {
-    let binding = LanguageKit:binding_named(state, name)
-    if !binding || binding.kind != 2 || !binding.call { return cast(LanguageKit:Value*, 0) }
-    if binding.arity >= 0 && binding.arity != argc {
-        context:diagnostic:error(state, "LanguageKit: callable arity mismatch")
-        return cast(LanguageKit:Value*, 0)
-    }
-    let depth = LanguageKit:state_get(state, "__languagekit_call_depth")
-    let depth_limit = LanguageKit:Guard:limit(state, "__languagekit_call_depth_limit", 512)
-    if depth >= depth_limit { context:diagnostic:error(state, "LanguageKit: cross-language call depth limit exceeded"); return cast(LanguageKit:Value*, 0) }
-    let scope = LanguageKit:Lifetime:enter(state)
-    if !scope { return cast(LanguageKit:Value*, 0) }
-    defer LanguageKit:Lifetime:leave(state, scope)
-    LanguageKit:state_set(state, "__languagekit_call_depth", depth + 1)
-    defer LanguageKit:state_set(state, "__languagekit_call_depth", depth)
-    let callback = binding.call
-    let result = callback(state, binding.userdata, args, argc)
-    if result && LanguageKit:Lifetime:managed(state, cast(u8*, result)) {
-        LanguageKit:Lifetime:move_to_parent(state, cast(u8*, result))
-    }
-    return result
-}
 
 
 // =============================================================================

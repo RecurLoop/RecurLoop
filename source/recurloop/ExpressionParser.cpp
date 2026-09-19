@@ -152,7 +152,7 @@ namespace recurloop {
           : context(context), grammar(findPhrase(context.lexicon.phrase(), ExpressionDictionaryName)),
             prefixOperators(findPhrase(grammar, "prefix")), infixOperators(findPhrase(grammar, "infix")),
             symbols(findPhrase(grammar, "symbols")), builtins(findPhrase(grammar, "builtins")),
-            literals(findPhrase(grammar, "literals")),
+            dynamicBuiltins(findPhrase(grammar, "dynamic")), literals(findPhrase(grammar, "literals")),
             lexer(context, source, {symbols, prefixOperators, infixOperators}, expressionFail, {}) {
         if (grammar.isNull()) THROW(, "expression phrase grammar is not installed")
         if (prefixOperators.isNull() || infixOperators.isNull() || symbols.isNull())
@@ -205,7 +205,7 @@ namespace recurloop {
         }
       }
 
-      context::Value callNativeFunction(const Token &name, const std::vector<context::Value> &values) {
+      std::vector<compiler::TypeId> nativeArgumentTypes(const std::vector<context::Value> &values) {
         std::vector<compiler::TypeId> argumentTypes;
         argumentTypes.reserve(values.size());
         for (const context::Value &value : values) {
@@ -216,6 +216,11 @@ namespace recurloop {
           else
             argumentTypes.push_back(context.language().types.find("i64"));
         }
+        return argumentTypes;
+      }
+
+      context::Value callNativeFunction(const Token &name, const std::vector<context::Value> &values) {
+        const std::vector<compiler::TypeId> argumentTypes = nativeArgumentTypes(values);
         const std::optional<compiler::TypedFunction> function =
             context.language().resolveFunction(name.text, argumentTypes);
         if (!function) {
@@ -342,7 +347,14 @@ namespace recurloop {
         try {
           lexicon::Phrase phrase = LanguageGrammar::resolve(context, builtins, name.text);
           if (!phrase.isNull()) return invokeBuiltin(context, phrase, name, values);
-          if (!context.language().findFunctions(name.text).empty()) return callNativeFunction(name, values);
+
+          const std::vector<compiler::TypedFunction> native = context.language().findFunctions(name.text);
+          if (!native.empty() && context.language().resolveFunction(name.text, nativeArgumentTypes(values)))
+            return callNativeFunction(name, values);
+
+          phrase = LanguageGrammar::resolve(context, dynamicBuiltins, name.text);
+          if (!phrase.isNull()) return invokeBuiltin(context, phrase, name, values);
+          if (!native.empty()) return callNativeFunction(name, values);
           expressionFail(context, name.offset, "unknown function '" + name.text + "'");
         } catch (const Exception &error) {
           if (error.hasSourceLocation()) throw;
@@ -428,6 +440,7 @@ namespace recurloop {
       lexicon::Phrase infixOperators;
       lexicon::Phrase symbols;
       lexicon::Phrase builtins;
+      lexicon::Phrase dynamicBuiltins;
       lexicon::Phrase literals;
       Lexer lexer;
     };

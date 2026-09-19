@@ -109,6 +109,7 @@ namespace recurloop {
       lexicon::Phrase infix = grammarDictionary(grammar, "infix");
       lexicon::Phrase symbols = grammarDictionary(grammar, "symbols");
       lexicon::Phrase builtins = grammarDictionary(grammar, "builtins");
+      grammarDictionary(grammar, "dynamic");
       lexicon::Phrase literals = grammarDictionary(grammar, "literals");
       lexicon::Phrase assignments = grammarDictionary(grammar, "assignments");
       const auto marker = [&](std::string_view key) { return LanguageGrammar::ensureMarker(root, key); };

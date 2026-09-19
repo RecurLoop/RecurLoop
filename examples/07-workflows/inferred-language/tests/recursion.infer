@@ -5,5 +5,5 @@ poly fn factorial(n) {
     return n * factorial(n - 1)
 }
 
-poly print factorial(5)
+print factorial(5)
 poly specializations factorial

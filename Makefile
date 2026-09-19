@@ -1,6 +1,7 @@
 .DEFAULT_GOAL := build
 
 RECURLOOP := build/Release/bin/recurloop
+
 EXAMPLE ?=
 ARGS ?= --file program.rl.example
 BUNDLE ?= recurloop-work.zip
@@ -11,59 +12,61 @@ RELEASE_BUILD_FILE := build/Release/build.ninja
 .PHONY: help build release check test verify libraries install run list-examples example examples bundle benchmark reconfigure clean
 
 help:
-	@echo 'RecurLoop commands'
+	@echo 'RecurLoop'
 	@echo
-	@echo '  make                 Build Release + LLVM; prefer cached pinned, else compatible system LLVM'
-	@echo '  make release         Build Release with the exact pinned LLVM/zlib/zstd toolchain'
-	@echo '  make check           Incremental unit + feature + example checks from the CMake/Ninja graph'
-	@echo '  make test            Full unit + feature tests on build/Release using AUTO selection'
-	@echo '  make verify          Full verification using the exact pinned release toolchain'
-	@echo '  make libraries       Build distributable .rli libraries with build/Release'
-	@echo '  make install         Install a pinned-toolchain release + compiled libraries'
-	@echo '  make run [ARGS=...]  Build and run the Release binary'
-	@echo '  make examples        Run examples with the Release binary'
-	@echo '  make bundle          Create a compact source bundle'
-	@echo '  make reconfigure     Re-run Release AUTO configuration explicitly'
+	@echo 'Build:'
+	@echo '  make              Build RecurLoop'
+	@echo '  make release      Build release with pinned dependencies'
+	@echo '  make libraries    Build .rli libraries'
+	@echo '  make clean        Remove build directories'
 	@echo
-	@echo 'AUTO prefers an already prepared pinned LLVM 22.1.6/toolchain cache; otherwise'
-	@echo 'it uses a compatible system LLVM 22.x. make release/verify'
-	@echo 'always require the pinned versions and prepare them once when missing.'
+	@echo 'Test:'
+	@echo '  make check        Run affected tests and examples'
+	@echo '  make test         Run all tests'
+	@echo '  make verify       Run full release verification'
 	@echo
-	@echo 'All normal Make targets share one build tree: build/Release.'
-	@echo 'Debug is separate and intentionally owned by VS Code/CMake Tools (preset: debug).'
+	@echo 'Use:'
+	@echo '  make run          Run RecurLoop'
+	@echo '  make examples     Run all examples'
+	@echo '  make example EXAMPLE=<name>'
+	@echo '  make list-examples'
 	@echo
-	@echo 'Installation examples:'
+	@echo 'Install:'
 	@echo '  sudo make install'
 	@echo '  make install PREFIX=$$HOME/.local'
-	@echo '  make install PREFIX=/usr DESTDIR=/tmp/recurloop-package'
+	@echo
+	@echo 'Other:'
+	@echo '  make reconfigure  Reconfigure the Release build'
+	@echo '  make bundle       Create a source bundle'
+	@echo '  make benchmark    Build benchmarks'
 
 $(RELEASE_BUILD_FILE): Makefile CMakePresets.json cmake/Configure.cmake
-	@echo '[configure] Release + LLVM (AUTO toolchain)'
+	@echo '[configure] Release'
 	@cmake -DPRESET=release -DTOOLCHAIN_MODE=AUTO -P cmake/Configure.cmake
 
 reconfigure:
-	@echo '[configure] force Release + LLVM (AUTO toolchain)'
+	@echo '[configure] Release'
 	@cmake -DPRESET=release -DTOOLCHAIN_MODE=AUTO -P cmake/Configure.cmake
 
 build: $(RELEASE_BUILD_FILE)
-	@echo '[build] build recurloop'
+	@echo '[build] RecurLoop'
 	@cmake --build --preset release --target Recurloop
 	@echo '[build] ready: $(RECURLOOP)'
 
 release:
-	@echo '[release] configure exact pinned LLVM toolchain'
+	@echo '[release] configure'
 	@cmake -DPRESET=release -DTOOLCHAIN_MODE=PINNED -P cmake/Configure.cmake
-	@echo '[release] build recurloop'
-	@cmake --build --preset release --target Recurloop
-	@echo '[release] ready: $(RECURLOOP)'
+	@echo '[release] build'
+	@cmake --build --preset release --target Recurloop RecurloopLibraries
+	@echo '[release] ready'
 
 check: $(RELEASE_BUILD_FILE)
-	@echo '[check] build and run affected unit, feature, and example checks'
+	@echo '[check] run'
 	@cmake --build --preset release --target RecurloopCheck
 	@echo '[check] passed'
 
 test: $(RELEASE_BUILD_FILE)
-	@echo '[test] build unit tests'
+	@echo '[test] build'
 	@cmake --build --preset release --target Recurloop RecurloopUnitTests
 	@echo '[test] unit'
 	@ctest --test-dir build/Release -L unit --output-on-failure --parallel
@@ -72,20 +75,20 @@ test: $(RELEASE_BUILD_FILE)
 	@echo '[test] passed'
 
 libraries: $(RELEASE_BUILD_FILE)
-	@echo '[libraries] build compiled libraries'
+	@echo '[libraries] build'
 	@cmake --build --preset release --target RecurloopLibraries
-	@echo '[libraries] ready: build/Release/libraries'
+	@echo '[libraries] ready'
 
 verify:
-	@echo '[verify] configure exact pinned release toolchain'
+	@echo '[verify] configure'
 	@cmake -DPRESET=release -DTOOLCHAIN_MODE=PINNED -P cmake/Configure.cmake
-	@echo '[verify] build unit tests'
+	@echo '[verify] build'
 	@cmake --build --preset release --target Recurloop RecurloopUnitTests
 	@echo '[verify] unit'
 	@ctest --test-dir build/Release -L unit --output-on-failure --parallel
 	@echo '[verify] feature'
 	@ctest --test-dir build/Release -L feature --output-on-failure
-	@echo '[verify] build libraries + core fixed-point verification'
+	@echo '[verify] libraries + core'
 	@cmake --build --preset release --target RecurloopLibraries RecurloopCoreVerify
 	@echo '[verify] examples'
 	@tools/examples.sh all "$(abspath $(RECURLOOP))"
@@ -94,11 +97,11 @@ verify:
 	@echo '[verify] passed'
 
 install:
-	@echo '[install] configure exact pinned release toolchain'
+	@echo '[install] configure'
 	@cmake -DPRESET=release -DTOOLCHAIN_MODE=PINNED $(if $(PREFIX),-DINSTALL_PREFIX="$(PREFIX)") -P cmake/Configure.cmake
-	@echo '[install] build recurloop + libraries'
+	@echo '[install] build'
 	@cmake --build --preset release --target Recurloop RecurloopLibraries
-	@echo '[install] install$(if $(PREFIX), to $(PREFIX),)'
+	@echo '[install] install'
 	@DESTDIR="$(DESTDIR)" cmake --install build/Release $(if $(PREFIX),--prefix "$(PREFIX)")
 	@echo '[install] done'
 
@@ -127,5 +130,5 @@ benchmark:
 	@cmake --build --preset benchmark --target RecurloopBenchmarks
 
 clean:
-	@echo '[clean] remove local build trees (keep shared dependency/toolchain cache)'
+	@echo '[clean] build directories'
 	@cmake -E rm -rf build/Release build/Debug build/Benchmark build/Check build/Verify

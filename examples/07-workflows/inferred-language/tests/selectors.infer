@@ -9,7 +9,7 @@ infer fn selected_mul(a, b) {
     return a * b
 }
 
-poly print selected_mul(6, 7)
+print selected_mul(6, 7)
 poly specializations block_add
 poly specializations selected_mul
 

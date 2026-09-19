@@ -44,7 +44,7 @@ cmake --build --preset debug --target Recurloop
 ```
 
 Production verification uses Release + LLVM. `make release` and `make verify`
-force the exact pinned LLVM 22.1.6, zlib 1.3.1, and zstd 1.5.7 toolchain:
+force the exact pinned LLVM 22.1.8, zlib 1.3.1, and zstd 1.5.7 toolchain:
 
 | Change | Verification |
 |---|---|

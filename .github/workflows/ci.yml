@@ -102,13 +102,36 @@ jobs:
           fi
 
           PACKAGE="recurloop-${VERSION}-linux-x86_64"
+          STABLE_ARCHIVE="recurloop-linux-x86_64.tar.gz"
           rm -rf "dist/$PACKAGE"
           mkdir -p dist
 
           cmake --install build/CI --prefix "$PWD/dist/$PACKAGE"
 
+          # A release is the complete runtime: binary, standard .rli libraries,
+          # and the installed documentation. Verify the staged tree before
+          # publishing anything.
+          test -x "dist/$PACKAGE/bin/recurloop"
+          for library in language-kit shell inferred http; do
+            test -s "dist/$PACKAGE/share/recurloop/libraries/${library}.rli"
+          done
+          test -s "dist/$PACKAGE/share/doc/RecurLoop/README.md"
+
+          # Also prove that the installed binary can resolve libraries from the
+          # relocated package prefix rather than from the build tree.
+          "dist/$PACKAGE/bin/recurloop" \
+            --library shell \
+            --library inferred \
+            --string 'assert 6 * 7 == 42'
+
           tar -C dist -czf "dist/${PACKAGE}.tar.gz" "$PACKAGE"
-          sha256sum "dist/${PACKAGE}.tar.gz" > "dist/${PACKAGE}.tar.gz.sha256"
+          cp "dist/${PACKAGE}.tar.gz" "dist/${STABLE_ARCHIVE}"
+
+          (
+            cd dist
+            sha256sum "${PACKAGE}.tar.gz" > "${PACKAGE}.tar.gz.sha256"
+            sha256sum "${STABLE_ARCHIVE}" > "${STABLE_ARCHIVE}.sha256"
+          )
 
           rm -rf "dist/$PACKAGE"
 

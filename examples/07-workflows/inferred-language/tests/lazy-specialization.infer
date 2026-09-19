@@ -5,7 +5,7 @@ poly fn combine(a, b) {
 // Definition alone does not materialize a typed body.
 poly specializations combine
 
-poly print combine(20, 22)
-poly print combine(1, 2)
-poly print combine("Recur", "Loop")
+print combine(20, 22)
+print combine(1, 2)
+print combine("Recur", "Loop")
 poly specializations combine

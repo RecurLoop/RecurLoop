@@ -32,8 +32,8 @@ poly fn combine(a, b) {
 }
 
 poly specializations combine
-poly print combine(20, 22)
-poly print combine("Recur", "Loop")
+print combine(20, 22)
+print combine("Recur", "Loop")
 poly specializations combine
 ```
 
@@ -52,14 +52,15 @@ infer {
     fn combine(a, b) {
         return a + b
     }
-    print combine(2, 3)
 }
+
+print combine(2, 3)
 ```
 
 `infer { ... }` is only LanguageKit's dynamically scoped ambiguity preference;
-it does not create another lexicon or language mode. Bare `print` remains the
-ordinary RecurLoop/core phrase; Inferred claims printing automatically only as
-`poly print ...` (or after an explicit `infer` selector).
+it does not create another lexicon or language mode. `poly fn` publishes a normal
+LanguageKit callable, so ordinary core expressions can call it directly. `print`
+is always the ordinary RecurLoop/core phrase.
 
 ## Native lazy specialization
 
@@ -82,23 +83,20 @@ definition creates no specialization. The first `combine(1, 2)`:
 6. the normal JIT linker materializes a process-local entry address;
 7. the address is cached on the specialization and invoked directly.
 
-A later integer call reuses the same entry. The first text call creates a
+A later integer call resolves directly to the same compiled entry. The first text call creates a
 separate `(text,text)` specialization. The observable report deliberately
 contains `compiled=1` so tests prove that a native entry exists:
 
 ```text
 combine specializations=2
-  (integer,integer) -> integer hits=2 compiled=1
-  (text,text) -> text hits=1 compiled=1
+  (integer,integer) -> integer compiled=1
+  (text,text) -> text compiled=1
 ```
 
 Recursive functions use the same specialization cache. Calls between inferred
 functions and Go/C++/Haskell/Erlang/other LanguageKit callables cross the common
 boxed ABI, while each inferred specialization itself executes as compiled
 native RecurLoop code.
-
-Top-level `poly print expression` is also compiled to a short transient native
-function before execution; it no longer uses the old AST evaluator path.
 
 ## Supported subset
 
@@ -113,7 +111,7 @@ function before execution; it no longer uses the old AST evaluator path.
 - calls to any callable published through LanguageKit;
 - functions published back through the same LanguageKit callable ABI;
 - recursive inferred functions;
-- `poly print expression` through a transient compiled native function;
+- ordinary core expressions and `print` can call inferred functions directly;
 - `poly specializations function` diagnostics;
 - `infer <form>` explicit selection and `infer { ... }` preference blocks;
 - phrase-backed visibility through `inferred_assert`.
@@ -154,8 +152,9 @@ helpers rather than walked by an AST interpreter.
 
 ## Build and test
 
-After applying the overlay, rebuild the host because
-`context:function:compile` is a new generic Context API primitive:
+Rebuild the host after changing the language/runtime bridge because the
+ordinary core expression parser and LanguageKit callable registry share the
+generic Context API boundary:
 
 ```bash
 make build BUILD_TYPE=Debug

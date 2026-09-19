@@ -1,52 +1,240 @@
 # RecurLoop
 
-> This package supersedes the earlier final autonomy overlay. It also includes the Stage 7A runtime/action-binding fixes: source-owned action JIT uses separate process-local executable memory, copied phrase actions preserve their implementation binding, and applying the overlay invalidates stale generated core images/core-runner artifacts.
+**A native, extensible programming language where syntax, semantics, and namespaces are built from the same phrase system.**
 
-**An extensible native programming language where syntax, semantics, and namespaces share the same phrase system.**
+RecurLoop lets programs define and compose language features instead of requiring every new construct to be hard-coded into the C++ host. The runtime includes native compilation, an LLVM backend, engine images, a phrase-aware debugger, and reusable language libraries such as Shell and Inferred.
 
-RecurLoop is an experimental programming language and language runtime for
-building extensible languages and domain-specific languages from within the
-language itself.
+> **Project status:** RecurLoop is an active research implementation. The language, extension APIs, and engine-image format are still evolving. Current release binaries target Linux x86-64.
 
-Its core abstraction is the **phrase**. A phrase can represent executable
-behavior, grammar, data, a prototype, or a nested dictionary. The same
-hierarchical lexicon participates in both name lookup and language lookup, and
-longest-prefix matching allows source-defined phrases to take part directly in
-source elaboration and compilation.
+## Install the latest release
 
-A program can therefore rename existing syntax, introduce operators and
-control-flow constructs, define grammar dictionaries, or load a reusable
-language extension without adding a new hard-coded rule to the C++ host.
+The easiest installation uses the latest published GitHub Release and installs the complete runtime, including the standard `.rli` libraries:
 
-```rl
-let branch = <if>
-let otherwise = <else>
-let done = <return>
-let plus = <+>
-let make = <fn>
-
-let calculate = make (value:i64) -> i64 {
-    branch value > 2 {
-        done value plus 10
-    } otherwise {
-        done 1
-    }
-}
-
-assert calculate(3) == 13
+```bash
+curl -fsSL https://raw.githubusercontent.com/RecurLoop/RecurLoop/main/tools/install.sh | sh
 ```
 
-`branch`, `otherwise`, `done`, `plus`, and `make` are ordinary phrases. The
-host compiler does not contain separate keywords for those spellings;
-prototype resolution leads them to existing language behavior.
+Run the same command again later to update to the newest release. For a normal user it installs to:
 
-RecurLoop goes beyond aliases. The repository includes source-defined control
-flow, custom operators and parselets, indentation-based syntax, a shell
-language, and compatibility experiments for Amber, Prolog, Haskell, and
-Erlang.
+```text
+~/.local/bin/recurloop
+~/.local/share/recurloop/libraries/{language-kit,shell,inferred,http}.rli
+```
 
-> **Project status:** RecurLoop is an active research implementation. The
-> language, extension APIs, and engine-image format are not yet stable.
+If `~/.local/bin` is not already in your `PATH`:
+
+```bash
+export PATH="$HOME/.local/bin:$PATH"
+```
+
+For a system-wide installation:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/RecurLoop/RecurLoop/main/tools/install.sh \
+  | sudo env RECURLOOP_PREFIX=/usr/local sh
+```
+
+Check the installation:
+
+```bash
+recurloop --version
+```
+
+The release archive is checksum-verified by the installer. GitHub also publishes a stable latest-release asset name, so the download URL does not need a version number.
+
+## First program
+
+Create `hello.rl`:
+
+```rl
+const language = "RecurLoop"
+const answer = 6 * 7
+
+print "Hello from " + language + "!"
+print "The answer is " + str(answer) + "."
+
+assert answer == 42
+```
+
+Run it directly:
+
+```bash
+recurloop --file hello.rl
+```
+
+RecurLoop embeds its standard core language, so a normal `.rl` file does not need bootstrap flags or a separate runtime image.
+
+### Compile a native executable
+
+Native executable generation is part of the language. Create `native-hello.rl`:
+
+```rl
+link shared "c"
+extern printf(format:u8*, ...) -> i64 abi sysv-amd64
+
+emit executable "./native-hello" main = fn () -> i64 {
+    printf("Hello from native RecurLoop\n")
+    return 0
+}
+```
+
+Compile and run it:
+
+```bash
+recurloop --file native-hello.rl
+./native-hello
+```
+
+RecurLoop can also emit objects, executables, engine images, and code produced through its built-in or LLVM backend.
+
+## Interactive shell and language libraries
+
+The installed libraries are loaded by name. Start the Shell library as an interactive RecurLoop session:
+
+```bash
+recurloop --library shell -
+```
+
+Example:
+
+```text
+$ echo "hello from RecurLoop"
+hello from RecurLoop
+$ echo alpha | tr a-z A-Z
+ALPHA
+$ cd /tmp
+$ pwd
+/tmp
+$ print 6 * 7
+42
+```
+
+Shell is a RecurLoop language library, not a separate executable or hard-coded shell mode.
+
+You can load multiple language libraries into the same session. For example, Shell + Inferred:
+
+```bash
+recurloop --library shell --library inferred -
+```
+
+```text
+$ poly fn add(a, b) {
+$     return a + b
+$ }
+$ print add(20, 22)
+42
+```
+
+`Inferred` lazily specializes type-light functions into native RecurLoop functions, while the normal core language and Shell remain available in the same process.
+
+## Build, test, and install from source
+
+### Requirements
+
+- Linux x86-64;
+- CMake 3.25 or newer;
+- Ninja;
+- Clang with C++23 support;
+- `make` and `git`.
+
+On Ubuntu/Debian, a typical starting point is:
+
+```bash
+sudo apt update
+sudo apt install -y cmake ninja-build clang lld make git
+```
+
+Clone the project:
+
+```bash
+git clone https://github.com/RecurLoop/RecurLoop.git
+cd RecurLoop
+```
+
+Build the optimized runtime:
+
+```bash
+make
+```
+
+Run fast incremental checks. CMake/Ninja reruns only affected unit tests, feature tests, examples, and workflows:
+
+```bash
+make check
+```
+
+Run the complete release verification with the exact pinned LLVM/zlib/zstd toolchain:
+
+```bash
+make verify
+```
+
+Build the complete local release set — executable plus standard libraries:
+
+```bash
+make release
+```
+
+Install everything in one command without root access:
+
+```bash
+make install PREFIX="$HOME/.local"
+```
+
+That installs the executable, all standard `.rli` libraries, and project documentation. For a system-wide source installation, use:
+
+```bash
+sudo make install
+```
+
+The default system layout is:
+
+```text
+/usr/local/bin/recurloop
+/usr/local/share/recurloop/libraries/language-kit.rli
+/usr/local/share/recurloop/libraries/shell.rli
+/usr/local/share/recurloop/libraries/inferred.rli
+/usr/local/share/recurloop/libraries/http.rli
+/usr/local/share/doc/RecurLoop/{LICENSE,README.md,TRADEMARKS.md}
+```
+
+Useful development commands:
+
+```bash
+make             # optimized Release + LLVM build
+make check       # incremental affected checks + examples
+make test        # full unit + feature tests
+make libraries   # build all distributable .rli libraries
+make release     # pinned release binary + libraries
+make verify      # full release verification
+make install     # pinned release + libraries + docs -> install prefix
+```
+
+Development builds use `AUTO` toolchain selection: an already prepared pinned LLVM 22.1.8 toolchain is preferred, otherwise a compatible system LLVM 22.x is used. `make release`, `make verify`, and `make install` always use the exact pinned release toolchain.
+
+For C++ host debugging, use the dedicated Debug preset instead of the normal Make workflow:
+
+```bash
+cmake --preset debug
+cmake --build --preset debug --target Recurloop
+```
+
+## What is included in a release?
+
+A GitHub Release is built and tested with the pinned toolchain. The release package contains:
+
+```text
+bin/recurloop
+share/recurloop/libraries/language-kit.rli
+share/recurloop/libraries/shell.rli
+share/recurloop/libraries/inferred.rli
+share/recurloop/libraries/http.rli
+share/doc/RecurLoop/...
+```
+
+The executable resolves installed libraries relative to its own installation prefix, so a release can be installed under `~/.local`, `/usr/local`, `/usr`, or another prefix without rebuilding it.
+
+The rest of this README explains the language model, compiler/runtime architecture, examples, and current limitations in more detail.
 
 ## Why RecurLoop?
 
@@ -388,8 +576,8 @@ simulator, and a ray tracer.
 
 LLVM is disabled by default in direct CMake configurations. Normal optimized
 Make builds enable it. Development commands use `RECURLOOP_TOOLCHAIN_MODE=AUTO`:
-an already prepared pinned LLVM 22.1.6 is preferred, otherwise a compatible
-system LLVM (currently >=19 and <23) is used. The release command always uses
+an already prepared pinned LLVM 22.1.8 is preferred, otherwise a compatible
+system LLVM 22.x is used. The release command always uses
 the exact pinned toolchain:
 
 ```bash
@@ -478,169 +666,6 @@ the source debugger. LLVM debug-map emission is not implemented yet, so a
 Debug build is the recommended debugger workflow.
 
 See [`examples/07-workflows/source-debugger/`](examples/07-workflows/source-debugger/).
-
-## Quick start
-
-### Requirements
-
-- CMake 3.25 or newer;
-- Ninja;
-- Clang 18 or newer;
-- Linux/x86-64 for the current built-in native backend and executable debugger.
-
-Python is not required by the configure/build/check/bundle toolchain. `make` and
-the shell workflow runners are convenience layers on Linux; CMake presets are
-the portable build interface.
-
-### Normal build
-
-The normal command builds the optimized LLVM-enabled runtime:
-
-```bash
-make
-```
-
-The executable is:
-
-```text
-build/Release/bin/recurloop
-```
-
-`make build` uses automatic toolchain selection for fast local work. `make release`
-uses the same `build/Release` tree but requires the exact pinned LLVM 22.1.6,
-zlib 1.3.1, and zstd 1.5.7 toolchain. If that pinned toolchain is already
-prepared, it is reused; otherwise it is prepared once below `.cache/deps/`.
-
-### Fast checks
-
-```bash
-make check
-```
-
-`make check` operates on the same **Release + LLVM** tree as `make build`:
-`build/Release`. Incremental selection is part of the normal CMake/Ninja graph:
-unit checks depend on their test executables, while feature tests and examples
-declare ordinary `DEPENDS` inputs. Each successful check writes a build-tree
-stamp, so Ninja reruns exactly the checks whose declared inputs became newer.
-There is no git-diff parsing, filename matching, timing threshold, or CTest cost
-heuristic. The check target also covers affected examples and workflows.
-
-For the complete production configuration use:
-
-```bash
-make verify
-```
-
-`make verify` uses **Release + LLVM with the pinned release toolchain**, builds
-all tests and standard libraries, runs the complete unit/feature suites,
-examples, and the core fixed-point verification.
-
-### Debugging the C++ host
-
-Debug is intentionally not a Makefile workflow. VS Code/CMake Tools and LLDB
-use the dedicated preset:
-
-```bash
-cmake --preset debug
-cmake --build --preset debug --target Recurloop
-```
-
-That produces `build/Debug/bin/recurloop`. Keeping Debug out of normal `make`
-commands prevents `.rl` compilation and tests from running on an unoptimized
-host unless C++ debugging is actually needed.
-
-### Standard libraries
-
-Build distributable engine images with the production runtime:
-
-```bash
-make libraries
-```
-
-The outputs are:
-
-```text
-build/Release/libraries/language-kit.rli
-build/Release/libraries/shell.rli
-build/Release/libraries/inferred.rli
-build/Release/libraries/http.rli
-```
-
-Library source receives the output path as the single process argument after
-`--`; it does not write to a hard-coded `/tmp` path:
-
-```bash
-build/Release/bin/recurloop \
-  --file libraries/language-kit/library.rl \
-  -- build/Release/libraries/language-kit.rli
-
-build/Release/bin/recurloop \
-  --library-path build/Release/libraries \
-  --library language-kit \
-  --file libraries/http/library.rl \
-  -- build/Release/libraries/http.rli
-```
-
-The runtime can resolve built or installed libraries by name:
-
-```bash
-build/Release/bin/recurloop --library shell --library inferred -
-```
-
-Search directories are considered in this order: paths supplied with
-`--library-path`, `RECURLOOP_LIBRARY_PATH`, the library directory next to the
-build tree, the configured installation directory, and `./libraries`.
-
-### Installation and Linux packaging
-
-```bash
-sudo make install
-```
-
-The default CMake prefix installs:
-
-```text
-/usr/local/bin/recurloop
-/usr/local/share/recurloop/libraries/*.rli
-/usr/local/share/doc/RecurLoop/{LICENSE,README.md,TRADEMARKS.md}
-```
-
-A user-local install is:
-
-```bash
-make install PREFIX="$HOME/.local"
-```
-
-For a distro/package staging tree use standard `PREFIX` + `DESTDIR` semantics:
-
-```bash
-make install PREFIX=/usr DESTDIR=/tmp/recurloop-package
-```
-
-which creates paths such as:
-
-```text
-/tmp/recurloop-package/usr/bin/recurloop
-/tmp/recurloop-package/usr/share/recurloop/libraries/*.rli
-```
-
-The library destination is configurable at CMake configure time with
-`RECURLOOP_INSTALL_LIBRARY_DIR`; its default is
-`${CMAKE_INSTALL_DATADIR}/recurloop/libraries`.
-
-Downloaded dependency sources are cached once below `.cache/deps/` and shared
-by every preset, so Debug/Release/CI do not download separate copies. Pinned
-zlib/zstd are built once by a separate helper below `.cache/deps/` (final archives in `.cache/deps/pinned/lib/`) and then
-imported as already-built libraries; they are not part of RecurLoop's main Ninja
-graph. The official pinned LLVM archive is downloaded/extracted once and reused.
-`AUTO` prefers these prepared pinned components and otherwise uses compatible
-system packages. GoogleTest and Google Benchmark reuse the same downloaded
-sources but keep their compiled objects inside the active build tree because
-Debug and Release compile flags differ. Google Benchmark remains opt-in with
-`make benchmark`.
-
-`make bundle` creates a compact review/source archive and includes a
-source-matched cached `core.rli` when one is available.
 
 ## Examples
 

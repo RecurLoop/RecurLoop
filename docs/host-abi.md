@@ -57,6 +57,14 @@ individual language constructs. RecurLoop extensions should prefer
 source-defined phrase actions plus the generic Context API rather than extending
 this set.
 
+Core expression calls have the same extension boundary. Source libraries can
+publish dynamic expression callables through the generic
+`context:expression:builtin:*` Context API. The host only transports ordinary
+core values and invokes the source-defined phrase action; language-specific
+dispatch, specialization and ownership remain in source libraries. LanguageKit
+uses this bridge so callables from Inferred and other libraries do not require
+language-specific C++ parser branches.
+
 ## Compiler registry
 
 The physical compiler-registry root, child keys, setting slots, counters and ABI

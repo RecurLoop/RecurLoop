@@ -23,6 +23,39 @@ function(recurloop_reuse_dependency_source content_name)
     endif()
 endfunction()
 
+function(recurloop_reuse_pinned_llvm_source)
+    set(source_dir "${RECURLOOP_DEPS_DIR}/recurloop_llvm-src")
+    if(NOT IS_DIRECTORY "${source_dir}")
+        return()
+    endif()
+
+    file(GLOB llvm_configs
+        "${source_dir}/bin/llvm-config"
+        "${source_dir}/*/bin/llvm-config")
+    list(LENGTH llvm_configs llvm_config_count)
+    if(NOT llvm_config_count EQUAL 1)
+        message(STATUS "Discarding unrecognized pinned LLVM cache: ${source_dir}")
+        file(REMOVE_RECURSE "${source_dir}")
+        return()
+    endif()
+
+    list(GET llvm_configs 0 llvm_config)
+    execute_process(
+        COMMAND "${llvm_config}" --version
+        OUTPUT_VARIABLE cached_version
+        OUTPUT_STRIP_TRAILING_WHITESPACE
+        RESULT_VARIABLE version_result
+        ERROR_QUIET)
+    if(NOT version_result EQUAL 0 OR NOT cached_version STREQUAL RECURLOOP_LLVM_VERSION)
+        message(STATUS
+            "Discarding cached LLVM ${cached_version}; pinned release requires ${RECURLOOP_LLVM_VERSION}")
+        file(REMOVE_RECURSE "${source_dir}")
+        return()
+    endif()
+
+    set(FETCHCONTENT_SOURCE_DIR_RECURLOOP_LLVM "${source_dir}" PARENT_SCOPE)
+endfunction()
+
 # zstd is configured in this separate helper build so it never becomes part of
 # RecurLoop's own Ninja graph. The output directory intentionally matches the
 # historical cache path so already-built libraries can be reused unchanged.
@@ -63,7 +96,10 @@ endif()
 
 # The LLVM archive is already built by upstream. FetchContent is used only as a
 # verified downloader/extractor; there is no LLVM source compilation here.
-recurloop_reuse_dependency_source(recurloop_llvm)
+# Unlike source dependencies, an LLVM cache is reusable only when its exact
+# version matches the release pin. This keeps version bumps from silently
+# forcing an older extracted toolchain through FETCHCONTENT_SOURCE_DIR.
+recurloop_reuse_pinned_llvm_source()
 FetchContent_Declare(
     recurloop_llvm
     URL "${RECURLOOP_LLVM_URL}"

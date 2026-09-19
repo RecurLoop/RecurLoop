@@ -14,10 +14,12 @@
 #include <compiler/LanguageState.hpp>
 
 #include "FunctionsInternal.hpp"
+#include "ExpressionsInternal.hpp"
 #include <context/Context.hpp>
 #include <lexicon/Lexicon.hpp>
 
 #include <algorithm>
+#include <bit>
 #include <cstdlib>
 #include <cstdint>
 #include <cstring>
@@ -95,6 +97,14 @@ namespace recurloop {
     constexpr std::string_view ExpressionFormat{"context:expression:format"};
     constexpr std::string_view ExpressionFormatAt{"context:expression:format:at"};
     constexpr std::string_view ExpressionBooleanAt{"context:expression:boolean:at"};
+    constexpr std::string_view ExpressionBuiltinDefine{"context:expression:builtin:define"};
+    constexpr std::string_view ExpressionBuiltinCount{"context:expression:builtin:count"};
+    constexpr std::string_view ExpressionBuiltinName{"context:expression:builtin:name"};
+    constexpr std::string_view ExpressionBuiltinKind{"context:expression:builtin:kind"};
+    constexpr std::string_view ExpressionBuiltinInteger{"context:expression:builtin:integer"};
+    constexpr std::string_view ExpressionBuiltinText{"context:expression:builtin:text"};
+    constexpr std::string_view ExpressionBuiltinResultInteger{"context:expression:builtin:result:integer"};
+    constexpr std::string_view ExpressionBuiltinResultText{"context:expression:builtin:result:text"};
     constexpr std::string_view ValueContains{"context:value:contains"};
     constexpr std::string_view ValueFormat{"context:value:format"};
     constexpr std::string_view ValueDefineText{"context:value:define:text"};
@@ -1312,6 +1322,98 @@ namespace recurloop {
       });
     }
 
+    extern "C" std::uint64_t contextExpressionBuiltinDefine(context::Context *context, const std::uint8_t *name,
+                                                               const PhraseAction *action) noexcept {
+      if (context == nullptr || name == nullptr || action == nullptr) return 0;
+      try {
+        lexicon::Phrase root = context->lexicon.phrase();
+        lexicon::Phrase grammar = internal::findPhrase(root, internal::ExpressionDictionaryName);
+        lexicon::Phrase dynamic = internal::findPhrase(grammar, "dynamic");
+        if (dynamic.isNull()) return 0;
+        const std::string_view key(reinterpret_cast<const char *>(name));
+        lexicon::Phrase existing = internal::findPhrase(dynamic, key);
+        if (!existing.isNull()) return existing.getAddress();
+        lexicon::Phrase callable = lexicon::phrase::type::getCallable(root);
+        return definePhrase(context, dynamic.getAddress(), name, 0,
+                            std::strlen(reinterpret_cast<const char *>(name)) * Byte::length,
+                            callable.getAddress(), 0, 0, 0, action,
+                            context_phrase::Serializable | context_phrase::HasType | context_phrase::HasAction);
+      } catch (...) {
+        return 0;
+      }
+    }
+
+    extern "C" std::uint64_t contextExpressionBuiltinCount(context::Context *context) noexcept {
+      return checked(context, std::uint64_t{0}, [&](context::Context &) {
+        return static_cast<std::uint64_t>(internal::builtinFrame().arguments->size());
+      });
+    }
+
+    extern "C" const std::uint8_t *contextExpressionBuiltinName(context::Context *context) noexcept {
+      if (context == nullptr || context->exec.pendingException) return nullptr;
+      try {
+        return reinterpret_cast<const std::uint8_t *>(internal::builtinFrame().token->text.c_str());
+      } catch (...) {
+        context->exec.pendingException = std::current_exception();
+        return nullptr;
+      }
+    }
+
+    extern "C" std::uint64_t contextExpressionBuiltinKind(context::Context *context, std::uint64_t index) noexcept {
+      return checked(context, std::uint64_t{0}, [&](context::Context &) {
+        const auto &arguments = *internal::builtinFrame().arguments;
+        if (index >= arguments.size()) THROW(, "expression builtin argument index is out of range")
+        const context::Value &value = arguments[index];
+        if (value.isBoolean() || value.isInteger()) return std::uint64_t{1};
+        if (value.isString()) return std::uint64_t{2};
+        if (value.isReal()) return std::uint64_t{3};
+        return std::uint64_t{0};
+      });
+    }
+
+    extern "C" std::uint64_t contextExpressionBuiltinInteger(context::Context *context, std::uint64_t index) noexcept {
+      return checked(context, std::uint64_t{0}, [&](context::Context &) {
+        const auto &arguments = *internal::builtinFrame().arguments;
+        if (index >= arguments.size()) THROW(, "expression builtin argument index is out of range")
+        const context::Value &value = arguments[index];
+        if (value.isBoolean()) return value.asBoolean() ? std::uint64_t{1} : std::uint64_t{0};
+        if (!value.isInteger()) THROW(, "expression builtin argument is not an integer")
+        return std::bit_cast<std::uint64_t>(value.asInteger());
+      });
+    }
+
+    extern "C" const std::uint8_t *contextExpressionBuiltinText(context::Context *context,
+                                                                std::uint64_t index) noexcept {
+      if (context == nullptr || context->exec.pendingException) return nullptr;
+      try {
+        const auto &arguments = *internal::builtinFrame().arguments;
+        if (index >= arguments.size()) THROW(, "expression builtin argument index is out of range")
+        const context::Value &value = arguments[index];
+        if (!value.isString()) THROW(, "expression builtin argument is not text")
+        return reinterpret_cast<const std::uint8_t *>(value.asString().c_str());
+      } catch (...) {
+        context->exec.pendingException = std::current_exception();
+        return nullptr;
+      }
+    }
+
+    extern "C" std::uint64_t contextExpressionBuiltinResultInteger(context::Context *context,
+                                                                   std::uint64_t result) noexcept {
+      return checked(context, std::uint64_t{0}, [&](context::Context &) {
+        internal::builtinFrame().result = context::Value(std::bit_cast<std::int64_t>(result));
+        return std::uint64_t{1};
+      });
+    }
+
+    extern "C" std::uint64_t contextExpressionBuiltinResultText(context::Context *context,
+                                                                const std::uint8_t *result) noexcept {
+      return checked(context, std::uint64_t{0}, [&](context::Context &) {
+        if (result == nullptr) THROW(, "expression builtin result text is null")
+        internal::builtinFrame().result = context::Value(reinterpret_cast<const char *>(result));
+        return std::uint64_t{1};
+      });
+    }
+
     extern "C" std::uint64_t contextValueContains(context::Context *context, const std::uint8_t *name) noexcept {
       return checked(context, std::uint64_t{0}, [&](context::Context &value) {
         if (name == nullptr) THROW(, "context value lookup received a null name")
@@ -2035,6 +2137,26 @@ namespace recurloop {
     declareHostFunction(context, ExpressionBooleanAt, "context:expression:boolean:at",
                         {contextPointer, bytePointer, bytePointer, u64, u64}, u64,
                         reinterpret_cast<std::uintptr_t>(&contextExpressionBooleanAt));
+    declareHostFunction(context, ExpressionBuiltinDefine, "context:expression:builtin:define",
+                        {contextPointer, bytePointer, phraseActionPointer}, u64,
+                        reinterpret_cast<std::uintptr_t>(&contextExpressionBuiltinDefine));
+    declareHostFunction(context, ExpressionBuiltinCount, "context:expression:builtin:count", {contextPointer}, u64,
+                        reinterpret_cast<std::uintptr_t>(&contextExpressionBuiltinCount));
+    declareHostFunction(context, ExpressionBuiltinName, "context:expression:builtin:name", {contextPointer},
+                        bytePointer, reinterpret_cast<std::uintptr_t>(&contextExpressionBuiltinName));
+    declareHostFunction(context, ExpressionBuiltinKind, "context:expression:builtin:kind", {contextPointer, u64}, u64,
+                        reinterpret_cast<std::uintptr_t>(&contextExpressionBuiltinKind));
+    declareHostFunction(context, ExpressionBuiltinInteger, "context:expression:builtin:integer",
+                        {contextPointer, u64}, u64,
+                        reinterpret_cast<std::uintptr_t>(&contextExpressionBuiltinInteger));
+    declareHostFunction(context, ExpressionBuiltinText, "context:expression:builtin:text", {contextPointer, u64},
+                        bytePointer, reinterpret_cast<std::uintptr_t>(&contextExpressionBuiltinText));
+    declareHostFunction(context, ExpressionBuiltinResultInteger, "context:expression:builtin:result:integer",
+                        {contextPointer, u64}, u64,
+                        reinterpret_cast<std::uintptr_t>(&contextExpressionBuiltinResultInteger));
+    declareHostFunction(context, ExpressionBuiltinResultText, "context:expression:builtin:result:text",
+                        {contextPointer, bytePointer}, u64,
+                        reinterpret_cast<std::uintptr_t>(&contextExpressionBuiltinResultText));
     declareHostFunction(context, ValueContains, "context:value:contains", {contextPointer, bytePointer}, u64,
                         reinterpret_cast<std::uintptr_t>(&contextValueContains));
     declareHostFunction(context, ValueFormat, "context:value:format", {contextPointer, bytePointer}, bytePointer,

@@ -188,6 +188,14 @@ compiler {
   extern "context:workspace:key:append_byte" symbol "context:workspace:key:append-byte" params [ "Context*" "u64" ] result "u64" abi "sysv-amd64" imported
   extern "context:workspace:code:append_byte" symbol "context:workspace:code:append-byte" params [ "Context*" "u64" ] result "u64" abi "sysv-amd64" imported
   extern "context:expression:boolean:at" symbol "context:expression:boolean:at" params [ "Context*" "u8*" "u8*" "u64" "u64" ] result "u64" abi "sysv-amd64" imported
+  extern "context:expression:builtin:define" symbol "context:expression:builtin:define" params [ "Context*" "u8*" "PhraseAction*" ] result "u64" abi "sysv-amd64" imported
+  extern "context:expression:builtin:count" symbol "context:expression:builtin:count" params [ "Context*" ] result "u64" abi "sysv-amd64" imported
+  extern "context:expression:builtin:name" symbol "context:expression:builtin:name" params [ "Context*" ] result "u8*" abi "sysv-amd64" imported
+  extern "context:expression:builtin:kind" symbol "context:expression:builtin:kind" params [ "Context*" "u64" ] result "u64" abi "sysv-amd64" imported
+  extern "context:expression:builtin:integer" symbol "context:expression:builtin:integer" params [ "Context*" "u64" ] result "u64" abi "sysv-amd64" imported
+  extern "context:expression:builtin:text" symbol "context:expression:builtin:text" params [ "Context*" "u64" ] result "u8*" abi "sysv-amd64" imported
+  extern "context:expression:builtin:result:integer" symbol "context:expression:builtin:result:integer" params [ "Context*" "u64" ] result "u64" abi "sysv-amd64" imported
+  extern "context:expression:builtin:result:text" symbol "context:expression:builtin:result:text" params [ "Context*" "u8*" ] result "u64" abi "sysv-amd64" imported
   extern "context:expression:format" symbol "context:expression:format$text" params [ "Context*" "u8*" ] result "u8*" abi "sysv-amd64" imported
   extern "context:expression:format" symbol "context:expression:format$slice" params [ "Context*" "u8*" "u64" "u64" ] result "u8*" abi "sysv-amd64" imported
   extern "context:expression:format:at" symbol "context:expression:format:at" params [ "Context*" "u8*" "u64" "u64" "u8*" "u64" "u64" ] result "u8*" abi "sysv-amd64" imported

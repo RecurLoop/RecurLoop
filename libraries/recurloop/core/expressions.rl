@@ -45,6 +45,11 @@ phrase expressions_builtins = "builtins" in expressions {
   type phrase_types_data
 }
 
+phrase expressions_dynamic = "dynamic" in expressions {
+  dictionary
+  type phrase_types_data
+}
+
 phrase expressions_infix = "infix" in expressions {
   dictionary
   type phrase_types_data
