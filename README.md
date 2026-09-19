@@ -27,6 +27,15 @@ If `~/.local/bin` is not already in your `PATH`:
 export PATH="$HOME/.local/bin:$PATH"
 ```
 
+Set the library search path for an installation below `~/.local`:
+
+```bash
+export RECURLOOP_LIBRARY_PATH="$HOME/.local/share/recurloop/libraries"
+```
+
+Add both exports to your shell configuration (for example `~/.bashrc`) to keep
+them across terminal sessions.
+
 For a system-wide installation:
 
 ```bash
@@ -232,7 +241,9 @@ share/recurloop/libraries/http.rli
 share/doc/RecurLoop/...
 ```
 
-The executable resolves installed libraries relative to its own installation prefix, so a release can be installed under `~/.local`, `/usr/local`, `/usr`, or another prefix without rebuilding it.
+The runtime searches `RECURLOOP_LIBRARY_PATH` before its built-in and local
+fallback directories. The variable accepts a colon-separated list on Linux, so
+custom prefixes can be used without rebuilding the executable.
 
 The rest of this README explains the language model, compiler/runtime architecture, examples, and current limitations in more detail.
 
