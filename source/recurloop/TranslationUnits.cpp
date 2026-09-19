@@ -8,6 +8,7 @@
 #include <recurloop/LexiconTransaction.hpp>
 #include <recurloop/Recurloop.hpp>
 #include <utilities/Exception.hpp>
+#include <utilities/Size.hpp>
 
 #include <cctype>
 #include <cstring>
@@ -65,21 +66,6 @@ namespace recurloop {
 
   TranslationUnitRegistry::TranslationUnitRegistry(context::Context &owner) : owner(owner) {}
 
-  TranslationUnitRegistry::~TranslationUnitRegistry() {
-    std::vector<std::shared_future<std::vector<std::uint8_t>>> pending;
-    {
-      std::lock_guard lock(mutex);
-      for (const auto &[address, job] : jobs) pending.push_back(job.result);
-    }
-    for (const auto &result : pending)
-      if (result.valid()) {
-        try {
-          result.wait();
-        } catch (...) {
-        }
-      }
-  }
-
   std::vector<std::uint8_t> TranslationUnitRegistry::descriptor(std::string_view source) {
     Descriptor header;
     header.bytes = source.size();
@@ -105,43 +91,20 @@ namespace recurloop {
                        header.bytes);
   }
 
-  void TranslationUnitRegistry::start(lexicon::Phrase phrase) {
-    if (!isDescriptor(phrase)) THROW(, "cannot compile a phrase which is not a lexicon descriptor")
-
-    const Size address = phrase.getAddress();
-    {
-      std::lock_guard lock(mutex);
-      if (jobs.contains(address)) return;
-    }
-
-    const std::string body = source(phrase);
-    const std::string path = owner.source.path.empty() ? "<lexicon>" : owner.source.path;
-    const std::vector<std::uint8_t> languageImage = EngineImage::encode(owner);
-    auto result = std::async(std::launch::async, [body, path, languageImage]() {
-                    char argument[] = "Recurloop";
-                    char *arguments[] = {argument};
-                    Recurloop worker;
-                    worker.initializeEmbedded(1, arguments, languageImage);
-                    context::Context &context = worker.getContext();
-                    const Size checkpoint = context.lexicon.checkpoint().getAddress();
-                    executeSource(context, body, path, 1, 1);
-                    return EngineImage::encode(context, checkpoint);
-                  }).share();
-
-    std::lock_guard lock(mutex);
-    jobs.try_emplace(address, Job{std::move(result)});
-  }
-
   std::vector<std::uint8_t> TranslationUnitRegistry::image(lexicon::Phrase phrase) {
     if (!isDescriptor(phrase)) THROW(, "cannot export a phrase which is not a source-backed lexicon")
-    start(phrase);
 
-    std::shared_future<std::vector<std::uint8_t>> result;
-    {
-      std::lock_guard lock(mutex);
-      result = jobs.at(phrase.getAddress()).result;
-    }
-    return result.get();
+    std::string body = source(phrase);
+    std::string path = owner.source.path.empty() ? "<lexicon>" : owner.source.path;
+    std::vector<std::uint8_t> languageImage = EngineImage::encode(owner);
+    char argument[] = "Recurloop";
+    char *arguments[] = {argument};
+    Recurloop worker;
+    worker.initializeEmbedded(1, arguments, languageImage);
+    context::Context &context = worker.getContext();
+    const Size checkpoint = context.lexicon.checkpoint().getAddress();
+    executeSource(context, body, path, 1, 1);
+    return EngineImage::encode(context, checkpoint);
   }
 
   void TranslationUnitRegistry::merge(lexicon::Phrase sourcePhrase, lexicon::Phrase target) {
@@ -174,19 +137,19 @@ namespace recurloop {
   }
 
   void TranslationUnitRegistry::merge(context::Context &context, lexicon::Phrase &invoked) {
-    if (!context.translationUnits) context.translationUnits = std::make_shared<TranslationUnitRegistry>(context);
+    TranslationUnitRegistry translationUnits(context);
     const std::string source = readSource(context);
     if (source.empty()) THROW(, "merge expects a lexicon reference or image path")
     lexicon::Phrase target =
         context.staging.dictionary.isNull() ? context.lexicon.phrase() : context.staging.dictionary;
     if (source.front() == '<') {
       if (source.size() < 2 || source.back() != '>') THROW(, "merge expects one reference enclosed in '<' and '>'")
-      context.translationUnits->merge(reference(context, source.substr(1, source.size() - 2)), target);
+      translationUnits.merge(reference(context, source.substr(1, source.size() - 2)), target);
     } else {
       const context::Value value = Expressions::evaluate(context, source);
       if (!value.isString()) THROW(, "merge image path must be a string")
       if (value.asString().find('\0') != std::string::npos) THROW(, "merge image path contains a NUL byte")
-      context.translationUnits->merge(value.asString(), target);
+      translationUnits.merge(value.asString(), target);
     }
     context::Lookup::leave(context, invoked, 1);
   }

@@ -42,6 +42,8 @@ namespace recurloop {
     constexpr std::string_view DataPhrase{"context:phrase:data"};
     constexpr std::string_view KeyPhrase{"context:phrase:key"};
     constexpr std::string_view ReadPhrase{"context:phrase:read"};
+    constexpr std::string_view WritePhrase{"context:phrase:write"};
+    constexpr std::string_view AddressPhrase{"context:phrase:address"};
     constexpr std::string_view ChildPhrase{"context:phrase:child"};
     constexpr std::string_view SourceEnsure{"context:source:ensure"};
     constexpr std::string_view SourceRefill{"context:source:refill"};
@@ -885,6 +887,33 @@ namespace recurloop {
       return contextPhraseData(context, address, data, 0, std::strlen(reinterpret_cast<const char *>(data)));
     }
 
+    extern "C" std::uint64_t contextPhraseAddress(context::Context *context, lexicon::Phrase *phrase) noexcept {
+      if (context == nullptr || phrase == nullptr) return 0;
+      try {
+        if (phrase->getLexicon() != &context->lexicon) return 0;
+        return phrase->getAddress();
+      } catch (...) {
+        return 0;
+      }
+    }
+
+    extern "C" std::uint64_t contextPhraseWrite(context::Context *context, std::uint64_t address,
+                                                  std::uint64_t offset, const std::uint8_t *data,
+                                                  std::uint64_t bytes) noexcept {
+      if (context == nullptr || (bytes != 0 && data == nullptr) ||
+          offset > std::numeric_limits<std::size_t>::max() || bytes > std::numeric_limits<std::size_t>::max())
+        return 0;
+      try {
+        lexicon::Phrase phrase = phraseAt(*context, address);
+        if (phrase.isNull() || offset > phrase.payloadSize() || bytes > phrase.payloadSize() - offset) return 0;
+        if (bytes != 0) std::memcpy(phrase.content(offset, bytes).toPtr(), data, static_cast<std::size_t>(bytes));
+        phrase.save();
+        return address;
+      } catch (...) {
+        return 0;
+      }
+    }
+
     extern "C" std::uint64_t contextPhraseKey(context::Context *context, std::uint64_t address,
                                               std::uint8_t *destination, std::uint64_t capacity) noexcept {
       return checked(context, std::uint64_t{0}, [&](context::Context &value) {
@@ -1719,6 +1748,7 @@ namespace recurloop {
     const compiler::TypeId contextPointer = language.types.find("Context*");
     const compiler::TypeId bytePointer = language.types.find("u8*");
     const compiler::TypeId bitStringPointer = language.types.find("BitString*");
+    const compiler::TypeId phrasePointer = language.types.find("Phrase*");
     const compiler::TypeId phraseActionPointer = language.types.find("PhraseAction*");
     const compiler::TypeId sourceBlockPointer = language.types.find("SourceBlock*");
     const compiler::TypeId i64 = language.types.find("i64");
@@ -1968,6 +1998,12 @@ namespace recurloop {
                         reinterpret_cast<std::uintptr_t>(&contextPhraseKey));
     declareHostFunction(context, ReadPhrase, "context:phrase:read", {contextPointer, u64, u64, bytePointer, u64}, u64,
                         reinterpret_cast<std::uintptr_t>(&contextPhraseRead));
+    declareHostFunction(context, WritePhrase, "context:phrase:write",
+                        {contextPointer, u64, u64, bytePointer, u64}, u64,
+                        reinterpret_cast<std::uintptr_t>(&contextPhraseWrite));
+    declareHostFunction(context, AddressPhrase, "context:phrase:address",
+                        {contextPointer, phrasePointer}, u64,
+                        reinterpret_cast<std::uintptr_t>(&contextPhraseAddress));
     declareHostFunction(context, ChildPhrase, "context:phrase:child", {contextPointer, u64, u64}, u64,
                         reinterpret_cast<std::uintptr_t>(&contextPhraseChild));
     declareHostFunction(context, "context:phrase:child:first", "context:phrase:child:first", {contextPointer, u64}, u64,

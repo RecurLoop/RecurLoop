@@ -124,13 +124,93 @@ let Inferred:Stmt:new = fn (kind:i64) -> Inferred:Stmt* {
     return self
 }
 
+let Inferred:Expr:destroy = fn (self:Inferred:Expr*, own_text:i64) -> void {
+    if !self { return }
+    if self.left { Inferred:Expr:destroy(self.left, own_text) }
+    if self.right { Inferred:Expr:destroy(self.right, own_text) }
+    if self.args {
+        var i = 0
+        while i < self.argc { if self.args[i] { Inferred:Expr:destroy(self.args[i], own_text) }; i += 1 }
+        free(cast(u8*, self.args))
+    }
+    if own_text && self.text { free(self.text) }
+    free(cast(u8*, self))
+}
+
+let Inferred:Stmt:destroy = fn (self:Inferred:Stmt*, own_text:i64) -> void {
+    var current = self
+    while current {
+        let next = current.next
+        if current.expr { Inferred:Expr:destroy(current.expr, own_text) }
+        if current.body { Inferred:Stmt:destroy(current.body, own_text) }
+        if current.else_body { Inferred:Stmt:destroy(current.else_body, own_text) }
+        if own_text && current.name { free(current.name) }
+        free(cast(u8*, current))
+        current = next
+    }
+}
+
+let Inferred:Specialization:destroy = fn (self:Inferred:Specialization*) -> void {
+    var current = self
+    while current {
+        let next = current.next
+        if current.kinds { free(cast(u8*, current.kinds)) }
+        if current.compiled_symbol { free(current.compiled_symbol) }
+        free(cast(u8*, current))
+        current = next
+    }
+}
+
+let Inferred:Function:destroy = fn (self:Inferred:Function*) -> void {
+    var current = self
+    while current {
+        let next = current.next
+        if current.name { free(current.name) }
+        if current.params {
+            var i = 0
+            while i < current.arity { if current.params[i] { free(current.params[i]) }; i += 1 }
+            free(cast(u8*, current.params))
+        }
+        if current.param_symbols { free(cast(u8*, current.param_symbols)) }
+        if current.body { Inferred:Stmt:destroy(current.body, 1) }
+        if current.specializations { Inferred:Specialization:destroy(current.specializations) }
+        free(cast(u8*, current))
+        current = next
+    }
+}
+
+let Inferred:Database:destroy = fn (self:Inferred:Database*) -> void {
+    if !self { return }
+    if self.functions { Inferred:Function:destroy(self.functions) }
+    free(cast(u8*, self))
+}
+
+let Inferred:database_cleanup = phrase {
+    type = <phrase-types:elaborate>
+    permanent = true
+    action = fn (state:Context*, called:Phrase*) -> void {
+        let slot = context:phrase:address(state, called)
+        var raw:i64 = 0
+        if context:phrase:read(state, slot, 0, cast(u8*, &raw), 8) && raw {
+            Inferred:Database:destroy(cast(Inferred:Database*, raw))
+        }
+        raw = 0
+        context:phrase:write(state, slot, 0, cast(u8*, &raw), 8)
+    }
+}
+
 let Inferred:database = fn (state:Context*) -> Inferred:Database* {
     let current = LanguageKit:state_get(state, "__inferred_database")
     if current { return cast(Inferred:Database*, current) }
     let db = cast(Inferred:Database*, malloc(16))
     if !db { return cast(Inferred:Database*, 0) }
     db.functions = cast(Inferred:Function*, 0); db.tail = cast(Inferred:Function*, 0)
-    LanguageKit:state_set(state, "__inferred_database", cast(i64, db))
+    let root = context:phrase:find(state, "Inferred")
+    let cleanup = context:phrase:find:exact(state, root, "database_cleanup")
+    if !LanguageKit:state_pointer_set_owned(state, "__inferred_database", cast(i64, db), cleanup) {
+        Inferred:Database:destroy(db)
+        return cast(Inferred:Database*, 0)
+    }
     return db
 }
 
@@ -381,6 +461,15 @@ let Inferred:TypeEnv:set = fn (env:Inferred:TypeEnv*, symbol:i64, kind:i64) -> I
     let n = cast(Inferred:TypeEnv*, malloc(24)); if !n { return env }; n.symbol = symbol; n.kind = kind; n.next = env; return n
 }
 
+let Inferred:TypeEnv:release_until = fn (env:Inferred:TypeEnv*, stop:Inferred:TypeEnv*) -> void {
+    var current = env
+    while current && current != stop {
+        let next = current.next
+        free(cast(u8*, current))
+        current = next
+    }
+}
+
 let Inferred:clone_expr = fn (state:Context*, expr:Inferred:Expr*, types:Inferred:TypeEnv*) -> Inferred:Expr* {
     if !expr { return cast(Inferred:Expr*, 0) }
     let out = Inferred:Expr:new(expr.kind); if !out { return out }
@@ -412,7 +501,12 @@ let Inferred:clone_expr = fn (state:Context*, expr:Inferred:Expr*, types:Inferre
 let Inferred:clone_block = fn (state:Context*, stmt:Inferred:Stmt*, types:Inferred:TypeEnv*) -> Inferred:Stmt* {
     var source = stmt; var head = cast(Inferred:Stmt*, 0); var tail = cast(Inferred:Stmt*, 0); var local_types = types
     while source {
-        let out = Inferred:Stmt:new(source.kind); if !out { return head }
+        let out = Inferred:Stmt:new(source.kind)
+        if !out {
+            Inferred:TypeEnv:release_until(local_types, types)
+            if head { Inferred:Stmt:destroy(head, 0) }
+            return cast(Inferred:Stmt*, 0)
+        }
         out.name = source.name; out.symbol = source.symbol
         if source.expr { out.expr = Inferred:clone_expr(state, source.expr, local_types) }
         if (source.kind == 2 || source.kind == 6) && out.expr && out.expr.inferred_kind != 0 { local_types = Inferred:TypeEnv:set(local_types, out.symbol, out.expr.inferred_kind) }
@@ -421,6 +515,7 @@ let Inferred:clone_block = fn (state:Context*, stmt:Inferred:Stmt*, types:Inferr
         if tail { tail.next = out } else { head = out }; tail = out
         source = source.next
     }
+    Inferred:TypeEnv:release_until(local_types, types)
     return head
 }
 
@@ -778,7 +873,11 @@ let Inferred:native_scalar_block = fn (state:Context*, out:LanguageKit:Text*, st
 let Inferred:compile_native_scalar = fn (state:Context*, f:Inferred:Function*) -> i64 {
     if !f || !f.body || f.arity < 0 || f.arity > 6 { return 0 }
     let signature = LanguageKit:Text:new(); let body = LanguageKit:Text:new()
-    if !signature || !body { return 0 }
+    if !signature || !body {
+        if signature { signature.destroy() }; if body { body.destroy() }
+        return 0
+    }
+    defer signature.destroy(); defer body.destroy()
     if !signature.append_byte(cast(u8, 40)) { return 0 }
     var i = 0
     while i < f.arity {
@@ -788,8 +887,11 @@ let Inferred:compile_native_scalar = fn (state:Context*, f:Inferred:Function*) -
     }
     if !signature.append(") -> i64") { return 0 }
     if !Inferred:native_scalar_block(state, body, f.body, f.name) { return 0 }
-    let sig_text = signature.take(); let body_text = body.take(); signature.destroy(); body.destroy()
-    if !sig_text || !body_text { return 0 }
+    let sig_text = signature.take(); let body_text = body.take()
+    if !sig_text || !body_text {
+        if sig_text { free(sig_text) }; if body_text { free(body_text) }
+        return 0
+    }
     let entry = context:function:compile(state, sig_text, body_text, f.name)
     free(sig_text); free(body_text)
     return entry
@@ -816,26 +918,38 @@ let Inferred:invoke_native_scalar = fn (entry:i64, args:LanguageKit:Value**, arg
 }
 
 let Inferred:create_specialization = fn (state:Context*, f:Inferred:Function*, args:LanguageKit:Value**, argc:i64) -> Inferred:Specialization* {
+    if argc < 0 { return cast(Inferred:Specialization*, 0) }
     let spec = cast(Inferred:Specialization*, malloc(56)); if !spec { return cast(Inferred:Specialization*, 0) }
-    spec.arity = argc; spec.kinds = cast(i64*, malloc(argc * 8)); spec.result_kind = 0
+    spec.arity = argc; spec.kinds = cast(i64*, 0); spec.result_kind = 0
+    if argc > 0 { spec.kinds = cast(i64*, malloc(argc * 8)); if !spec.kinds { free(cast(u8*, spec)); return cast(Inferred:Specialization*, 0) } }
     spec.native_entry = 0; spec.compiled_symbol = Inferred:native_symbol(f, args, argc)
     spec.state = 1; spec.next = cast(Inferred:Specialization*, 0)
+    if !spec.compiled_symbol { Inferred:Specialization:destroy(spec); return cast(Inferred:Specialization*, 0) }
+
     var types = cast(Inferred:TypeEnv*, 0); var i = 0
     while i < argc { spec.kinds[i] = args[i].kind; types = Inferred:TypeEnv:set(types, f.param_symbols[i], args[i].kind); i += 1 }
-    if f.specialization_tail { f.specialization_tail.next = spec } else { f.specializations = spec }
-    f.specialization_tail = spec; f.specialization_count += 1
-    var scalar = argc >= 0 && argc <= 6; var scalar_i = 0
+    var scalar = argc <= 6; var scalar_i = 0
     while scalar_i < argc { if !args[scalar_i] || args[scalar_i].kind != 1 { scalar = 0 }; scalar_i += 1 }
     if scalar {
         let scalar_entry = Inferred:compile_native_scalar(state, f)
         if scalar_entry != 0 {
+            Inferred:TypeEnv:release_until(types, cast(Inferred:TypeEnv*, 0))
             spec.native_entry = scalar_entry; spec.result_kind = 1; spec.state = 3
+            if f.specialization_tail { f.specialization_tail.next = spec } else { f.specializations = spec }
+            f.specialization_tail = spec; f.specialization_count += 1
             return spec
         }
     }
+
     let typed_body = Inferred:clone_block(state, f.body, types)
-    if !typed_body || !spec.compiled_symbol || !Inferred:compile_specialization(state, f, spec, typed_body) { return cast(Inferred:Specialization*, 0) }
+    Inferred:TypeEnv:release_until(types, cast(Inferred:TypeEnv*, 0))
+    if !typed_body { Inferred:Specialization:destroy(spec); return cast(Inferred:Specialization*, 0) }
+    let compiled = Inferred:compile_specialization(state, f, spec, typed_body)
+    Inferred:Stmt:destroy(typed_body, 0)
+    if !compiled { Inferred:Specialization:destroy(spec); return cast(Inferred:Specialization*, 0) }
     spec.state = 2
+    if f.specialization_tail { f.specialization_tail.next = spec } else { f.specializations = spec }
+    f.specialization_tail = spec; f.specialization_count += 1
     return spec
 }
 
@@ -942,7 +1056,7 @@ let Inferred:execute_source = fn (state:Context*, source:u8*) -> void {
     }
     if Inferred:Parser:keyword(p, "specializations") {
         let name = Inferred:Parser:identifier(p); if !name { Inferred:Parser:fail(p, "Inferred: specializations expects a function name"); return }
-        Inferred:print_specializations(state, name); return
+        Inferred:print_specializations(state, name); free(name); return
     }
     Inferred:Parser:fail(p, "Inferred: unsupported top-level form")
 }

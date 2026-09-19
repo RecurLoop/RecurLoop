@@ -646,11 +646,15 @@ The fragment can be merged below any active dictionary and does not replace
 the global language state.
 
 Images can contain serializable lexicon state including values, phrases,
-types, compiled modules, and relocations. Process-local JIT entries are not
-stored as raw addresses; they are rebuilt after import.
+types, compiled modules, and relocations. Process-local JIT entries and native
+pointers are not stored as raw addresses; JIT state is rebuilt, while a nonzero
+field explicitly declared as a native pointer makes export fail.
 
-This allows a language extension to be built once and loaded before application
-source:
+Libraries loaded before source execution become reusable image dependencies.
+For example, `shell.rli`, `inferred.rli`, and `http.rli` can contain only their
+own delta while sharing `language-kit.rli`. Import follows these dependencies
+recursively, resolves relative paths from the declaring image, and skips an
+already-loaded image with the same content identity.
 
 ```bash
 build/Release/bin/recurloop \
@@ -658,7 +662,8 @@ build/Release/bin/recurloop \
   --file application.rl
 ```
 
-The current engine-image wire format is version 7 and remains experimental.
+The current engine-image wire format is version 8; version-7 images remain
+readable. The format is still experimental.
 
 See [`docs/engine-images.md`](docs/engine-images.md).
 

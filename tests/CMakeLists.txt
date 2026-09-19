@@ -223,6 +223,10 @@ if(ENABLE_TESTS_FEATURE)
             "${CMAKE_SOURCE_DIR}/examples/01-getting-started/hello-world/main.rl")
     recurloop_add_feature_test(recurloop/language/core_work_collections.cmake
         DEPENDS ${RECURLOOP_CHECK_COMMON_FILES})
+    recurloop_add_feature_test(recurloop/language/image_native_state.cmake
+        DEPENDS ${RECURLOOP_CHECK_COMMON_FILES} ${RECURLOOP_CHECK_LANGUAGE_KIT_FILES})
+    recurloop_add_feature_test(recurloop/language/image_dependencies.cmake
+        DEPENDS ${RECURLOOP_CHECK_COMMON_FILES})
     recurloop_add_feature_test(recurloop/language/debug_stats.cmake
         DEPENDS
             ${RECURLOOP_CHECK_COMMON_FILES}

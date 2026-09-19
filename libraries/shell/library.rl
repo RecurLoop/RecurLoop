@@ -1697,7 +1697,7 @@ let Shell:begin_top_command = fn (state:Context*, capture:i64) -> void {
     let build = Shell:Build:new()
     if !build { context:diagnostic:error(state, "shell could not allocate a command builder"); return }
     build.capture = capture
-    if !Shell:state_set(state, "__shell_phrase_build", cast(i64, build)) {
+    if !LanguageKit:state_pointer_set(state, "__shell_phrase_build", cast(i64, build)) {
         Shell:Build:destroy(build)
         return
     }
@@ -2025,7 +2025,7 @@ let parallel = phrase {
         let jobs = Shell:Parallel:new()
         if !jobs { context:diagnostic:error(state, "parallel could not allocate its job list"); return }
         defer Shell:Parallel:destroy(jobs)
-        Shell:state_set(state, "__shell_phrase_parallel", cast(i64, jobs))
+        LanguageKit:state_pointer_set(state, "__shell_phrase_parallel", cast(i64, jobs))
         state.source_block_execute_current(block)
         Shell:state_set(state, "__shell_phrase_parallel", 0)
         let status = jobs.wait()

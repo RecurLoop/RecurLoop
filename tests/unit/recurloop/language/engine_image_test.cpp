@@ -4,6 +4,7 @@
 #include <recurloop/EngineImage.hpp>
 #include <recurloop/Execution.hpp>
 #include <recurloop/Recurloop.hpp>
+#include <recurloop/TranslationUnits.hpp>
 
 #include <filesystem>
 #include <sstream>
@@ -11,6 +12,13 @@
 #include <unistd.h>
 
 namespace {
+  int nativeCleanupCalls = 0;
+
+  void nativeCleanup(context::Context &, lexicon::Phrase &phrase) {
+    ++nativeCleanupCalls;
+    phrase.update(0, std::uintptr_t{0}).save();
+  }
+
   class EngineImageTesting : public recurloop::Recurloop, public testing::Test {
   protected:
     void initializeWith(std::string source) {
@@ -33,6 +41,146 @@ namespace {
     std::ostringstream errors;
   };
 } // namespace
+
+TEST_F(EngineImageTesting, ReleasesAllOwnedBuffersAndAllowsRepeatedCleanup) {
+  initializeWith("");
+  ASSERT_FALSE(context.workspace.code.getMemory().isNull());
+  cleanupMemory();
+  EXPECT_TRUE(context.workspace.code.getMemory().isNull());
+  EXPECT_TRUE(context.workspace.key.getMemory().isNull());
+  EXPECT_TRUE(context.lexicon.getMemory().isNull());
+  EXPECT_TRUE(context.runtime.getMemory().isNull());
+  EXPECT_TRUE(context.actionRuntime.getMemory().isNull());
+  EXPECT_NO_THROW(cleanupMemory());
+}
+
+TEST_F(EngineImageTesting, ReleasesOwnedNativePayloadsBeforeEngineMemory) {
+  initializeWith("");
+  lexicon::Phrase root = context.lexicon.phrase();
+  lexicon::Phrase data = lexicon::phrase::type::getData(root);
+  lexicon::Phrase schema = root.append("native-cleanup-schema").make().setType(data).setAction(nativeCleanup).save();
+  recurloop::EngineImage::declarePayloadField(context, schema, 0,
+                                               recurloop::EngineImage::PayloadFieldKind::NativePointer);
+  lexicon::Phrase owned =
+      root.append("native-cleanup-owned").make().setType(data).setPrototype(schema).copyAction(schema).save();
+  owned.store(std::uintptr_t{0x1234}).save();
+
+  nativeCleanupCalls = 0;
+  recurloop::EngineImage::releaseNativeState(context);
+  std::uintptr_t pointer = 1;
+  owned.fetch(0, pointer);
+  EXPECT_EQ(pointer, 0u);
+  EXPECT_EQ(nativeCleanupCalls, 1);
+
+  recurloop::EngineImage::releaseNativeState(context);
+  EXPECT_EQ(nativeCleanupCalls, 1);
+}
+
+TEST_F(EngineImageTesting, CompilesSourceBackedLexiconsOnDemandWithoutAResultCache) {
+  initializeWith("let behavior = <debug:ping>\nlet alternate = <debug:stats>\n"
+                 "let fragment = lexicon { let command = <behavior> }\n");
+  recurloop::TranslationUnitRegistry translationUnits(context);
+  auto fragment = rootPhrase("fragment");
+  const auto first = translationUnits.image(fragment);
+  rootPhrase("behavior").setAction(rootPhrase("alternate").getAction()).save();
+  const auto second = translationUnits.image(fragment);
+  EXPECT_NE(first, second);
+}
+
+TEST_F(EngineImageTesting, RecompilesLexiconWhenRollbackReusesItsAddress) {
+  initializeWith("let behavior = <debug:ping>\nlet alternate = <debug:stats>\n");
+  const auto checkpoint = context.lexicon.checkpoint();
+  const std::string definition = "let fragment = lexicon { let command = <behavior> }\n";
+  recurloop::executeSource(context, definition, "<test>", 1);
+  auto first = rootPhrase("fragment");
+  const Size address = first.getAddress();
+  recurloop::TranslationUnitRegistry translationUnits(context);
+  const auto image = translationUnits.image(first);
+  auto rollback = checkpoint;
+  rollback.restore();
+  rootPhrase("behavior").setAction(rootPhrase("alternate").getAction()).save();
+  recurloop::executeSource(context, definition, "<test>", 1);
+  auto other = rootPhrase("fragment");
+  EXPECT_EQ(address, other.getAddress());
+  EXPECT_NE(image, translationUnits.image(other));
+  recurloop::executeSource(context, "merge <fragment>\ncommand\n", "<test>", 1);
+  EXPECT_NE(output.str().find("PROCESS SNAPSHOT"), std::string::npos);
+}
+
+TEST_F(EngineImageTesting, StillReadsVersionSevenImages) {
+  initializeWith("let compatible = <debug:ping>\n");
+  auto image = recurloop::EngineImage::encode(context);
+  ASSERT_GE(image.size(), 12u);
+  image[8] = 7;
+  image[9] = 0;
+  image[10] = 0;
+  image[11] = 0;
+  EXPECT_NO_THROW(recurloop::EngineImage::decode(context, image));
+  EXPECT_FALSE(rootPhrase("compatible").isNull());
+}
+
+TEST_F(EngineImageTesting, LoadsImageDependenciesTransitivelyAndSkipsAnAlreadyLoadedImage) {
+  initializeWith("let base_dependency = <debug:ping>\n");
+  const std::filesystem::path directory =
+      std::filesystem::path("/tmp") / ("recurloop-image-dependencies-" + std::to_string(getpid()));
+  const std::filesystem::path base = directory / "base.rli";
+  const std::filesystem::path baseCopy = directory / "base-copy.rli";
+  const std::filesystem::path child = directory / "child.rli";
+  const std::filesystem::path childAgain = directory / "child-again.rli";
+  std::filesystem::remove_all(directory);
+  std::filesystem::create_directories(directory);
+
+  recurloop::EngineImage::save(context, base.string());
+  recurloop::EngineImage::load(context, base.string());
+  recurloop::EngineImage::markExportBase(context);
+  ASSERT_NO_THROW(recurloop::executeSource(context, "let child_dependency = <debug:ping>\n", "<child>", 1));
+  recurloop::EngineImage::save(context, child.string());
+  recurloop::EngineImage::save(context, childAgain.string());
+  EXPECT_EQ(recurloop::EngineImage::read(child.string()), recurloop::EngineImage::read(childAgain.string()));
+
+  {
+    std::string childArgument = child.string();
+    std::string source = "base_dependency\nchild_dependency\n";
+    char program[] = "Recurloop";
+    char import[] = "--import";
+    char stringOption[] = "--string";
+    char *arguments[] = {program, import, childArgument.data(), stringOption, source.data()};
+    recurloop::Recurloop consumer;
+    ASSERT_NO_THROW(consumer.initialize(static_cast<int>(std::size(arguments)), arguments));
+    std::ostringstream consumerOutput;
+    consumer.getContext().io.out = &consumerOutput;
+    EXPECT_EQ(consumer.execute(), 0);
+    EXPECT_EQ(consumerOutput.str(), "pong\npong\n");
+  }
+
+  std::filesystem::copy_file(base, baseCopy, std::filesystem::copy_options::overwrite_existing);
+  std::filesystem::remove(base);
+  {
+    std::string childArgument = child.string();
+    char program[] = "Recurloop";
+    char import[] = "--import";
+    char *arguments[] = {program, import, childArgument.data()};
+    recurloop::Recurloop consumer;
+    EXPECT_ANY_THROW(consumer.initialize(static_cast<int>(std::size(arguments)), arguments));
+  }
+  {
+    std::string baseArgument = baseCopy.string();
+    std::string childArgument = child.string();
+    std::string source = "base_dependency\nchild_dependency\n";
+    char program[] = "Recurloop";
+    char import[] = "--import";
+    char stringOption[] = "--string";
+    char *arguments[] = {program, import, baseArgument.data(), import, childArgument.data(), stringOption, source.data()};
+    recurloop::Recurloop consumer;
+    ASSERT_NO_THROW(consumer.initialize(static_cast<int>(std::size(arguments)), arguments));
+    std::ostringstream consumerOutput;
+    consumer.getContext().io.out = &consumerOutput;
+    EXPECT_EQ(consumer.execute(), 0);
+    EXPECT_EQ(consumerOutput.str(), "pong\npong\n");
+  }
+
+  std::filesystem::remove_all(directory);
+}
 
 TEST_F(EngineImageTesting, FlattensShadowedPhrasesAndRelocatesAcrossARebuild) {
   initializeWith("let print = <debug:ping>\n");

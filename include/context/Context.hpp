@@ -16,12 +16,6 @@
 
 #include <utilities/Declaration.hpp>
 
-#include <memory>
-
-namespace recurloop {
-  class TranslationUnitRegistry;
-}
-
 namespace context {
   class Context {
   public:
@@ -63,10 +57,6 @@ namespace context {
     // Stable process-local Host ABI action bindings. This state is never
     // serialized into language images and survives lexicon replacement.
     ActionRegistry actionRegistry;
-
-    // Process-local futures. The phrase graph and source descriptor remain
-    // serializable; only in-flight compilation state lives here.
-    std::shared_ptr<recurloop::TranslationUnitRegistry> translationUnits;
 
     // Process-local executable cache for source-owned phrase actions. Keep it
     // separate from runtime: runtime is observable/generated program code and

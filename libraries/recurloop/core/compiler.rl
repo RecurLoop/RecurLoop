@@ -273,6 +273,7 @@ compiler {
   extern "context:phrase:payload:bytes" symbol "context:phrase:payload:bytes" params [ "Context*" "u64" ] result "u64" abi "sysv-amd64" imported
   extern "context:phrase:prototype" symbol "context:phrase:prototype" params [ "Context*" "u64" ] result "u64" abi "sysv-amd64" imported
   extern "context:phrase:read" symbol "context:phrase:read" params [ "Context*" "u64" "u64" "u8*" "u64" ] result "u64" abi "sysv-amd64" imported
+  extern "context:phrase:write" symbol "context:phrase:write" params [ "Context*" "u64" "u64" "u8*" "u64" ] result "u64" abi "sysv-amd64" imported
   extern "context:phrase:address" symbol "context:phrase:address" params [ "Context*" "Phrase*" ] result "u64" abi "sysv-amd64" imported
   extern "context:phrase:set" symbol "context:phrase:set$action" params [ "Context*" "u64" "u64" "PhraseAction*" ] result "u64" abi "sysv-amd64" imported
   extern "context:phrase:set" symbol "context:phrase:set$value" params [ "Context*" "u64" "u64" "u64" ] result "u64" abi "sysv-amd64" imported

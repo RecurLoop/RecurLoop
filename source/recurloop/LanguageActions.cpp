@@ -285,11 +285,6 @@ namespace recurloop {
         context.exec.hasPendingPhrasePermanent = false;
       }
 
-      if (TranslationUnitRegistry::isDescriptor(saved)) {
-        if (!context.translationUnits) context.translationUnits = std::make_shared<TranslationUnitRegistry>(context);
-        context.translationUnits->start(saved);
-      }
-
       context::Staging::pop(context, 1);
 
       context::Lookup::leave(context, invoked, lookupLevels);

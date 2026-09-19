@@ -8,7 +8,6 @@
   #include <recurloop/EngineImage.hpp>
   #include <recurloop/HostAbi.hpp>
   #include <recurloop/ContextApi.hpp>
-  #include <recurloop/TranslationUnits.hpp>
 
   #include <sys/mman.h>
   #include <sys/syscall.h>
@@ -110,12 +109,19 @@ namespace recurloop {
   }
 
   void Recurloop::cleanupMemory() {
+    EngineImage::releaseNativeState(context);
     free(context.lexicon.getMemory().toPtr());
     free(context.workspace.key.getMemory().toPtr());
+    free(context.workspace.code.getMemory().toPtr());
     munmap(context.runtime.getMemory().toPtr(), context.runtime.getCapacity());
     munmap(context.runtime.getExecutable().toPtr(), context.runtime.getCapacity());
     munmap(context.actionRuntime.getMemory().toPtr(), context.actionRuntime.getCapacity());
     munmap(context.actionRuntime.getExecutable().toPtr(), context.actionRuntime.getCapacity());
+    context.lexicon = {};
+    context.workspace.key = {};
+    context.workspace.code = {};
+    context.runtime = {};
+    context.actionRuntime = {};
   }
 
   Recurloop::Recurloop() {}
@@ -471,11 +477,11 @@ namespace recurloop {
     initializeLexicon();
     initializeRuntime();
     initializeWorkspace();
-    context.translationUnits = std::make_shared<TranslationUnitRegistry>(context);
     initializeRoot();
   }
 
   void Recurloop::resetToKernel() {
+    EngineImage::releaseNativeState(context);
     context.lexicon.clear();
     context.workspace.key.clear();
     context.workspace.code.clear();
@@ -539,6 +545,7 @@ namespace recurloop {
     ContextApi::bind(context);
 
     processStartupOperations();
+    EngineImage::markExportBase(context);
     return *this;
   }
 

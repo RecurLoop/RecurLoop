@@ -23,7 +23,7 @@ namespace recurloop {
   class EngineImage {
   public:
     EngineImage() = delete;
-    static constexpr std::uint32_t Version = 7;
+    static constexpr std::uint32_t Version = 8;
 
     // Generic payload layout metadata used by .rl-defined semantic objects.
     // A layout is attached to a schema phrase; phrases whose direct prototype
@@ -67,5 +67,13 @@ namespace recurloop {
     static void write(std::span<const std::uint8_t> bytes, const std::string &path);
     static void save(context::Context &context, const std::string &path);
     static void load(context::Context &context, const std::string &path);
+    // After startup imports, later exports may use the loaded images as their
+    // deterministic dependency base instead of duplicating the complete graph.
+    static void markExportBase(context::Context &context);
+    // Run cleanup actions attached to live process-local payloads before their
+    // backing lexicon/JIT storage is replaced or destroyed. Cleanup is best
+    // effort and never throws; actions are responsible for releasing the
+    // pointed-to object and clearing their native field.
+    static void releaseNativeState(context::Context &context) noexcept;
   };
 } // namespace recurloop

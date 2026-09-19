@@ -22,6 +22,12 @@ They are written to `build/Release/libraries/` and can be imported by name:
 build/Release/bin/recurloop --library shell --library inferred -
 ```
 
+`language-kit.rli` is the shared base. The shell, inferred, and HTTP images are
+deterministic dependency deltas: importing one automatically imports
+`language-kit.rli` first unless the same base image is already loaded. Keep the
+standard-library images together when distributing them; dependency paths are
+stored relative to the child image when possible.
+
 A library source never owns a `/tmp` output path. The image destination is the
 single process argument after `--`, for example:
 

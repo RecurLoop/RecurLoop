@@ -1,14 +1,10 @@
 #pragma once
 
 #include <cstdint>
-#include <future>
-#include <mutex>
 #include <string>
-#include <unordered_map>
 #include <vector>
 
 #include <string_view>
-#include <utilities/Size.hpp>
 
 namespace context {
   class Context;
@@ -18,15 +14,11 @@ namespace lexicon {
 }
 
 namespace recurloop {
-  // A process-local job registry for source-backed lexicon phrases. The
-  // phrase payload contains the source descriptor, while this object owns
-  // only the asynchronous result and is therefore never serialized.
+  // Helper for source-backed lexicon phrases. Source descriptors remain in
+  // the lexicon; compiled fragment images are produced only when requested.
   class TranslationUnitRegistry {
   public:
     explicit TranslationUnitRegistry(context::Context &owner);
-    ~TranslationUnitRegistry();
-
-    void start(lexicon::Phrase phrase);
     std::vector<std::uint8_t> image(lexicon::Phrase phrase);
     void merge(lexicon::Phrase source, lexicon::Phrase target);
     void merge(const std::string &path, lexicon::Phrase target);
@@ -38,12 +30,6 @@ namespace recurloop {
     static bool isDescriptor(lexicon::Phrase phrase);
 
   private:
-    struct Job {
-      std::shared_future<std::vector<std::uint8_t>> result;
-    };
-
     context::Context &owner;
-    std::mutex mutex;
-    std::unordered_map<Size, Job> jobs;
   };
 } // namespace recurloop

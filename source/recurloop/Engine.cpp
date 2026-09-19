@@ -68,9 +68,9 @@ namespace recurloop {
     if (close == std::string::npos) THROW(, "engine export lexicon reference is missing '>'")
     const std::string reference = trim(source.substr(1, close - 1));
     const std::string output = pathExpression(context, trim(source.substr(close + 1)), "engine export lexicon");
-    if (!context.translationUnits) context.translationUnits = std::make_shared<TranslationUnitRegistry>(context);
     const lexicon::Phrase phrase = TranslationUnitRegistry::reference(context, reference);
-    EngineImage::write(context.translationUnits->image(phrase), output);
+    TranslationUnitRegistry translationUnits(context);
+    EngineImage::write(translationUnits.image(phrase), output);
   }
 
   void Engine::importImage(context::Context &context, lexicon::Phrase &) {

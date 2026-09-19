@@ -32,6 +32,9 @@ extern close(fd:i32) -> i32 abi sysv-amd64
 
 let LanguageKit = phrase { dictionary = true permanent = true }
 let LanguageKit:Internal = phrase { dictionary = true serializable = false }
+// Live native state must never be mistaken for portable integer values.
+let LanguageKit:ProcessPointers = []
+let LanguageKit:ProcessPointer = []
 let LanguageKit:Symbols = phrase { dictionary = true permanent = true }
 let LanguageKit:Forms = phrase { dictionary = true permanent = true }
 let LanguageKit:Overrides = phrase { dictionary = true permanent = true }
@@ -201,7 +204,54 @@ let LanguageKit:categorized = fn (state:Context*, owner:i64, name:u8*) -> i64 {
     return context:phrase:find:exact(state, owner, name)
 }
 
+let LanguageKit:state_pointer_set = fn (state:Context*, name:u8*, value:i64) -> i64 {
+    let kit = context:phrase:find(state, "LanguageKit")
+    if !kit { return 0 }
+    let owner = context:phrase:find:exact(state, kit, "ProcessPointers")
+    let schema = context:phrase:find:exact(state, kit, "ProcessPointer")
+    if !owner || !schema { return 0 }
+    let existing = context:phrase:find:exact(state, owner, name)
+    if existing { return context:phrase:write(state, existing, 0, cast(u8*, &value), 8) }
+    if !context:phrase:image:native(state, schema, 0) { return 0 }
+    let entry = context:phrase:define:from(state, owner, name, schema)
+    if !entry { return 0 }
+    return context:phrase:data(state, entry, cast(u8*, &value), 0, 8)
+}
+
+// Owned process pointers use an ordinary phrase action as their destructor.
+// The entry prototypes that action, so the same schema both carries the native
+// payload declaration and provides the cleanup invoked during engine teardown.
+let LanguageKit:state_pointer_set_owned = fn (state:Context*, name:u8*, value:i64, cleanup:i64) -> i64 {
+    let kit = context:phrase:find(state, "LanguageKit")
+    if !kit { return 0 }
+    let owner = context:phrase:find:exact(state, kit, "ProcessPointers")
+    if !owner { return 0 }
+    let existing = context:phrase:find:exact(state, owner, name)
+    if existing {
+        if context:phrase:prototype(state, existing) != cleanup { return 0 }
+        return context:phrase:write(state, existing, 0, cast(u8*, &value), 8)
+    }
+    if !cleanup || !context:phrase:image:native(state, cleanup, 0) { return 0 }
+    let entry = context:phrase:define:alias(state, owner, name, cleanup)
+    if !entry { return 0 }
+    return context:phrase:data(state, entry, cast(u8*, &value), 0, 8)
+}
+
+let LanguageKit:state_pointer_find = fn (state:Context*, name:u8*) -> i64 {
+    let kit = context:phrase:find(state, "LanguageKit")
+    if !kit { return 0 }
+    let owner = context:phrase:find:exact(state, kit, "ProcessPointers")
+    if !owner { return 0 }
+    return context:phrase:find:exact(state, owner, name)
+}
+
 let LanguageKit:state_get = fn (state:Context*, name:u8*) -> i64 {
+    let pointer = LanguageKit:state_pointer_find(state, name)
+    if pointer {
+        var value:i64 = 0
+        context:phrase:read(state, pointer, 0, cast(u8*, &value), 8)
+        return value
+    }
     if !context:value:contains(state, name) { return 0 }
     let text = context:value:format(state, name)
     if !text { return 0 }
@@ -210,6 +260,7 @@ let LanguageKit:state_get = fn (state:Context*, name:u8*) -> i64 {
 }
 
 let LanguageKit:state_set = fn (state:Context*, name:u8*, value:i64) -> i64 {
+    if LanguageKit:state_pointer_find(state, name) { return LanguageKit:state_pointer_set(state, name, value) }
     if context:value:contains(state, name) { return context:value:assign:integer(state, name, value) }
     return context:value:define:integer(state, name, value)
 }
@@ -296,7 +347,7 @@ let LanguageKit:Lifetime:control_head = fn (state:Context*) -> LanguageKit:Lifet
 }
 
 let LanguageKit:Lifetime:set_control_head = fn (state:Context*, head:LanguageKit:LifetimeControl*) -> i64 {
-    return LanguageKit:state_set(state, "__languagekit_lifetime_controls", cast(i64, head))
+    return LanguageKit:state_pointer_set(state, "__languagekit_lifetime_controls", cast(i64, head))
 }
 
 let LanguageKit:Lifetime:root = fn (state:Context*) -> LanguageKit:LifetimeScope* {
@@ -307,8 +358,8 @@ let LanguageKit:Lifetime:root = fn (state:Context*) -> LanguageKit:LifetimeScope
     scope.parent = cast(LanguageKit:LifetimeScope*, 0)
     scope.refs = cast(LanguageKit:LifetimeRef*, 0)
     scope.depth = 0
-    LanguageKit:state_set(state, "__languagekit_lifetime_root", cast(i64, scope))
-    LanguageKit:state_set(state, "__languagekit_lifetime_current", cast(i64, scope))
+    LanguageKit:state_pointer_set(state, "__languagekit_lifetime_root", cast(i64, scope))
+    LanguageKit:state_pointer_set(state, "__languagekit_lifetime_current", cast(i64, scope))
     return scope
 }
 
@@ -463,7 +514,7 @@ let LanguageKit:Lifetime:enter = fn (state:Context*) -> LanguageKit:LifetimeScop
     scope.parent = parent
     scope.refs = cast(LanguageKit:LifetimeRef*, 0)
     scope.depth = parent.depth + 1
-    LanguageKit:state_set(state, "__languagekit_lifetime_current", cast(i64, scope))
+    LanguageKit:state_pointer_set(state, "__languagekit_lifetime_current", cast(i64, scope))
     return scope
 }
 
@@ -485,7 +536,7 @@ let LanguageKit:Lifetime:leave = fn (state:Context*, scope:LanguageKit:LifetimeS
         LanguageKit:Lifetime:ref_slot_removed(state)
         ref = next
     }
-    LanguageKit:state_set(state, "__languagekit_lifetime_current", cast(i64, scope.parent))
+    LanguageKit:state_pointer_set(state, "__languagekit_lifetime_current", cast(i64, scope.parent))
     free(cast(u8*, scope))
 }
 
@@ -1959,7 +2010,7 @@ let LanguageKit:binding_head = fn (state:Context*) -> LanguageKit:Binding* {
 }
 
 let LanguageKit:set_binding_head = fn (state:Context*, head:LanguageKit:Binding*) -> i64 {
-    return LanguageKit:state_set(state, "__languagekit_binding_head", cast(i64, head))
+    return LanguageKit:state_pointer_set(state, "__languagekit_binding_head", cast(i64, head))
 }
 
 let LanguageKit:binding = fn (state:Context*, symbol:i64) -> LanguageKit:Binding* {

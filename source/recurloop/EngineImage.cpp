@@ -11,6 +11,7 @@
 #include <charconv>
 #include <cctype>
 #include <cstring>
+#include <filesystem>
 #include <fstream>
 #include <iterator>
 #include <limits>
@@ -23,6 +24,8 @@ namespace recurloop {
   namespace {
     constexpr std::array<std::uint8_t, 8> Magic = {'R', 'L', 'E', 'N', 'G', 0, 1, 0};
     constexpr std::string_view ImageLayoutsName{"\0image-layouts", 14};
+    constexpr std::string_view ImageDependenciesName{"\0image-dependencies", 19};
+    constexpr std::string_view ImageExportBaseName{"\0image-export-base", 18};
     enum class RelocationKind : std::uint8_t { Phrase, Action };
 
     struct Relocation {
@@ -58,6 +61,11 @@ namespace recurloop {
 
     struct Snapshot {
       std::vector<Record> phrases;
+    };
+
+    struct ImageDependency {
+      std::string identity;
+      std::string path;
     };
 
     struct PayloadLayoutField {
@@ -122,6 +130,124 @@ namespace recurloop {
     lexicon::Phrase exact(lexicon::Phrase dictionary, const std::string &key, Size bits) {
       lexicon::Match match = dictionary.matchExact(Byte(const_cast<char *>(key.data())), 0, bits);
       return match.isNull() ? lexicon::Phrase(dictionary.getLexicon()) : match.getPhrase();
+    }
+
+    std::string imageIdentity(std::span<const std::uint8_t> bytes) {
+      constexpr std::uint64_t offset = 14695981039346656037ull;
+      constexpr std::uint64_t prime = 1099511628211ull;
+      std::uint64_t hash = offset;
+      for (const std::uint8_t byte : bytes) {
+        hash ^= byte;
+        hash *= prime;
+      }
+      static constexpr char digits[] = "0123456789abcdef";
+      const auto hexadecimal64 = [&](std::uint64_t value) {
+        std::string result(16, '0');
+        for (std::size_t index = 0; index < result.size(); ++index) {
+          result[result.size() - index - 1] = digits[value & 0xf];
+          value >>= 4;
+        }
+        return result;
+      };
+      return hexadecimal64(hash) + "-" + hexadecimal64(bytes.size());
+    }
+
+    std::filesystem::path absolutePath(const std::filesystem::path &path) {
+      std::error_code error;
+      const std::filesystem::path result = std::filesystem::absolute(path, error).lexically_normal();
+      if (error) THROW(, "cannot resolve engine image path '" << path.string() << "': " << error.message())
+      return result;
+    }
+
+    lexicon::Phrase imageDependencies(context::Context &context, bool create) {
+      lexicon::Phrase root = context.lexicon.phrase();
+      lexicon::Phrase dependencies = exact(root, std::string(ImageDependenciesName));
+      if (!dependencies.isNull() || !create) return dependencies;
+      return root.append(std::string(ImageDependenciesName))
+          .make()
+          .enableSubdictionary()
+          .setType(lexicon::phrase::type::getData(root))
+          .save();
+    }
+
+    bool hasImageDependency(context::Context &context, std::string_view identity) {
+      lexicon::Phrase dependencies = imageDependencies(context, false);
+      if (dependencies.isNull()) return false;
+      return !exact(dependencies, std::string(identity)).isNull();
+    }
+
+    bool hasImageDependencyPath(context::Context &context, const std::filesystem::path &path) {
+      lexicon::Phrase dependencies = imageDependencies(context, false);
+      if (dependencies.isNull() || !dependencies.containsSubdictionary()) return false;
+      const std::filesystem::path target = absolutePath(path);
+      auto populated = [](radix::Node *, radix::Node *candidate) { return !candidate->isEmpty(); };
+      for (lexicon::Dictionary child = dependencies.fore(populated); !child.isNull(); child = child.next(populated)) {
+        lexicon::Phrase entry = child.getPhrase();
+        if (entry.payloadSize() == 0) continue;
+        const std::string stored(reinterpret_cast<const char *>(entry.content(0, entry.payloadSize()).toPtr()),
+                                 entry.payloadSize());
+        if (!stored.empty() && stored.find('\0') == std::string::npos && absolutePath(stored) == target) return true;
+      }
+      return false;
+    }
+
+    void rememberImageDependency(context::Context &context, std::string_view identity,
+                                 const std::filesystem::path &path) {
+      lexicon::Phrase dependencies = imageDependencies(context, true);
+      const std::string normalized = absolutePath(path).generic_string();
+      lexicon::Phrase current = exact(dependencies, std::string(identity));
+      if (!current.isNull() && current.payloadSize() == normalized.size() &&
+          (normalized.empty() || std::memcmp(current.content(0, normalized.size()).toPtr(), normalized.data(),
+                                             normalized.size()) == 0))
+        return;
+
+      lexicon::Phrase root = context.lexicon.phrase();
+      lexicon::Phrase entry = dependencies.append(std::string(identity))
+                                  .make()
+                                  .setType(lexicon::phrase::type::getData(root))
+                                  .save();
+      if (!normalized.empty()) {
+        Byte payload = entry.allocate(normalized.size());
+        std::memcpy(payload.toPtr(), normalized.data(), normalized.size());
+      }
+    }
+
+    std::vector<ImageDependency> imageDependencies(const Snapshot &snapshot) {
+      if (snapshot.phrases.empty()) return {};
+      const std::uint64_t root = snapshot.phrases.front().id;
+      std::uint64_t owner = 0;
+      for (const Record &record : snapshot.phrases)
+        if (record.parent == root && record.key == ImageDependenciesName) {
+          owner = record.id;
+          break;
+        }
+      if (owner == 0) return {};
+
+      std::vector<ImageDependency> result;
+      for (const Record &record : snapshot.phrases) {
+        if (record.parent != owner) continue;
+        const std::string path(reinterpret_cast<const char *>(record.payload.data()), record.payload.size());
+        if (record.key.empty() || path.empty() || path.find('\0') != std::string::npos)
+          THROW(, "engine image contains an invalid dependency descriptor")
+        result.push_back({record.key, path});
+      }
+      std::sort(result.begin(), result.end(), [](const auto &left, const auto &right) {
+        if (left.identity != right.identity) return left.identity < right.identity;
+        return left.path < right.path;
+      });
+      result.erase(std::unique(result.begin(), result.end(), [](const auto &left, const auto &right) {
+                     return left.identity == right.identity;
+                   }),
+                   result.end());
+      return result;
+    }
+
+    Size imageExportBase(context::Context &context) {
+      lexicon::Phrase marker = exact(context.lexicon.phrase(), std::string(ImageExportBaseName));
+      if (marker.isNull() || marker.payloadSize() != sizeof(Size)) return 0;
+      Size result = 0;
+      std::memcpy(&result, marker.content(0, sizeof(result)).toPtr(), sizeof(result));
+      return result <= context.lexicon.checkpoint().getAddress() ? result : 0;
     }
 
     Size dictionaryRoot(lexicon::Phrase phrase) {
@@ -224,12 +350,19 @@ namespace recurloop {
 
       lexicon::Phrase types = exact(root, "phrase-types");
       lexicon::Phrase dataType = types.isNull() ? lexicon::Phrase(&context.lexicon) : exact(types, "data");
+      lexicon::Phrase dependencyMetadata = imageDependencies(context, false);
       const std::unordered_set<Size> behaviorTypes =
           types.isNull()
               ? std::unordered_set<Size>{}
               : std::unordered_set<Size>{exact(types, "elaborate").getAddress(), exact(types, "callable").getAddress(),
                                          exact(types, "scoped-callable").getAddress()};
       const PayloadLayouts layouts = loadPayloadLayouts(context);
+
+      const auto dependencyPayload = [&](lexicon::Phrase phrase) {
+        if (dependencyMetadata.isNull()) return false;
+        const auto owner = dictionaryOwners.find(dictionaryRoot(phrase));
+        return owner != dictionaryOwners.end() && owner->second == dependencyMetadata.getAddress();
+      };
 
       const auto payload = [](lexicon::Phrase phrase) {
         std::vector<std::uint8_t> result(phrase.payloadSize());
@@ -240,7 +373,7 @@ namespace recurloop {
       const auto payloadTargets = [&](lexicon::Phrase phrase) {
         const std::vector<std::uint8_t> bytes = payload(phrase);
         std::vector<Size> result;
-        if (bytes.size() >= sizeof(compiler::LanguageBinding)) {
+        if (!dependencyPayload(phrase) && bytes.size() >= sizeof(compiler::LanguageBinding)) {
           compiler::LanguageBinding binding;
           std::memcpy(&binding, bytes.data() + bytes.size() - sizeof(binding), sizeof(binding));
           if (binding.magic == compiler::LanguageBinding::Magic) result.push_back(binding.language);
@@ -304,6 +437,24 @@ namespace recurloop {
       };
 
       add(root, 0);
+      if (since != 0) {
+        // A checkpoint delta can add children below dictionaries that existed
+        // before the checkpoint. Walk the active dictionary graph to discover
+        // those descendants, then `ensure` adds only the ownership path needed
+        // to materialize them. This avoids copying unrelated old siblings.
+        std::vector<lexicon::Phrase> dictionaries{root};
+        for (std::size_t cursor = 0; cursor < dictionaries.size(); ++cursor) {
+          lexicon::Phrase owner = dictionaries[cursor];
+          if (!owner.containsSubdictionary()) continue;
+          auto populated = [](radix::Node *, radix::Node *candidate) { return !candidate->isEmpty(); };
+          for (lexicon::Dictionary child = owner.fore(populated); !child.isNull(); child = child.next(populated)) {
+            lexicon::Phrase candidate = child.getPhrase();
+            if (!candidate.isSerializable()) continue;
+            if (candidate.getAddress() >= since) ensure(candidate.getAddress(), ensure);
+            if (candidate.containsSubdictionary()) dictionaries.push_back(candidate);
+          }
+        }
+      }
       for (std::size_t cursor = 0; cursor < pending.size(); ++cursor) {
         lexicon::Phrase phrase = pending[cursor].phrase;
         if (!phrase.isSerializable()) THROW(, "engine image cannot serialize phrase '" << phrase.getKeyEscaped() << "'")
@@ -312,7 +463,11 @@ namespace recurloop {
           for (lexicon::Dictionary child = phrase.fore(filter); !child.isNull(); child = child.next(filter)) {
             lexicon::Phrase candidate = child.getPhrase();
             if (!candidate.isSerializable()) continue;
-            if (since == 0 || candidate.getAddress() >= since) add(candidate, phrase.getAddress());
+            const bool dependencyTree = !dependencyMetadata.isNull() &&
+                                        (phrase.getAddress() == dependencyMetadata.getAddress() ||
+                                         candidate.getAddress() == dependencyMetadata.getAddress());
+            if (since == 0 || candidate.getAddress() >= since || dependencyTree)
+              add(candidate, phrase.getAddress());
           }
         }
         if (phrase.containsPrototype()) ensure(phrase.getPrototype().getAddress(), ensure);
@@ -400,7 +555,9 @@ namespace recurloop {
       }
 
       for (Record &record : records) {
-        if (record.payload.size() >= sizeof(compiler::LanguageBinding)) {
+        lexicon::Phrase sourcePhrase(&context.lexicon, record.sourceAddress);
+        sourcePhrase.load();
+        if (!dependencyPayload(sourcePhrase) && record.payload.size() >= sizeof(compiler::LanguageBinding)) {
           const std::size_t bindingOffset = record.payload.size() - sizeof(compiler::LanguageBinding);
           compiler::LanguageBinding binding;
           std::memcpy(&binding, record.payload.data() + bindingOffset, sizeof(binding));
@@ -438,8 +595,6 @@ namespace recurloop {
           }
         }
 
-        lexicon::Phrase sourcePhrase(&context.lexicon, record.sourceAddress);
-        sourcePhrase.load();
         if (const auto *fields = payloadLayout(layouts, sourcePhrase); fields != nullptr) {
           for (const PayloadLayoutField &field : *fields) {
             validatePayloadField(record.payload, field);
@@ -504,17 +659,77 @@ namespace recurloop {
           writer.text(relocation.action);
         }
       }
-      // Kept as a zero count in the version-6 wire format. Source routines are
-      // deliberately unsupported now that every function is compiled.
+      // Kept as a zero count for compatibility with the existing record
+      // layout. Source routines are deliberately unsupported now that every
+      // function is compiled.
       writer.number(0, 4);
       return writer.bytes;
+    }
+
+    void prepareDependencyPaths(std::vector<Record> &records, const std::filesystem::path &outputPath) {
+      if (records.empty()) return;
+      const std::uint64_t root = records.front().id;
+      std::uint64_t owner = 0;
+      for (const Record &record : records)
+        if (record.parent == root && record.key == ImageDependenciesName) {
+          owner = record.id;
+          break;
+        }
+      if (owner == 0) return;
+
+      const std::filesystem::path output = absolutePath(outputPath);
+      const std::filesystem::path directory = output.parent_path();
+      for (Record &record : records) {
+        if (record.parent != owner) continue;
+        const std::string stored(reinterpret_cast<const char *>(record.payload.data()), record.payload.size());
+        if (stored.empty() || stored.find('\0') != std::string::npos)
+          THROW(, "engine image contains an invalid dependency path")
+        const std::filesystem::path dependency = absolutePath(stored);
+        std::filesystem::path relative = dependency.lexically_relative(directory);
+        const std::string portable = relative.empty() ? dependency.generic_string() : relative.generic_string();
+        record.payload.assign(portable.begin(), portable.end());
+      }
+    }
+
+    void removeDependencyMetadata(std::vector<Record> &records) {
+      if (records.empty()) return;
+      const std::uint64_t root = records.front().id;
+      std::uint64_t owner = 0;
+      for (const Record &record : records)
+        if (record.parent == root && record.key == ImageDependenciesName) {
+          owner = record.id;
+          break;
+        }
+      if (owner == 0) return;
+      std::erase_if(records, [&](const Record &record) { return record.id == owner || record.parent == owner; });
+    }
+
+    void removeSelfDependency(std::vector<Record> &records, const std::filesystem::path &outputPath) {
+      if (records.empty()) return;
+      const std::uint64_t root = records.front().id;
+      std::uint64_t owner = 0;
+      for (const Record &record : records)
+        if (record.parent == root && record.key == ImageDependenciesName) {
+          owner = record.id;
+          break;
+        }
+      if (owner == 0) return;
+
+      const std::filesystem::path output = absolutePath(outputPath);
+      std::erase_if(records, [&](const Record &record) {
+        if (record.parent != owner) return false;
+        const std::string stored(reinterpret_cast<const char *>(record.payload.data()), record.payload.size());
+        if (stored.empty() || stored.find('\0') != std::string::npos) return false;
+        return absolutePath(stored) == output;
+      });
     }
 
     Snapshot decodeRecords(context::Context &context, std::span<const std::uint8_t> bytes) {
       Reader reader(bytes);
       for (std::uint8_t expected : Magic)
         if (reader.number(1) != expected) THROW(, "invalid engine image magic")
-      if (reader.number(4) != EngineImage::Version) THROW(, "unsupported engine image version")
+      const std::uint64_t version = reader.number(4);
+      if (version != 7 && version != EngineImage::Version) THROW(, "unsupported engine image version")
       if (reader.number(1) != sizeof(Size) || reader.number(1) != sizeof(void *))
         THROW(, "engine image ABI does not match this runtime")
       const std::size_t count = reader.number(8);
@@ -1240,6 +1455,43 @@ namespace recurloop {
       context::Staging::push(context, root);
       context::Reference::in(context, root);
     }
+
+    void loadImage(context::Context &context, const std::filesystem::path &path,
+                   std::unordered_set<std::string> &loading, const std::string *expectedIdentity = nullptr) {
+      if (expectedIdentity != nullptr && hasImageDependency(context, *expectedIdentity)) return;
+
+      const std::filesystem::path resolved = absolutePath(path);
+      const std::vector<std::uint8_t> bytes = EngineImage::read(resolved.string());
+      const std::string identity = imageIdentity(bytes);
+      if (expectedIdentity != nullptr && identity != *expectedIdentity)
+        THROW(, "engine image dependency identity mismatch for '" << resolved.string() << "'")
+      if (hasImageDependency(context, identity)) return;
+      if (!loading.insert(identity).second)
+        THROW(, "engine image dependency cycle contains '" << resolved.string() << "'")
+
+      try {
+        const Snapshot snapshot = decodeRecords(context, bytes);
+        const std::vector<ImageDependency> dependencies = imageDependencies(snapshot);
+        std::vector<std::pair<ImageDependency, std::filesystem::path>> resolvedDependencies;
+        resolvedDependencies.reserve(dependencies.size());
+        for (const ImageDependency &dependency : dependencies) {
+          std::filesystem::path dependencyPath(dependency.path);
+          if (dependencyPath.is_relative()) dependencyPath = resolved.parent_path() / dependencyPath;
+          dependencyPath = absolutePath(dependencyPath);
+          resolvedDependencies.emplace_back(dependency, dependencyPath);
+          loadImage(context, dependencyPath, loading, &resolvedDependencies.back().first.identity);
+        }
+
+        restore(context, snapshot, true);
+        for (const auto &[dependency, dependencyPath] : resolvedDependencies)
+          rememberImageDependency(context, dependency.identity, dependencyPath);
+        rememberImageDependency(context, identity, resolved);
+      } catch (...) {
+        loading.erase(identity);
+        throw;
+      }
+      loading.erase(identity);
+    }
   } // namespace
 
   std::vector<std::uint8_t> EngineImage::encode(context::Context &context) {
@@ -1427,11 +1679,87 @@ namespace recurloop {
   }
 
   void EngineImage::save(context::Context &context, const std::string &path) {
-    const std::vector<std::uint8_t> bytes = encode(context);
+    Size base = imageExportBase(context);
+    if (hasImageDependencyPath(context, path)) base = 0;
+    std::vector<Record> records = capture(context, base);
+    if (base == 0) {
+      // A full snapshot is self-contained. Loaded-image metadata is useful to
+      // this process for duplicate suppression, but must not make a standalone
+      // export depend on files it already contains.
+      removeDependencyMetadata(records);
+    } else {
+      removeSelfDependency(records, path);
+      prepareDependencyPaths(records, path);
+    }
+    const std::vector<std::uint8_t> bytes = encodeRecords(records);
     write(bytes, path);
   }
 
   void EngineImage::load(context::Context &context, const std::string &path) {
-    decode(context, read(path));
+    std::unordered_set<std::string> loading;
+    loadImage(context, path, loading);
+  }
+
+
+  void EngineImage::releaseNativeState(context::Context &context) noexcept {
+    try {
+      if (context.lexicon.getMemory().isNull()) return;
+      const PayloadLayouts layouts = loadPayloadLayouts(context);
+      if (layouts.empty()) return;
+
+      std::unordered_set<Size> visited;
+      std::vector<lexicon::Phrase> pending{context.lexicon.phrase()};
+      auto populated = [](radix::Node *, radix::Node *candidate) { return !candidate->isEmpty(); };
+      while (!pending.empty()) {
+        lexicon::Phrase phrase = pending.back();
+        pending.pop_back();
+        if (phrase.isNull() || !visited.insert(phrase.getAddress()).second) continue;
+
+        const auto *fields = payloadLayout(layouts, phrase);
+        bool liveNative = false;
+        if (fields != nullptr) {
+          for (const PayloadLayoutField &field : *fields) {
+            if (field.kind != PayloadFieldKind::NativePointer ||
+                field.offset > phrase.payloadSize() ||
+                sizeof(std::uintptr_t) > phrase.payloadSize() - field.offset)
+              continue;
+            std::uintptr_t pointer = 0;
+            std::memcpy(&pointer, phrase.content(field.offset, sizeof(pointer)).toPtr(), sizeof(pointer));
+            if (pointer != 0) {
+              liveNative = true;
+              break;
+            }
+          }
+        }
+
+        if (liveNative && phrase.containsAction() && phrase.getAction() != nullptr) {
+          try {
+            phrase.getAction()(context, phrase);
+          } catch (...) {
+            // Teardown is best effort. The engine must still release its own
+            // arenas and executable mappings even if a library finalizer fails.
+          }
+        }
+
+        if (!phrase.containsSubdictionary()) continue;
+        for (lexicon::Dictionary child = phrase.fore(populated); !child.isNull(); child = child.next(populated))
+          pending.push_back(child.getPhrase());
+      }
+    } catch (...) {
+      // Destructors call this path; never let cleanup escape.
+    }
+  }
+
+  void EngineImage::markExportBase(context::Context &context) {
+    if (imageDependencies(context, false).isNull()) return;
+    lexicon::Phrase root = context.lexicon.phrase();
+    lexicon::Phrase marker = root.append(std::string(ImageExportBaseName))
+                                 .make()
+                                 .setType(lexicon::phrase::type::getData(root))
+                                 .save();
+    marker.setSerializable(false).save();
+    marker.store(Size{0});
+    const Size checkpoint = context.lexicon.checkpoint().getAddress();
+    marker.update(0, checkpoint);
   }
 } // namespace recurloop
