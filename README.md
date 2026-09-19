@@ -627,6 +627,24 @@ engine import "/tmp/example.rli"
 assert answer == 42
 ```
 
+A compiled `lexicon` object can be stored as a reusable fragment instead of a
+complete engine snapshot:
+
+```rl
+let routes = lexicon {
+    let api = [ health = <debug:ping> ]
+}
+
+engine export <routes> "/tmp/routes.rli"
+
+let application = [
+    merge "/tmp/routes.rli"
+]
+```
+
+The fragment can be merged below any active dictionary and does not replace
+the global language state.
+
 Images can contain serializable lexicon state including values, phrases,
 types, compiled modules, and relocations. Process-local JIT entries are not
 stored as raw addresses; they are rebuilt after import.

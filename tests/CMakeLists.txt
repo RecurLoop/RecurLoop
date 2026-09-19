@@ -256,7 +256,8 @@ if(ENABLE_TESTS_FEATURE)
     recurloop_add_feature_test(recurloop/language/lexicon_merge.cmake
         DEPENDS
             ${RECURLOOP_CHECK_COMMON_FILES}
-            "${CMAKE_CURRENT_SOURCE_DIR}/feature/recurloop/language/_lexicon_merge.rl")
+            "${CMAKE_CURRENT_SOURCE_DIR}/feature/recurloop/language/_lexicon_merge.rl"
+            "${CMAKE_CURRENT_SOURCE_DIR}/feature/recurloop/language/_lexicon_fragment_consumer.rl")
     recurloop_add_feature_test(recurloop/language/persistent_extensions.cmake
         DEPENDS ${RECURLOOP_CHECK_COMMON_FILES} ${RECURLOOP_CHECK_PERSISTENT_EXAMPLE_FILES})
     recurloop_add_feature_test(recurloop/language/phrase_aliases.cmake

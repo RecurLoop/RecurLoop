@@ -27,8 +27,11 @@ namespace recurloop {
     ~TranslationUnitRegistry();
 
     void start(lexicon::Phrase phrase);
+    std::vector<std::uint8_t> image(lexicon::Phrase phrase);
     void merge(lexicon::Phrase source, lexicon::Phrase target);
+    void merge(const std::string &path, lexicon::Phrase target);
     static void merge(context::Context &context, lexicon::Phrase &invoked);
+    static lexicon::Phrase reference(context::Context &context, std::string_view path);
 
     static std::vector<std::uint8_t> descriptor(std::string_view source);
     static std::string source(lexicon::Phrase phrase);

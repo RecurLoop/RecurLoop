@@ -1408,9 +1408,17 @@ namespace recurloop {
     internal::CoreDefinition::apply(context, source, sourcePath);
   }
 
-  void EngineImage::save(context::Context &context, const std::string &path) {
+  std::vector<std::uint8_t> EngineImage::read(const std::string &path) {
     if (path.empty()) THROW(, "engine image path cannot be empty")
-    const std::vector<std::uint8_t> bytes = encode(context);
+    std::ifstream input(path, std::ios::binary);
+    if (!input.is_open()) THROW(, "cannot open engine image for reading: '" << path << "'")
+    std::vector<std::uint8_t> bytes{std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>()};
+    if (input.bad()) THROW(, "cannot read engine image: '" << path << "'")
+    return bytes;
+  }
+
+  void EngineImage::write(std::span<const std::uint8_t> bytes, const std::string &path) {
+    if (path.empty()) THROW(, "engine image path cannot be empty")
     std::ofstream output(path, std::ios::binary | std::ios::trunc);
     if (!output.is_open()) THROW(, "cannot open engine image for writing: '" << path << "'")
     output.write(reinterpret_cast<const char *>(bytes.data()), static_cast<std::streamsize>(bytes.size()));
@@ -1418,12 +1426,12 @@ namespace recurloop {
     if (!output) THROW(, "cannot write engine image: '" << path << "'")
   }
 
+  void EngineImage::save(context::Context &context, const std::string &path) {
+    const std::vector<std::uint8_t> bytes = encode(context);
+    write(bytes, path);
+  }
+
   void EngineImage::load(context::Context &context, const std::string &path) {
-    if (path.empty()) THROW(, "engine image path cannot be empty")
-    std::ifstream input(path, std::ios::binary);
-    if (!input.is_open()) THROW(, "cannot open engine image for reading: '" << path << "'")
-    std::vector<std::uint8_t> bytes{std::istreambuf_iterator<char>(input), std::istreambuf_iterator<char>()};
-    if (input.bad()) THROW(, "cannot read engine image: '" << path << "'")
-    decode(context, bytes);
+    decode(context, read(path));
   }
 } // namespace recurloop

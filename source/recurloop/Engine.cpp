@@ -5,6 +5,7 @@
 #include <recurloop/EngineImage.hpp>
 #include <recurloop/Execution.hpp>
 #include <recurloop/Expressions.hpp>
+#include <recurloop/TranslationUnits.hpp>
 #include <utilities/Exception.hpp>
 
 #include <algorithm>
@@ -36,13 +37,16 @@ namespace recurloop {
       return trim(std::move(result));
     }
 
-    std::string path(context::Context &context, std::string_view operation) {
-      const std::string expression = readLine(context);
+    std::string pathExpression(context::Context &context, std::string_view expression, std::string_view operation) {
       if (expression.empty()) THROW(, operation << " requires a path expression")
       const context::Value value = Expressions::evaluate(context, expression);
       if (!value.isString()) THROW(, operation << " path must be a string")
       if (value.asString().find('\0') != std::string::npos) THROW(, operation << " path contains a NUL byte")
       return value.asString();
+    }
+
+    std::string path(context::Context &context, std::string_view operation) {
+      return pathExpression(context, readLine(context), operation);
     }
   } // namespace
 
@@ -54,7 +58,19 @@ namespace recurloop {
   }
 
   void Engine::exportImage(context::Context &context, lexicon::Phrase &) {
-    EngineImage::save(context, path(context, "engine export"));
+    const std::string source = readLine(context);
+    if (source.empty() || source.front() != '<') {
+      EngineImage::save(context, pathExpression(context, source, "engine export"));
+      return;
+    }
+
+    const std::size_t close = source.find('>');
+    if (close == std::string::npos) THROW(, "engine export lexicon reference is missing '>'")
+    const std::string reference = trim(source.substr(1, close - 1));
+    const std::string output = pathExpression(context, trim(source.substr(close + 1)), "engine export lexicon");
+    if (!context.translationUnits) context.translationUnits = std::make_shared<TranslationUnitRegistry>(context);
+    const lexicon::Phrase phrase = TranslationUnitRegistry::reference(context, reference);
+    EngineImage::write(context.translationUnits->image(phrase), output);
   }
 
   void Engine::importImage(context::Context &context, lexicon::Phrase &) {

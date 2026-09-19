@@ -5,6 +5,8 @@ let library = lexicon {
     ]
 }
 
+engine export <library> "/tmp/recurloop-lexicon-fragment-test.rli"
+
 let merged = [
     merge <library>
     gamma = <debug:ping>
@@ -21,3 +23,9 @@ let direct = [
     merge <source>
 ]
 direct:delta
+
+let restored = [
+    merge "/tmp/recurloop-lexicon-fragment-test.rli"
+]
+restored:alpha
+restored:nested:beta

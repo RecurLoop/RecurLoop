@@ -10,6 +10,7 @@
 //   4. The merge target is the currently active dictionary.
 //   5. A compiled lexicon can be merged into multiple locations.
 //   6. Merged content becomes part of the active phrase graph.
+//   7. A compiled lexicon can be exported and merged from a fragment image.
 //
 // Demo phrases alias `debug:ping` so the example stays focused on composition.
 //
@@ -55,6 +56,9 @@ let observability_lexicon = lexicon {
         ]
     ]
 }
+
+// Export only the compiled lexicon fragment, not the complete global engine.
+engine export <http_lexicon> "/tmp/recurloop-http-lexicon.rli"
 
 
 // -----------------------------------------------------------------------------
@@ -114,5 +118,17 @@ print "[flat] p50="
 flattened:metrics:latency:p50
 print "[flat] requests="
 flattened:metrics:requests
+
+
+// -----------------------------------------------------------------------------
+// Merge the exported fragment without loading or replacing global state.
+// -----------------------------------------------------------------------------
+
+let restored = [
+    merge "/tmp/recurloop-http-lexicon.rli"
+]
+
+print "[file] http="
+restored:api:health:live
 
 print "lexicon composition complete"

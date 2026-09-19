@@ -63,6 +63,8 @@ namespace recurloop {
     static void promote(context::Context &context, Size checkpoint, std::span<const lexicon::Phrase> roots);
     static std::string source(context::Context &context);
     static void define(context::Context &context, std::string_view source, std::string_view sourcePath = {});
+    static std::vector<std::uint8_t> read(const std::string &path);
+    static void write(std::span<const std::uint8_t> bytes, const std::string &path);
     static void save(context::Context &context, const std::string &path);
     static void load(context::Context &context, const std::string &path);
   };

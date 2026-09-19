@@ -36,6 +36,25 @@ also supports checkpoint-based partial images with reachable dependencies.
 process-local caches as needed. Image merge can materialize a graph below an
 existing dictionary.
 
+A source-backed `lexicon` can instead be exported as its compiled fragment:
+
+```rl
+let routes = lexicon {
+    let api = [ health = <debug:ping> ]
+}
+
+engine export <routes> "/tmp/routes.rli"
+
+let application = [
+    merge "/tmp/routes.rli"
+]
+```
+
+This form waits for the lexicon's compilation and writes the same partial image
+used by in-memory `merge <routes>`. It does not include the complete active
+engine. `merge "..."` materializes the fragment below the currently active
+dictionary; it does not replace global state.
+
 At the CLI, imports must precede dependent source:
 
 ```bash
