@@ -74,6 +74,13 @@ namespace context {
     // only compiler-language actions are executed. This cache is never
     // serialized.
     JitMemory actionRuntime;
+
+    // Process-local sampling baseline; never included in engine images.
+    struct ProcessStatsSample {
+      std::chrono::steady_clock::time_point time{};
+      double cpuSeconds = 0;
+      bool valid = false;
+    } processStatsSample;
   };
 } // namespace context
 

@@ -73,53 +73,6 @@ namespace recurloop {
       context::Source::progress(context, Byte::length);
     }
 
-    void action_debug_stats(context::Context &context, lexicon::Phrase &invoked) {
-      DEBUG_PROFILE_SCOPE(Stats);
-
-      auto end = std::chrono::high_resolution_clock::now();
-      auto duration = duration_cast<std::chrono::microseconds>(end - context.exec.start);
-      context.exec.start = end;
-
-      double seconds = duration.count() / 1000000.0;
-      const double elaborateSeconds = context.exec.timing.elaborate.count() / 1000000000.0;
-      const double invokeSeconds = context.exec.timing.invoke.count() / 1000000000.0;
-
-      *context.io.out << BOLD NEWLINE << "▶ Execution time: " << RESET << BRIGHT_YELLOW_TEXT << std::fixed
-                      << std::setprecision(6) << seconds << " s" << RESET << NEWLINE;
-      *context.io.out << BOLD << "▶ Elaborate time:  " << RESET << BRIGHT_YELLOW_TEXT << std::fixed
-                      << std::setprecision(6) << elaborateSeconds << " s" << RESET << " ("
-                      << context.exec.timing.elaborateCount << " calls)" << NEWLINE;
-      *context.io.out << BOLD << "▶ Invoke time:    " << RESET << BRIGHT_YELLOW_TEXT << std::fixed
-                      << std::setprecision(6) << invokeSeconds << " s" << RESET << " ("
-                      << context.exec.timing.invokeCount << " calls)" << NEWLINE;
-
-      Size used = context.lexicon.memoryUsed();
-      Size unused = context.lexicon.memoryUnused();
-      Size total = context.lexicon.memorySize();
-
-      constexpr int barWidth = 40;
-      double usageRatio = static_cast<double>(used) / total;
-
-      int usedWidth = static_cast<int>(barWidth * usageRatio);
-      int freeWidth = barWidth - usedWidth;
-
-      *context.io.out << BOLD << "▶ Lexicon memory usage:   " << RESET;
-
-      *context.io.out << BRIGHT_GREEN_BACKGROUND;
-      for (int i = 0; i < usedWidth; ++i) *context.io.out << " ";
-      *context.io.out << BRIGHT_BLACK_BACKGROUND;
-      for (int i = 0; i < freeWidth; ++i) *context.io.out << " ";
-      *context.io.out << RESET << " ";
-
-      *context.io.out << BRIGHT_GREEN_TEXT << used << RESET << " used, " << BRIGHT_BLACK_TEXT << unused << RESET
-                      << " free, " << BRIGHT_WHITE_TEXT << total << RESET << " total" << NEWLINE;
-
-      DEBUG_LOG(STATS, "time: " << seconds << ", used: " << used << ", free: " << unused);
-      DEBUG_LOG(STATS, "elaborate-time: " << elaborateSeconds << ", elaborate-calls: "
-                                          << context.exec.timing.elaborateCount << ", invoke-time: " << invokeSeconds
-                                          << ", invoke-calls: " << context.exec.timing.invokeCount);
-      context.exec.timing.clear();
-    }
 
     void render_phrase_recursive(std::ostream *out, lexicon::Phrase dictionary, int level) {
       auto filter = [](radix::Node *item, radix::Node *candidate) -> bool { return !candidate->isEmpty(); };

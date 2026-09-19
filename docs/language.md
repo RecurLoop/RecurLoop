@@ -5,6 +5,24 @@ phrase has a key and may carry behavior, data, a prototype, a type, a
 successor, and a nested dictionary. The normal lookup rule selects the longest
 matching key in the current dictionary.
 
+## Process diagnostics
+
+`debug:stats` prints a process-monitor snapshot: PID, process age, threads,
+CPU time and CPU usage since the previous snapshot (100% is one core), resident/peak/virtual
+memory and swap, context switches, page faults, and storage I/O counters.
+An engine section shows the current context's lexicon arena occupancy, program
+and action JIT bytes, and accumulated elaboration/invocation timings. Those
+timings cover completed scopes, can overlap, and are not reset by a snapshot.
+Arena capacity and JIT bytes are not additional resident-memory totals.
+Linux process metrics come from `/proc` and `getrusage`; unavailable values are
+shown as `n/a`. Output uses a bordered panel with color only on a terminal
+(`NO_COLOR` disables color), so redirected snapshots contain no ANSI escapes.
+The first snapshot shows average CPU usage since process start and establishes
+a baseline (or `n/a` if the process age cannot yet be measured).
+Subsequent snapshots use process CPU-time deltas over a monotonic wall-clock
+interval; sampling is immediate and does not sleep. The baseline belongs to
+the current context and is not serialized in engine images.
+
 ## Values and expressions
 
 Runtime values are `null`, `bool`, `int`, `real`, and `string`.
