@@ -344,6 +344,34 @@ var compiled_string_result = select_string()
   EXPECT_FALSE(function.matchExact(Byte(const_cast<char *>("(u8*)")), 0, 5 * Byte::length).isNull());
 }
 
+TEST_F(ExpressionLanguageTesting, CallsQualifiedFunctionsFromTopLevelExpressions) {
+  ASSERT_EQ(execute(R"(
+let Math = [
+  gcd = fn (left:i64, right:i64) -> i64 {
+    var a = left
+    var b = right
+    while b != 0 {
+      const remainder = a % b
+      a = b
+      b = remainder
+    }
+    return a
+  }
+]
+let scope = <":">
+assert Math:gcd(84, 30) == 6
+assert Math scope gcd(84, 30) == 6
+let compiled_qualified_call = fn () -> i64 {
+  return Math scope gcd(105, 30)
+}
+var result = compiled_qualified_call()
+print result
+)"),
+            0)
+      << errors.str();
+  EXPECT_EQ(output.str(), "15\n");
+}
+
 TEST_F(ExpressionLanguageTesting, ValidatesFunctionSignaturesAndCalls) {
   EXPECT_NE(execute("let add = fn (left:i64, right:i64) -> i64 { return left + right }\nprint add(1)\n"), 0);
   EXPECT_NE(errors.str().find("expects 2 argument"), std::string::npos);

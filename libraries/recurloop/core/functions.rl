@@ -98,6 +98,12 @@ phrase fn_grammar_postfix_question = "?" in fn_grammar_postfix {
   action host "fn.postfix.propagate"
 }
 
+phrase fn_grammar_postfix_colon = ":" in fn_grammar_postfix {
+  prototype colon
+  type phrase_types_callable
+  action host "fn.postfix.qualify"
+}
+
 phrase fn_grammar_postfix_lbracket = "[" in fn_grammar_postfix {
   prototype lbracket_862dc1
   type phrase_types_callable

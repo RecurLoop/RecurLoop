@@ -28,6 +28,12 @@ Operator precedence, from highest to lowest:
 6. `&&`;
 7. `||`.
 
+Primary and postfix syntax is phrase-backed too. The standard runtime-expression
+grammar declares grouping as a primary phrase and qualification, calls, and
+member calls as postfix phrases. Compiled `fn` expressions use the corresponding
+phrase dictionaries, so aliases of structural tokens work consistently in both
+paths instead of being recognized by spelling-specific parser branches.
+
 Integer arithmetic checks overflow and division by zero. Mixed numeric
 operations produce `real`. String addition concatenates, and boolean operators
 short-circuit.

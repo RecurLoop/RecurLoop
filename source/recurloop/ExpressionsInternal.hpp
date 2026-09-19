@@ -96,6 +96,11 @@ namespace recurloop {
     void literalFalse(context::Context &, lexicon::Phrase &);
     void literalNull(context::Context &, lexicon::Phrase &);
 
+    void primaryGroup(context::Context &, lexicon::Phrase &);
+    void postfixQualify(context::Context &, lexicon::Phrase &);
+    void postfixCall(context::Context &, lexicon::Phrase &);
+    void postfixMember(context::Context &, lexicon::Phrase &);
+
     char peek(context::Context &context);
     std::string readLine(context::Context &context);
     std::string trim(std::string source);

@@ -102,6 +102,44 @@ namespace recurloop {
       return *frame.arguments;
     }
 
+    class Parser;
+
+    struct ParsedExpression {
+      Token token;
+      context::Value value;
+      bool named = false;
+      bool resolved = false;
+    };
+
+    struct PrimaryParseFrame {
+      Parser *parser = nullptr;
+      Token start;
+      bool active = false;
+      ParsedExpression result;
+      bool produced = false;
+    };
+
+    struct PostfixParseFrame {
+      Parser *parser = nullptr;
+      Token operation;
+      bool active = false;
+      ParsedExpression result;
+      bool produced = false;
+    };
+
+    thread_local PrimaryParseFrame *currentPrimaryParse = nullptr;
+    thread_local PostfixParseFrame *currentPostfixParse = nullptr;
+
+    PrimaryParseFrame &primaryParseFrame() {
+      if (currentPrimaryParse == nullptr) THROW(, "expression primary phrase invoked without a parser frame")
+      return *currentPrimaryParse;
+    }
+
+    PostfixParseFrame &postfixParseFrame() {
+      if (currentPostfixParse == nullptr) THROW(, "expression postfix phrase invoked without a parser frame")
+      return *currentPostfixParse;
+    }
+
     context::Value invokeOperator(context::Context &context, lexicon::Phrase &phrase, const Token &token,
                                   const context::Value &left, const context::Value &right) {
       EvaluationFrame frame{&token, &left, &right, {}};
@@ -151,11 +189,14 @@ namespace recurloop {
       Parser(context::Context &context, std::string_view source)
           : context(context), grammar(findPhrase(context.lexicon.phrase(), ExpressionDictionaryName)),
             prefixOperators(findPhrase(grammar, "prefix")), infixOperators(findPhrase(grammar, "infix")),
+            primaries(findPhrase(grammar, "primary")), postfixes(findPhrase(grammar, "postfix")),
             symbols(findPhrase(grammar, "symbols")), builtins(findPhrase(grammar, "builtins")),
             dynamicBuiltins(findPhrase(grammar, "dynamic")), literals(findPhrase(grammar, "literals")),
-            lexer(context, source, {symbols, prefixOperators, infixOperators}, expressionFail, {}) {
+            lexer(context, source, {symbols, prefixOperators, infixOperators, primaries, postfixes}, expressionFail,
+                  {}) {
         if (grammar.isNull()) THROW(, "expression phrase grammar is not installed")
-        if (prefixOperators.isNull() || infixOperators.isNull() || symbols.isNull())
+        if (prefixOperators.isNull() || infixOperators.isNull() || primaries.isNull() || postfixes.isNull() ||
+            symbols.isNull())
           THROW(, "expression phrase grammar is incomplete")
       }
 
@@ -196,13 +237,63 @@ namespace recurloop {
 
       std::vector<context::Value> arguments(bool active) {
         std::vector<context::Value> result;
-        lexer.expect("(");
         if (lexer.accept(")")) return result;
         while (true) {
           result.push_back(expression(1, active));
           if (lexer.accept(")")) return result;
           lexer.expect(",");
         }
+      }
+
+      ParsedExpression invokePrimary(lexicon::Phrase syntax, Token start, bool active) {
+        PrimaryParseFrame frame{this, std::move(start), active, {}, false};
+        PrimaryParseFrame *previous = currentPrimaryParse;
+        currentPrimaryParse = &frame;
+        try {
+          syntax.invoke(context);
+        } catch (...) {
+          currentPrimaryParse = previous;
+          throw;
+        }
+        currentPrimaryParse = previous;
+        if (!frame.produced)
+          expressionFail(context, frame.start.offset, "expression primary phrase did not produce a value");
+        return std::move(frame.result);
+      }
+
+      ParsedExpression invokePostfix(lexicon::Phrase syntax, Token operation, ParsedExpression base, bool active) {
+        PostfixParseFrame frame{this, std::move(operation), active, std::move(base), false};
+        PostfixParseFrame *previous = currentPostfixParse;
+        currentPostfixParse = &frame;
+        try {
+          syntax.invoke(context);
+        } catch (...) {
+          currentPostfixParse = previous;
+          throw;
+        }
+        currentPostfixParse = previous;
+        if (!frame.produced)
+          expressionFail(context, frame.operation.offset, "expression postfix phrase did not produce a value");
+        return std::move(frame.result);
+      }
+
+      context::Value resolve(ParsedExpression &parsed, bool active) {
+        if (parsed.resolved) return parsed.value;
+        if (!parsed.named)
+          expressionFail(context, parsed.token.offset, "expression phrase produced an unresolved value");
+        lexicon::Phrase literal = LanguageGrammar::resolve(context, literals, parsed.token.text);
+        if (!literal.isNull()) {
+          parsed.value = active ? invokeBuiltin(context, literal, parsed.token) : context::Value();
+        } else if (active) {
+          try {
+            parsed.value = context.values().get(parsed.token.text);
+          } catch (const Exception &error) {
+            if (error.hasSourceLocation()) throw;
+            expressionFail(context, parsed.token.offset, error.description());
+          }
+        }
+        parsed.resolved = true;
+        return parsed.value;
       }
 
       std::vector<compiler::TypeId> nativeArgumentTypes(const std::vector<context::Value> &values) {
@@ -255,14 +346,15 @@ namespace recurloop {
               expressionFail(context, name.offset, "cannot resolve imported function '" + std::string(name.text) + "'");
             }
           } else {
-            lexicon::Phrase root = context.lexicon.phrase();
-            lexicon::Match match =
-                root.matchExact(Byte(const_cast<char *>(name.text.data())), 0, name.text.size() * Byte::length,
-                                [](radix::Node *, radix::Match *candidate) -> bool {
-                                  return !lexicon::Dictionary(*candidate).getPhrase().isNull();
-                                });
-            if (match.isNull()) expressionFail(context, name.offset, "unknown function '" + name.text + "'");
-            lexicon::Phrase phrase = match.getPhrase();
+            lexicon::Phrase phrase = context.lexicon.phrase();
+            std::string_view qualified = name.text;
+            while (!qualified.empty()) {
+              const std::size_t separator = qualified.find(':');
+              phrase = findPhrase(phrase, qualified.substr(0, separator));
+              if (phrase.isNull() || separator == std::string_view::npos) break;
+              qualified.remove_prefix(separator + 1);
+            }
+            if (phrase.isNull()) expressionFail(context, name.offset, "unknown function '" + name.text + "'");
             const std::string key =
                 context.language().functionKey(function->parameterTypes, function->signature.variadic);
             phrase = findPhrase(phrase, key);
@@ -364,8 +456,60 @@ namespace recurloop {
         }
       }
 
+    public:
+      ParsedExpression parseGrouped(const Token &start, bool active) {
+        ParsedExpression result;
+        result.token = start;
+        result.value = expression(1, active);
+        result.resolved = true;
+        lexer.expect(")");
+        return result;
+      }
+
+      ParsedExpression parseQualification(Token operation, ParsedExpression base) {
+        if (!base.named || base.resolved)
+          expressionFail(context, operation.offset, "name qualification requires an unresolved name");
+        const Token component = lexer.take();
+        if (component.kind != TokenKind::Identifier)
+          expressionFail(context, component.offset, "expected name after '" + operation.text + "'");
+        base.token.text += ":" + component.text;
+        return base;
+      }
+
+      ParsedExpression parseCall(Token operation, ParsedExpression base, bool active) {
+        if (!base.named || base.resolved)
+          expressionFail(context, operation.offset, "a direct call requires a named function");
+        std::vector<context::Value> values = arguments(active);
+        base.value = active ? builtin(base.token, std::move(values)) : context::Value();
+        base.resolved = true;
+        return base;
+      }
+
+      ParsedExpression parseMember(Token, ParsedExpression base, bool active) {
+        base.value = resolve(base, active);
+        const Token method = lexer.take();
+        if (method.kind != TokenKind::Identifier)
+          expressionFail(context, method.offset, "expected method name after '.'");
+        lexicon::Phrase call = LanguageGrammar::resolve(context, postfixes, lexer.current().text);
+        lexicon::Phrase canonicalCall = findPhrase(postfixes, "(");
+        if (call.isNull() || canonicalCall.isNull() || call.getAddress() != canonicalCall.getAddress())
+          expressionFail(context, method.offset, "expected a call after method name");
+        lexer.take();
+        std::vector<context::Value> values = arguments(active);
+        if (active) {
+          values.insert(values.begin(), base.value);
+          base.value = builtin(method, std::move(values));
+        }
+        base.named = false;
+        base.resolved = true;
+        return base;
+      }
+
+    private:
       context::Value primary(bool active) {
-        const Token token = lexer.take();
+        Token token = lexer.take();
+        ParsedExpression result;
+        result.token = token;
         if (token.kind == TokenKind::Integer) {
           std::string text = token.text;
           text.erase(std::remove(text.begin(), text.end(), '_'), text.end());
@@ -384,66 +528,75 @@ namespace recurloop {
           const auto [end, error] = std::from_chars(text.data(), text.data() + text.size(), value, base);
           if (text.empty() || error != std::errc() || end != text.data() + text.size())
             expressionFail(context, token.offset, "invalid integer literal");
-          return context::Value(value);
-        }
-        if (token.kind == TokenKind::Real) {
+          result.value = context::Value(value);
+          result.resolved = true;
+        } else if (token.kind == TokenKind::Real) {
           std::string text = token.text;
           text.erase(std::remove(text.begin(), text.end(), '_'), text.end());
           double value = 0;
           const auto [end, error] = std::from_chars(text.data(), text.data() + text.size(), value);
           if (error != std::errc() || end != text.data() + text.size() || !std::isfinite(value))
             expressionFail(context, token.offset, "invalid real literal");
-          return context::Value(value);
-        }
-        if (token.kind == TokenKind::String) return context::Value(token.text);
-        if (LanguageGrammar::matches(context, token.text, "(")) {
-          context::Value result = expression(1, active);
-          lexer.expect(")");
-          return result;
-        }
-        if (token.kind == TokenKind::Identifier) {
-          lexicon::Phrase literal = LanguageGrammar::resolve(context, literals, token.text);
-          if (!literal.isNull()) return active ? invokeBuiltin(context, literal, token) : context::Value();
-          if (LanguageGrammar::matches(context, lexer.current().text, "(")) {
-            std::vector<context::Value> values = arguments(active);
-            return active ? builtin(token, std::move(values)) : context::Value();
+          result.value = context::Value(value);
+          result.resolved = true;
+        } else if (token.kind == TokenKind::String) {
+          result.value = context::Value(token.text);
+          result.resolved = true;
+        } else {
+          lexicon::Phrase syntax = LanguageGrammar::resolve(context, primaries, token.text);
+          if (!syntax.isNull()) {
+            result = invokePrimary(syntax, std::move(token), active);
+          } else if (token.kind == TokenKind::Identifier) {
+            result.named = true;
+          } else {
+            expressionFail(context, token.offset, "expected a value, variable or primary phrase");
           }
-          context::Value value;
-          if (active) {
-            try {
-              value = context.values().get(token.text);
-            } catch (const Exception &error) {
-              if (error.hasSourceLocation()) throw;
-              expressionFail(context, token.offset, error.description());
-            }
-          }
-          while (lexer.accept(".")) {
-            Token method = lexer.take();
-            if (method.kind != TokenKind::Identifier)
-              expressionFail(context, lexer.current().offset, "expected method name after '.'");
-            if (!LanguageGrammar::matches(context, lexer.current().text, "("))
-              expressionFail(context, method.offset, "expected '(' after method name");
-            std::vector<context::Value> values = arguments(active);
-            if (active) {
-              values.insert(values.begin(), value);
-              value = builtin(method, std::move(values));
-            }
-          }
-          return value;
         }
-        expressionFail(context, token.offset, "expected a value, variable or '('");
+
+        while (true) {
+          lexicon::Phrase syntax = LanguageGrammar::resolve(context, postfixes, lexer.current().text);
+          if (syntax.isNull()) break;
+          result = invokePostfix(syntax, lexer.take(), std::move(result), active);
+        }
+        return resolve(result, active);
       }
 
       context::Context &context;
       lexicon::Phrase grammar;
       lexicon::Phrase prefixOperators;
       lexicon::Phrase infixOperators;
+      lexicon::Phrase primaries;
+      lexicon::Phrase postfixes;
       lexicon::Phrase symbols;
       lexicon::Phrase builtins;
       lexicon::Phrase dynamicBuiltins;
       lexicon::Phrase literals;
       Lexer lexer;
     };
+
+    void primaryGroup(context::Context &, lexicon::Phrase &) {
+      PrimaryParseFrame &frame = primaryParseFrame();
+      frame.result = frame.parser->parseGrouped(frame.start, frame.active);
+      frame.produced = true;
+    }
+
+    void postfixQualify(context::Context &, lexicon::Phrase &) {
+      PostfixParseFrame &frame = postfixParseFrame();
+      frame.result = frame.parser->parseQualification(std::move(frame.operation), std::move(frame.result));
+      frame.produced = true;
+    }
+
+    void postfixCall(context::Context &, lexicon::Phrase &) {
+      PostfixParseFrame &frame = postfixParseFrame();
+      frame.result = frame.parser->parseCall(std::move(frame.operation), std::move(frame.result), frame.active);
+      frame.produced = true;
+    }
+
+    void postfixMember(context::Context &, lexicon::Phrase &) {
+      PostfixParseFrame &frame = postfixParseFrame();
+      frame.result = frame.parser->parseMember(std::move(frame.operation), std::move(frame.result), frame.active);
+      frame.produced = true;
+    }
 
   } // namespace internal
 

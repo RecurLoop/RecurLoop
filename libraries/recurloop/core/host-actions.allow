@@ -85,6 +85,10 @@ expressions.operator.infix-subtract
 expressions.operator.prefix-negative
 expressions.operator.prefix-not
 expressions.operator.prefix-positive
+expressions.postfix.call
+expressions.postfix.member
+expressions.postfix.qualify
+expressions.primary.group
 expressions.print
 expressions.variable
 fn.assignment.emit-add
@@ -119,6 +123,7 @@ fn.postfix.call
 fn.postfix.index
 fn.postfix.member
 fn.postfix.propagate
+fn.postfix.qualify
 fn.primary.block
 fn.primary.cast
 fn.primary.conditional

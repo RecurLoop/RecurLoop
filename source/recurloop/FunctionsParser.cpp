@@ -441,7 +441,6 @@ namespace recurloop {
         if (!syntax.isNull()) return invokePrimary(syntax, std::move(token));
         if (token.kind != TokenKind::Identifier && token.kind != TokenKind::Symbol)
           fail({}, token.offset, "expected an expression");
-        while (lexer.accept(":")) token.text += ":" + identifier("a qualified name component").text;
         result->text = token.text;
         result->kind = Expression::Kind::Variable;
         return result;
@@ -578,6 +577,13 @@ namespace recurloop {
         return result;
       }
 
+      std::unique_ptr<Expression> parseQualification(Token operation, std::unique_ptr<Expression> base) {
+        if (base->kind != Expression::Kind::Variable)
+          fail({}, operation.offset, "name qualification requires an unresolved name");
+        base->text += ":" + identifier("a qualified name component").text;
+        return base;
+      }
+
       std::unique_ptr<Expression> parseCall(Token operation, std::unique_ptr<Expression> base, lexicon::Phrase syntax) {
         if (base->kind != Expression::Kind::Variable)
           fail({}, operation.offset, "a direct fn call requires a named function or local");
@@ -698,6 +704,11 @@ namespace recurloop {
         frame.result = frame.parser->parsePropagation(std::move(frame.operation), std::move(frame.result), syntax);
       }
 
+      void parseQualificationSyntax(context::Context &, lexicon::Phrase &) {
+        PostfixParseFrame &frame = postfixParseFrame();
+        frame.result = frame.parser->parseQualification(std::move(frame.operation), std::move(frame.result));
+      }
+
       void parseCallSyntax(context::Context &, lexicon::Phrase &syntax) {
         PostfixParseFrame &frame = postfixParseFrame();
         frame.result = frame.parser->parseCall(std::move(frame.operation), std::move(frame.result), syntax);
@@ -720,8 +731,8 @@ namespace recurloop {
       context.actions().define("fn.postfix.index", parseIndexSyntax);
       context.actions().define("fn.postfix.member", parseMemberSyntax);
       context.actions().define("fn.postfix.propagate", parsePropagationSyntax);
+      context.actions().define("fn.postfix.qualify", parseQualificationSyntax);
       context.actions().define("fn.postfix.call", parseCallSyntax);
-
     }
 
     void setupStatementSyntax(context::Context &context, lexicon::Phrase grammar) {
@@ -740,6 +751,7 @@ namespace recurloop {
       context.actions().define("fn.postfix.index", parseIndexSyntax);
       context.actions().define("fn.postfix.member", parseMemberSyntax);
       context.actions().define("fn.postfix.propagate", parsePropagationSyntax);
+      context.actions().define("fn.postfix.qualify", parseQualificationSyntax);
       context.actions().define("fn.postfix.call", parseCallSyntax);
 
       lexicon::Phrase root = context.lexicon.phrase();
@@ -815,6 +827,7 @@ namespace recurloop {
       postfix("[", parseIndexSyntax);
       postfix(".", parseMemberSyntax);
       postfix("?", parsePropagationSyntax);
+      postfix(":", parseQualificationSyntax);
       postfix("(", parseCallSyntax);
     }
 
@@ -833,7 +846,7 @@ namespace recurloop {
            {"var", "let", "const", "set", "if", "while", "break", "continue", "return", "defer"});
       bind(exact(grammar, IntrinsicDictionaryName), {"cast", "&", "*"});
       bind(exact(grammar, "primary"), {"(", "{", "fn", "if", "cast"});
-      bind(exact(grammar, "postfix"), {"[", ".", "?", "("});
+      bind(exact(grammar, "postfix"), {"[", ".", "?", ":", "("});
     }
 
     FunctionDefinition parseSignature(context::Context &context, std::string_view source, const std::string &symbol,

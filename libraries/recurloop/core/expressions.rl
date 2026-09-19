@@ -65,6 +65,16 @@ phrase expressions_prefix = "prefix" in expressions {
   type phrase_types_data
 }
 
+phrase expressions_primary = "primary" in expressions {
+  dictionary
+  type phrase_types_data
+}
+
+phrase expressions_postfix = "postfix" in expressions {
+  dictionary
+  type phrase_types_data
+}
+
 phrase expressions_symbols = "symbols" in expressions {
   dictionary
   type phrase_types_data
@@ -330,9 +340,28 @@ phrase expressions_prefix_minus = "-" in expressions_prefix {
   operator prefix precedence 7
 }
 
-phrase expressions_symbols_lparen = "(" in expressions_symbols {
+phrase expressions_primary_lparen = "(" in expressions_primary {
   prototype lparen
-  type phrase_types_data
+  type phrase_types_callable
+  action host "expressions.primary.group"
+}
+
+phrase expressions_postfix_colon = ":" in expressions_postfix {
+  prototype colon
+  type phrase_types_callable
+  action host "expressions.postfix.qualify"
+}
+
+phrase expressions_postfix_lparen = "(" in expressions_postfix {
+  prototype lparen
+  type phrase_types_callable
+  action host "expressions.postfix.call"
+}
+
+phrase expressions_postfix_dot = "." in expressions_postfix {
+  prototype dot
+  type phrase_types_callable
+  action host "expressions.postfix.member"
 }
 
 phrase expressions_symbols_rparen = ")" in expressions_symbols {
@@ -342,11 +371,6 @@ phrase expressions_symbols_rparen = ")" in expressions_symbols {
 
 phrase expressions_symbols_comma = "," in expressions_symbols {
   prototype comma
-  type phrase_types_data
-}
-
-phrase expressions_symbols_dot = "." in expressions_symbols {
-  prototype dot
   type phrase_types_data
 }
 

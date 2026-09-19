@@ -107,6 +107,8 @@ namespace recurloop {
       lexicon::Phrase grammar = grammarDictionary(root, ExpressionDictionaryName);
       lexicon::Phrase prefix = grammarDictionary(grammar, "prefix");
       lexicon::Phrase infix = grammarDictionary(grammar, "infix");
+      lexicon::Phrase primary = grammarDictionary(grammar, "primary");
+      lexicon::Phrase postfix = grammarDictionary(grammar, "postfix");
       lexicon::Phrase symbols = grammarDictionary(grammar, "symbols");
       lexicon::Phrase builtins = grammarDictionary(grammar, "builtins");
       grammarDictionary(grammar, "dynamic");
@@ -120,7 +122,7 @@ namespace recurloop {
       for (std::string_view key : {"=", "+=", "-=", "*=", "/=", "%="})
         LanguageGrammar::ensureMarker(root, key, key == "=" ? lexicon::Phrase{} : root);
 
-      for (std::string_view symbol : {"(", ")", ",", "."})
+      for (std::string_view symbol : {")", ","})
         symbols.append(std::string(symbol))
             .make()
             .setPrototype(LanguageGrammar::ensureMarker(root, symbol))
@@ -144,6 +146,11 @@ namespace recurloop {
       defineOperator(infix, "*", infixMultiply, 6, ExpressionOperator::None, marker("*"));
       defineOperator(infix, "/", infixDivide, 6, ExpressionOperator::None, marker("/"));
       defineOperator(infix, "%", infixModulo, 6, ExpressionOperator::None, marker("%"));
+
+      defineCallable(primary, "(", primaryGroup, marker("("));
+      defineCallable(postfix, ":", postfixQualify, marker(":"));
+      defineCallable(postfix, "(", postfixCall, marker("("));
+      defineCallable(postfix, ".", postfixMember, marker("."));
 
       for (std::string_view key : {"+=", "-=", "*=", "/=", "%="}) {
         const std::string operatorKey(1, key.front());
@@ -300,6 +307,10 @@ namespace recurloop {
     context.actions().define("expressions.literal.true", internal::literalTrue);
     context.actions().define("expressions.literal.false", internal::literalFalse);
     context.actions().define("expressions.literal.null", internal::literalNull);
+    context.actions().define("expressions.primary.group", internal::primaryGroup);
+    context.actions().define("expressions.postfix.qualify", internal::postfixQualify);
+    context.actions().define("expressions.postfix.call", internal::postfixCall);
+    context.actions().define("expressions.postfix.member", internal::postfixMember);
     context.actions().define("expressions.variable", variable);
     context.actions().define("expressions.constant", constant);
     context.actions().define("expressions.assign", assign);
@@ -325,6 +336,4 @@ namespace recurloop {
     bind("print", print);
     bind("assert", assertTrue);
   }
-
-
 } // namespace recurloop
