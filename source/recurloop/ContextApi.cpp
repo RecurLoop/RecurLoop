@@ -1527,7 +1527,7 @@ namespace recurloop {
         const compiler::Module linked = value.language().composeModule(*module);
         const compiler::JitImage image = compiler::JitLinker::link(
             linked, value.runtime, [&](std::string_view dependency) -> std::optional<std::uintptr_t> {
-              return compiler::DynamicLinker::instance().resolveFromDefault(dependency);
+              return compiler::DynamicLinker::instance().resolve(dependency, value.language());
             });
         const std::uintptr_t entry = image.address(functionSymbol);
         if (entry == 0) THROW(, "context function compile could not resolve native entry for '" << functionSymbol << "'")
@@ -1546,7 +1546,7 @@ namespace recurloop {
         const compiler::Module linked = value.language().composeModule(*module);
         const compiler::JitImage image = compiler::JitLinker::link(
             linked, value.runtime, [&](std::string_view dependency) -> std::optional<std::uintptr_t> {
-              return compiler::DynamicLinker::instance().resolveFromDefault(dependency);
+              return compiler::DynamicLinker::instance().resolve(dependency, value.language());
             });
         const std::uintptr_t entry = image.address(functionSymbol);
         if (entry == 0) THROW(, "context function address could not resolve native entry for '" << functionSymbol << "'")

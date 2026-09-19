@@ -660,7 +660,7 @@ namespace recurloop {
         const bool nativeImport = std::any_of(imports.begin(), imports.end(),
                                               [&](const NativeImport &candidate) { return candidate.name == symbol; });
         if (nativeImport) return true;
-        return compiler::DynamicLinker::instance().resolveFromDefault(symbol).has_value();
+        return compiler::DynamicLinker::instance().resolve(symbol, context.language()).has_value();
       };
       const bool unresolved =
           std::any_of(linked.symbols().begin(), linked.symbols().end(), [&](const compiler::Symbol &symbol) {
@@ -682,7 +682,7 @@ namespace recurloop {
             const auto found = std::find_if(imports.begin(), imports.end(),
                                             [&](const NativeImport &candidate) { return candidate.name == symbol; });
             if (found != imports.end()) return found->address;
-            return compiler::DynamicLinker::instance().resolveFromDefault(symbol);
+            return compiler::DynamicLinker::instance().resolve(symbol, context.language());
           });
       const std::uintptr_t entry = image.address(entrySymbol);
       // Definitions without process-local phrase imports retain their module

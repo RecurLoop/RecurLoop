@@ -274,7 +274,7 @@ namespace recurloop {
       const compiler::Module linked = context.language().composeInternalModule(*module);
       const compiler::JitImage image = compiler::JitLinker::link(
           linked, context.actionRuntime, [&](std::string_view dependency) -> std::optional<std::uintptr_t> {
-            return compiler::DynamicLinker::instance().resolveFromDefault(dependency);
+            return compiler::DynamicLinker::instance().resolve(dependency, context.language());
           });
       entry = image.address(symbol);
       binding.setActionEntry(entry).save();

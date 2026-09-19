@@ -1,4 +1,5 @@
 #include <compiler/DynamicLinker.hpp>
+#include <compiler/LanguageState.hpp>
 
 #include <utilities/Exception.hpp>
 
@@ -34,6 +35,17 @@ namespace compiler {
 #endif
     }
 
+    void *tryLoadLibrary(std::string_view name, const std::vector<std::string> &searchPaths) {
+      const std::string filename = toFilename(name);
+      for (const std::string &dir : searchPaths) {
+        const std::filesystem::path candidate = std::filesystem::path(dir) / filename;
+        std::error_code ec;
+        if (!std::filesystem::is_regular_file(candidate, ec)) continue;
+        if (void *handle = tryLoad(candidate.string())) return handle;
+      }
+      return tryLoad(filename);
+    }
+
     void *trySymbol(void *handle, std::string_view sym) {
 #ifndef _WIN32
       return dlsym(handle, sym.data());
@@ -65,20 +77,7 @@ namespace compiler {
     std::lock_guard<std::mutex> lock(mutex_);
     if (libraries_.count(logicalName)) return;
 
-    void *handle = nullptr;
-
-    for (const std::string &dir : searchPaths) {
-      std::filesystem::path candidate = std::filesystem::path(dir) / filename;
-      std::error_code ec;
-      if (std::filesystem::is_regular_file(candidate, ec)) {
-        handle = tryLoad(candidate.string());
-        if (handle) break;
-      }
-    }
-
-    if (!handle) {
-      handle = tryLoad(filename);
-    }
+    void *handle = tryLoadLibrary(name, searchPaths);
 
     if (!handle) {
 #ifndef _WIN32
@@ -101,7 +100,8 @@ namespace compiler {
   }
 
   std::optional<std::uintptr_t> DynamicLinker::resolve(std::string_view symbol,
-                                                       const std::vector<std::string> &libNames) {
+                                                       const std::vector<std::string> &libNames,
+                                                       const std::vector<std::string> &searchPaths) {
     if (symbol.empty()) return std::nullopt;
 
     // Fast path: check cache
@@ -117,12 +117,11 @@ namespace compiler {
       {
         std::lock_guard<std::mutex> lock(mutex_);
         if (!libraries_.count(libName)) {
-          // Cannot call loadLibrary here (recursive lock). Inline the load.
+          // Cannot call loadLibrary here (recursive lock). Use the same non-throwing
+          // lookup so JIT resolution also honors `link path`.
           std::string filename = toFilename(libName);
-          void *handle = tryLoad(filename);
-          if (handle) {
-            libraries_[libName] = {handle, filename};
-          }
+          void *handle = tryLoadLibrary(libName, searchPaths);
+          if (handle) libraries_[libName] = {handle, filename};
         }
       }
 
@@ -144,6 +143,10 @@ namespace compiler {
 
     // Fallback: search all already-loaded libraries (RTLD_DEFAULT / system DLLs)
     return resolveFromDefault(symbol);
+  }
+
+  std::optional<std::uintptr_t> DynamicLinker::resolve(std::string_view symbol, const LanguageState &language) {
+    return resolve(symbol, language.sharedLibraries(), language.linkerSearchPaths());
   }
 
   std::optional<std::uintptr_t> DynamicLinker::resolveFromDefault(std::string_view symbol) {

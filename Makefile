@@ -9,7 +9,7 @@ PREFIX ?=
 
 RELEASE_BUILD_FILE := build/Release/build.ninja
 
-.PHONY: help build release check test verify libraries install run list-examples example examples bundle benchmark reconfigure clean
+.PHONY: help build release check test verify libraries graphics-libraries install run list-examples example examples bundle benchmark reconfigure clean
 
 help:
 	@echo 'RecurLoop'
@@ -17,7 +17,8 @@ help:
 	@echo 'Build:'
 	@echo '  make              Build RecurLoop'
 	@echo '  make release      Build release with pinned dependencies'
-	@echo '  make libraries    Build .rli libraries'
+	@echo '  make libraries    Build standard .rli libraries'
+	@echo '  make graphics-libraries  Build optional shader/window/Vulkan .rli libraries'
 	@echo '  make clean        Remove build directories'
 	@echo
 	@echo 'Test:'
@@ -78,6 +79,11 @@ libraries: $(RELEASE_BUILD_FILE)
 	@echo '[libraries] build'
 	@cmake --build --preset release --target RecurloopLibraries
 	@echo '[libraries] ready'
+
+graphics-libraries: $(RELEASE_BUILD_FILE)
+	@echo '[graphics-libraries] build optional shader/window/Vulkan images'
+	@cmake --build --preset release --target RecurloopGraphicsLibraries
+	@echo '[graphics-libraries] ready'
 
 verify:
 	@echo '[verify] configure'

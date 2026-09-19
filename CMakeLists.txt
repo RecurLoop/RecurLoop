@@ -388,6 +388,10 @@ set(RECURLOOP_LANGUAGE_KIT_IMAGE "${RECURLOOP_LIBRARY_OUTPUT_DIR}/language-kit.r
 set(RECURLOOP_SHELL_IMAGE "${RECURLOOP_LIBRARY_OUTPUT_DIR}/shell.rli")
 set(RECURLOOP_INFERRED_IMAGE "${RECURLOOP_LIBRARY_OUTPUT_DIR}/inferred.rli")
 set(RECURLOOP_HTTP_IMAGE "${RECURLOOP_LIBRARY_OUTPUT_DIR}/http.rli")
+set(RECURLOOP_EMBED_IMAGE "${RECURLOOP_LIBRARY_OUTPUT_DIR}/embed.rli")
+set(RECURLOOP_SHADERS_IMAGE "${RECURLOOP_LIBRARY_OUTPUT_DIR}/shaders.rli")
+set(RECURLOOP_WINDOW_IMAGE "${RECURLOOP_LIBRARY_OUTPUT_DIR}/window.rli")
+set(RECURLOOP_VULKAN_IMAGE "${RECURLOOP_LIBRARY_OUTPUT_DIR}/vulkan.rli")
 
 add_custom_command(
     OUTPUT "${RECURLOOP_LANGUAGE_KIT_IMAGE}"
@@ -404,15 +408,23 @@ add_custom_command(
 function(recurloop_add_language_library name source output)
     get_filename_component(source_directory "${source}" DIRECTORY)
     file(GLOB_RECURSE library_sources CONFIGURE_DEPENDS "${source_directory}/*.rl")
+
+    set(import_arguments --library language-kit)
+    set(import_dependencies "${RECURLOOP_LANGUAGE_KIT_IMAGE}")
+    foreach(dependency IN LISTS ARGN)
+        list(APPEND import_arguments --library "${dependency}")
+        list(APPEND import_dependencies "${RECURLOOP_LIBRARY_OUTPUT_DIR}/${dependency}.rli")
+    endforeach()
+
     add_custom_command(
         OUTPUT "${output}"
         COMMAND "${CMAKE_COMMAND}" -E rm -f "${output}"
         COMMAND "$<TARGET_FILE:Recurloop>"
                 --library-path "${RECURLOOP_LIBRARY_OUTPUT_DIR}"
-                --library language-kit
+                ${import_arguments}
                 --file "${source}"
                 -- "${output}"
-        DEPENDS Recurloop "${RECURLOOP_LANGUAGE_KIT_IMAGE}"
+        DEPENDS Recurloop ${import_dependencies}
                 ${library_sources} ${RECURLOOP_LIBRARY_BUILD_SOURCES}
         WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
         COMMENT "[libraries] build ${name}.rli"
@@ -428,13 +440,38 @@ recurloop_add_language_library(inferred
 recurloop_add_language_library(http
     "${CMAKE_CURRENT_SOURCE_DIR}/libraries/http/library.rl"
     "${RECURLOOP_HTTP_IMAGE}")
+recurloop_add_language_library(embed
+    "${CMAKE_CURRENT_SOURCE_DIR}/libraries/embed/library.rl"
+    "${RECURLOOP_EMBED_IMAGE}")
+
+# Optional graphics libraries intentionally stay out of RecurloopLibraries.
+# They require system GLFW, Vulkan loader, and shaderc shared libraries, while
+# the standard library build must remain dependency-free beyond libc/pthread.
+recurloop_add_language_library(shaders
+    "${CMAKE_CURRENT_SOURCE_DIR}/libraries/shaders/library.rl"
+    "${RECURLOOP_SHADERS_IMAGE}"
+    embed)
+recurloop_add_language_library(window
+    "${CMAKE_CURRENT_SOURCE_DIR}/libraries/window/library.rl"
+    "${RECURLOOP_WINDOW_IMAGE}")
+recurloop_add_language_library(vulkan
+    "${CMAKE_CURRENT_SOURCE_DIR}/libraries/vulkan/library.rl"
+    "${RECURLOOP_VULKAN_IMAGE}")
+
+add_custom_target(RecurloopGraphicsLibraries
+    DEPENDS
+        "${RECURLOOP_SHADERS_IMAGE}"
+        "${RECURLOOP_WINDOW_IMAGE}"
+        "${RECURLOOP_VULKAN_IMAGE}")
+set_target_properties(RecurloopGraphicsLibraries PROPERTIES FOLDER "Libraries")
 
 add_custom_target(RecurloopLibraries
     DEPENDS
         "${RECURLOOP_LANGUAGE_KIT_IMAGE}"
         "${RECURLOOP_SHELL_IMAGE}"
         "${RECURLOOP_INFERRED_IMAGE}"
-        "${RECURLOOP_HTTP_IMAGE}")
+        "${RECURLOOP_HTTP_IMAGE}"
+        "${RECURLOOP_EMBED_IMAGE}")
 set_target_properties(RecurloopLibraries PROPERTIES FOLDER "Libraries")
 
 install(FILES
@@ -442,6 +479,7 @@ install(FILES
     "${RECURLOOP_SHELL_IMAGE}"
     "${RECURLOOP_INFERRED_IMAGE}"
     "${RECURLOOP_HTTP_IMAGE}"
+    "${RECURLOOP_EMBED_IMAGE}"
     DESTINATION "${RECURLOOP_INSTALL_LIBRARY_DIR}"
     COMPONENT Libraries)
 install(FILES LICENSE README.md TRADEMARKS.md

@@ -10,6 +10,8 @@
 #include <vector>
 
 namespace compiler {
+  class LanguageState;
+
   class DynamicLinker {
   public:
     struct LibraryEntry {
@@ -22,7 +24,9 @@ namespace compiler {
     void loadLibrary(std::string_view name, const std::vector<std::string> &searchPaths = {});
     void registerSymbol(std::string name, std::uintptr_t address);
 
-    std::optional<std::uintptr_t> resolve(std::string_view symbol, const std::vector<std::string> &libNames = {});
+    std::optional<std::uintptr_t> resolve(std::string_view symbol, const std::vector<std::string> &libNames = {},
+                                          const std::vector<std::string> &searchPaths = {});
+    std::optional<std::uintptr_t> resolve(std::string_view symbol, const LanguageState &language);
 
     void clear();
 

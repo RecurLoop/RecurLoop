@@ -367,7 +367,7 @@ namespace recurloop {
         const compiler::Module linked = context.language().composeModule(*module);
         const compiler::JitImage image = compiler::JitLinker::link(
             linked, context.runtime, [&](std::string_view sym) -> std::optional<std::uintptr_t> {
-              return compiler::DynamicLinker::instance().resolveFromDefault(sym);
+              return compiler::DynamicLinker::instance().resolve(sym, context.language());
             });
         entry = image.address(symbol);
         // The process-local address is only a cache. Engine images intentionally

@@ -8,6 +8,10 @@ these libraries are imported and combined; it is not their source of truth.
 - `shell/` — shell language library built on LanguageKit.
 - `inferred/` — inferred-language library built on LanguageKit.
 - `http/` — HTTP language library built on LanguageKit.
+- `embed/` — generic compile-time binary embedding built on native `bits` literals.
+- `shaders/` — optional GLSL/HLSL -> SPIR-V + native SPIR-V builder.
+- `window/` — optional GLFW window/Vulkan-surface binding.
+- `vulkan/` — optional Vulkan subset used by the hello-triangle workflow.
 - `build/export.rl` — shared transient build helper used by `library.rl` files.
 
 Build the distributable library images with:
@@ -36,3 +40,17 @@ build/Release/bin/recurloop \
   --file libraries/language-kit/library.rl \
   -- /tmp/language-kit.rli
 ```
+
+
+## Optional graphics libraries
+
+The graphics libraries are separate from the standard `make libraries` target
+because they deliberately depend on system shared libraries. Build them with:
+
+```bash
+make graphics-libraries
+```
+
+This writes `shaders.rli`, `window.rli`, and `vulkan.rli` beside the standard
+images and builds the dependency-free `embed.rli` automatically when needed,
+without making GLFW/Vulkan/shaderc mandatory for normal RecurLoop builds or CI.
