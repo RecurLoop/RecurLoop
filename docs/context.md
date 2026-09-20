@@ -2,7 +2,9 @@
 
 `context::Context` is the complete mutable state of one RecurLoop execution.
 It is composed rather than inherited, which keeps ownership and persistence
-boundaries explicit.
+boundaries explicit. A long-lived server never shares one mutable Context
+between clients: each session owns a `ContextGeneration` mapped from the current
+immutable project lexicon generation. Generation identities live in the runtime wrapper, not inside `Context`, so the Host ABI layout stays unchanged.
 
 | Component | Responsibility |
 |---|---|

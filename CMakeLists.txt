@@ -364,9 +364,13 @@ set_target_properties(RecurloopRuntimeCoreImage RecurloopCoreImage RecurloopCore
 # exists, so bootstrap/core-runner tools remain independent of embedded core.
 add_library(RecurloopRuntimeLib STATIC
     "${RECURLOOP_SOURCE_DIR}/runtime/RecurloopRuntime.cpp"
+    "${RECURLOOP_SOURCE_DIR}/runtime/Generation.cpp"
+    "${RECURLOOP_SOURCE_DIR}/runtime/Project.cpp"
+    "${RECURLOOP_SOURCE_DIR}/runtime/Session.cpp"
+    "${RECURLOOP_SOURCE_DIR}/runtime/Server.cpp"
     "${RECURLOOP_EMBEDDED_CORE_CPP}")
 target_include_directories(RecurloopRuntimeLib PRIVATE "${RECURLOOP_INCLUDE_DIR}" "${RECURLOOP_SOURCE_DIR}")
-target_link_libraries(RecurloopRuntimeLib PUBLIC RecurloopLib)
+target_link_libraries(RecurloopRuntimeLib PUBLIC RecurloopLib PRIVATE UtilitiesLib)
 add_dependencies(RecurloopRuntimeLib RecurloopRuntimeCoreImage)
 set_target_properties(RecurloopRuntimeLib PROPERTIES FOLDER "Libraries")
 
@@ -498,7 +502,7 @@ install(TARGETS Recurloop RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}" COMPONEN
 
 target_link_libraries(RadixLib PRIVATE UtilitiesLib)
 target_link_libraries(LexiconLib PRIVATE RadixLib)
-target_link_libraries(ContextLib PRIVATE LexiconLib)
+target_link_libraries(ContextLib PRIVATE LexiconLib UtilitiesLib)
 target_link_libraries(CompilerLib PRIVATE UtilitiesLib LexiconLib)
 target_link_libraries(RecurloopLib PRIVATE ContextLib CompilerLib)
 

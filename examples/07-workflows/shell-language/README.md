@@ -35,19 +35,20 @@ parser. Explicit `run` uses the same graph in scripts and, inside `fn`, emits
 native builder calls before the ordinary function compiler sees the expanded
 source.
 
-The image defines the ordinary RecurLoop value `PS1` as `"$ "`. The core line
+The image defines the ordinary RecurLoop value `PS1` as `"> "`. The core line
 editor has no hard-coded prompt and renders `PS1` when a loaded language
 defines it. Assigning a new string to `PS1` changes the next prompt. The `cd`
 builtin runs in the host process (rather than a child), supports `cd`, `cd -`,
 `cd ~`, `cd ~/...` and normal relative/absolute paths, and maintains `PWD` and
 `OLDPWD`.
 
-When standard input is a terminal, the same `Recurloop -` input supports
-session-local history and normal line editing: Left/Right, Ctrl+Left/Right,
-Up/Down, Home/End, Delete/Backspace, Ctrl+Delete, Alt+B/F/D/Backspace, reverse
-history search with Ctrl+R, transpose/yank with Ctrl+T/Y, and the usual
-Ctrl+A/E/B/F/P/N/U/K/W/L/D/C keys. There is no separate shell executable or
-shell-specific interactive mode.
+Interactive stdio and `recurloop --connect <unix-socket>` use the same
+transport-independent line editor. Each console keeps its own history and
+supports Left/Right, Ctrl+Left/Right, Up/Down, Home/End, Delete/Backspace,
+Ctrl+Delete, Alt+B/F/D/Backspace, reverse history search with Ctrl+R,
+transpose/yank with Ctrl+T/Y, and Ctrl+A/E/B/F/P/N/U/K/W/L/D/C. Ctrl+C discards
+the unfinished line and returns to `> `; `exit`/Ctrl+D closes the interactive
+session. There is no separate shell executable or shell-specific editor.
 
 Run a top-level automation script without wrapping it in a function:
 

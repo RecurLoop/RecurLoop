@@ -59,6 +59,14 @@ functions, native modules, link inputs, and output policy in the lexicon.
 
 ### RecurLoop runtime layer
 
+The normal runtime also provides a long-lived project/session layer. Published
+lexicons are immutable `LexiconGeneration` objects backed by sealed `memfd`
+files; client `ContextGeneration` objects map them privately so unchanged pages
+are shared by the kernel while client writes are copy-on-write. `Session` owns
+one mutable context and `RequestGeneration` provides request rollback. Stdio and
+Unix sockets are thin transports over these objects. See
+[project-runtime.md](project-runtime.md).
+
 `source/recurloop` contains the runtime/image bridge, the frozen Host ABI,
 compiler-kernel services and native/backend integration. The standard-language
 construction itself is not part of the production runtime. `bootstrap/` contains

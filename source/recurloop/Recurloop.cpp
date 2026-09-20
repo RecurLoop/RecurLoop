@@ -367,7 +367,7 @@ namespace recurloop {
     context.exec.args.index = outerArgumentIndex;
   }
 
-  static void executeMainLoop(context::Context &context) {
+  int executeInputs(context::Context &context) {
     context.source.more = (context.io.in && !context.io.in->eof()) || context.exec.args.index < context.exec.args.count;
 
     do {
@@ -387,6 +387,7 @@ namespace recurloop {
         context::Source::load(context, false);
       }
     } while (true);
+    return context.exec.status;
   }
 
   void Recurloop::initializeRoot() {
@@ -550,8 +551,7 @@ namespace recurloop {
   }
 
   int Recurloop::execute() {
-    executeMainLoop(context);
-    return context.exec.status;
+    return executeInputs(context);
   }
 } // namespace recurloop
 #endif

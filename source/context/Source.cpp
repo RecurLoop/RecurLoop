@@ -1,6 +1,8 @@
 #if !defined(__CONTEXT_SOURCE_CPP)
   #define __CONTEXT_SOURCE_CPP
   #include <context/Context.hpp>
+  #include <utilities/Prompt.hpp>
+  #include <utilities/LineEditor.hpp>
   #include <algorithm>
   #include <cerrno>
   #include <cctype>
@@ -198,89 +200,18 @@ namespace context {
       return expandPromptCommandsAndVariables(decoded, status);
     }
 
-    std::size_t previousCharacter(std::string_view text, std::size_t position) {
-      if (position == 0) return 0;
-      --position;
-      while (position > 0 && (static_cast<unsigned char>(text[position]) & 0xc0) == 0x80) --position;
-      return position;
-    }
-
-    std::size_t nextCharacter(std::string_view text, std::size_t position) {
-      if (position >= text.size()) return text.size();
-      ++position;
-      while (position < text.size() && (static_cast<unsigned char>(text[position]) & 0xc0) == 0x80) ++position;
-      return position;
-    }
-
-    std::size_t displayWidth(std::string_view text) {
-      std::size_t width = 0;
-      std::mbstate_t state{};
-      for (std::size_t position = 0; position < text.size();) {
-        if (text[position] == '\x1b' && position + 1 < text.size()) {
-          if (text[position + 1] == '[') {
-            position += 2;
-            while (position < text.size()) {
-              const unsigned char byte = static_cast<unsigned char>(text[position++]);
-              if (byte >= 0x40 && byte <= 0x7e) break;
-            }
-            continue;
-          }
-          if (text[position + 1] == ']') {
-            position += 2;
-            while (position < text.size() && text[position] != '\a' &&
-                   !(text[position] == '\x1b' && position + 1 < text.size() && text[position + 1] == '\\'))
-              ++position;
-            if (position < text.size()) position = std::min(text.size(), position + (text[position] == '\a' ? 1 : 2));
-            continue;
-          }
-        }
-        wchar_t character = 0;
-        const std::size_t bytes = std::mbrtowc(&character, text.data() + position, text.size() - position, &state);
-        if (bytes == static_cast<std::size_t>(-1) || bytes == static_cast<std::size_t>(-2) || bytes == 0) {
-          ++position;
-          ++width;
-          state = {};
-          continue;
-        }
-        const int characterWidth = wcwidth(character);
-        if (characterWidth > 0) width += static_cast<std::size_t>(characterWidth);
-        position += bytes;
-      }
-      return width;
-    }
-
-    class TerminalMode {
-    public:
-      explicit TerminalMode(int descriptor) : descriptor(descriptor) {
-        if (tcgetattr(descriptor, &original) != 0) return;
-        termios raw = original;
-        raw.c_iflag &= static_cast<tcflag_t>(~(BRKINT | ICRNL | INPCK | ISTRIP | IXON));
-        raw.c_lflag &= static_cast<tcflag_t>(~(ECHO | ICANON | IEXTEN | ISIG));
-        raw.c_cflag |= CS8;
-        raw.c_cc[VMIN] = 1;
-        raw.c_cc[VTIME] = 0;
-        active = tcsetattr(descriptor, TCSANOW, &raw) == 0;
-      }
-
-      ~TerminalMode() {
-        if (active) tcsetattr(descriptor, TCSANOW, &original);
-      }
-
-      explicit operator bool() const {
-        return active;
-      }
-
-    private:
-      int descriptor;
-      termios original{};
-      bool active = false;
-    };
-
     class InteractiveBuffer final : public std::streambuf {
     public:
-      explicit InteractiveBuffer(Context &context) : context(context), output(*context.io.err) {
-        std::setlocale(LC_CTYPE, "");
-      }
+      explicit InteractiveBuffer(Context &context)
+          : context(context), output(*context.io.err),
+            editor(
+                [](int timeout) { return utilities::LineEditor::readDescriptor(STDIN_FILENO, timeout); },
+                [this](std::string_view text) {
+                  output.write(text.data(), static_cast<std::streamsize>(text.size()));
+                  output.flush();
+                  return static_cast<bool>(output);
+                },
+                [] { return utilities::LineEditor::descriptorColumns(STDIN_FILENO); }) {}
 
     protected:
       int_type underflow() override {
@@ -295,292 +226,37 @@ namespace context {
       }
 
     private:
-      int readByte(int timeout = -1) {
-        if (timeout >= 0) {
-          pollfd descriptor{STDIN_FILENO, POLLIN, 0};
-          int result = 0;
-          do {
-            result = poll(&descriptor, 1, timeout);
-          } while (result < 0 && errno == EINTR);
-          if (result <= 0 || !(descriptor.revents & POLLIN)) return -1;
-        }
-
-        unsigned char byte = 0;
-        ssize_t result = 0;
-        do {
-          result = read(STDIN_FILENO, &byte, 1);
-        } while (result < 0 && errno == EINTR);
-        return result == 1 ? byte : -1;
-      }
-
-      std::size_t terminalColumns() const {
-        winsize size{};
-        if (ioctl(STDIN_FILENO, TIOCGWINSZ, &size) == 0 && size.ws_col > 0) return size.ws_col;
-        return 80;
-      }
-
       std::string prompt() const {
-        if (const char *value = std::getenv("PS1"))
-          return bashPrompt(value, context.exec.status, history.size() + 1);
         context::Values values = context.values();
-        return values.contains("PS1") ? bashPrompt(values.get("PS1").format(), context.exec.status, history.size() + 1)
-                                      : std::string{};
-      }
-
-      void refresh(const std::string &line, std::size_t cursor, const std::string &currentPrompt) {
-        const std::size_t columns = terminalColumns();
-        const std::size_t promptWidth = displayWidth(currentPrompt);
-        const std::size_t available = columns > promptWidth + 1 ? columns - promptWidth - 1 : 1;
-
-        std::size_t start = 0;
-        while (start < cursor && displayWidth(std::string_view(line).substr(start, cursor - start)) > available)
-          start = nextCharacter(line, start);
-
-        std::size_t finish = cursor;
-        while (finish < line.size()) {
-          const std::size_t next = nextCharacter(line, finish);
-          if (displayWidth(std::string_view(line).substr(start, next - start)) > available) break;
-          finish = next;
-        }
-
-        output << "\r\x1b[2K" << currentPrompt << std::string_view(line).substr(start, finish - start);
-        const std::size_t tailWidth = displayWidth(std::string_view(line).substr(cursor, finish - cursor));
-        if (tailWidth > 0) output << "\x1b[" << tailWidth << 'D';
-        output.flush();
-      }
-
-      std::optional<std::string> readPlainLine() {
-        const std::string currentPrompt = prompt();
-        output << currentPrompt;
-        output.flush();
-        std::string line;
-        while (true) {
-          const int byte = readByte();
-          if (byte < 0) return line.empty() ? std::nullopt : std::optional<std::string>(std::move(line));
-          if (byte == '\n' || byte == '\r') return line;
-          line.push_back(static_cast<char>(byte));
-        }
-      }
-
-      void historyMove(std::string &line, std::size_t &cursor, std::size_t &historyPosition, std::string &draft,
-                       int direction) {
-        if (history.empty()) return;
-        if (direction < 0) {
-          if (historyPosition == history.size()) draft = line;
-          if (historyPosition > 0) --historyPosition;
-        } else {
-          if (historyPosition >= history.size()) return;
-          ++historyPosition;
-        }
-        line = historyPosition < history.size() ? history[historyPosition] : draft;
-        cursor = line.size();
-      }
-
-      static void wordBackward(const std::string &line, std::size_t &cursor) {
-        while (cursor > 0 && std::isspace(static_cast<unsigned char>(line[previousCharacter(line, cursor)])))
-          cursor = previousCharacter(line, cursor);
-        while (cursor > 0 && !std::isspace(static_cast<unsigned char>(line[previousCharacter(line, cursor)])))
-          cursor = previousCharacter(line, cursor);
-      }
-
-      static void wordForward(const std::string &line, std::size_t &cursor) {
-        while (cursor < line.size() && std::isspace(static_cast<unsigned char>(line[cursor])))
-          cursor = nextCharacter(line, cursor);
-        while (cursor < line.size() && !std::isspace(static_cast<unsigned char>(line[cursor])))
-          cursor = nextCharacter(line, cursor);
-      }
-
-      static void erasePreviousWord(std::string &line, std::size_t &cursor, std::string &yank) {
-        const std::size_t finish = cursor;
-        wordBackward(line, cursor);
-        yank = line.substr(cursor, finish - cursor);
-        line.erase(cursor, finish - cursor);
-      }
-
-      static void eraseNextWord(std::string &line, std::size_t &cursor, std::string &yank) {
-        std::size_t finish = cursor;
-        wordForward(line, finish);
-        yank = line.substr(cursor, finish - cursor);
-        line.erase(cursor, finish - cursor);
-      }
-
-      void historySearchBackward(std::string &line, std::size_t &cursor, std::size_t &historyPosition) {
-        if (history.empty()) return;
-        const std::string query = line;
-        std::size_t position = std::min(historyPosition, history.size());
-        while (position > 0) {
-          --position;
-          if (query.empty() || history[position].find(query) != std::string::npos) {
-            historyPosition = position;
-            line = history[position];
-            cursor = line.size();
-            return;
-          }
-        }
-      }
-
-      void escapeSequence(std::string &line, std::size_t &cursor, std::size_t &historyPosition, std::string &draft,
-                          std::string &yank) {
-        int byte = readByte(40);
-        if (byte == 'b' || byte == 'B') {
-          wordBackward(line, cursor);
-          return;
-        }
-        if (byte == 'f' || byte == 'F') {
-          wordForward(line, cursor);
-          return;
-        }
-        if (byte == 'd' || byte == 'D') {
-          eraseNextWord(line, cursor, yank);
-          return;
-        }
-        if (byte == 127 || byte == 8) {
-          erasePreviousWord(line, cursor, yank);
-          return;
-        }
-        if (byte != '[' && byte != 'O') return;
-
-        byte = readByte(40);
-        std::string parameters;
-        while ((byte >= '0' && byte <= '9') || byte == ';') {
-          parameters.push_back(static_cast<char>(byte));
-          byte = readByte(40);
-        }
-
-        const bool wordMotion =
-            parameters == "3" || parameters == "5" || parameters == "7" || parameters.find(";3") != std::string::npos ||
-            parameters.find(";5") != std::string::npos || parameters.find(";7") != std::string::npos;
-        if (byte == 'A')
-          historyMove(line, cursor, historyPosition, draft, -1);
-        else if (byte == 'B')
-          historyMove(line, cursor, historyPosition, draft, 1);
-        else if (byte == 'C') {
-          if (wordMotion)
-            wordForward(line, cursor);
-          else
-            cursor = nextCharacter(line, cursor);
-        } else if (byte == 'D') {
-          if (wordMotion)
-            wordBackward(line, cursor);
-          else
-            cursor = previousCharacter(line, cursor);
-        } else if (byte == 'H')
-          cursor = 0;
-        else if (byte == 'F')
-          cursor = line.size();
-        else if (byte == '~' && !parameters.empty()) {
-          const int number = std::atoi(parameters.c_str());
-          if (number == 1 || number == 7)
-            cursor = 0;
-          else if (number == 4 || number == 8)
-            cursor = line.size();
-          else if (number == 3) {
-            if (wordMotion)
-              eraseNextWord(line, cursor, yank);
-            else if (cursor < line.size())
-              line.erase(cursor, nextCharacter(line, cursor) - cursor);
-          }
-        }
+        if (values.contains("PS1"))
+          return bashPrompt(values.get("PS1").format(), context.exec.status, editor.history().size() + 1);
+        if (const char *value = std::getenv("PS1"))
+          return bashPrompt(value, context.exec.status, editor.history().size() + 1);
+        return std::string(utilities::prompt::Default);
       }
 
       std::optional<std::string> readLine() {
-        TerminalMode terminal(STDIN_FILENO);
-        if (!terminal) return readPlainLine();
-
-        std::string line;
-        std::string draft;
-        std::string yank;
-        std::size_t cursor = 0;
-        std::size_t historyPosition = history.size();
-        const std::string currentPrompt = prompt();
-        refresh(line, cursor, currentPrompt);
+        utilities::TerminalMode terminal(STDIN_FILENO);
+        if (!terminal) {
+          output << prompt();
+          output.flush();
+          std::string line;
+          if (!std::getline(std::cin, line)) return std::nullopt;
+          return line;
+        }
 
         while (true) {
-          const int byte = readByte();
-          if (byte < 0) {
-            output << '\n';
-            output.flush();
-            return std::nullopt;
-          }
-
-          bool redraw = true;
-          if (byte == '\r' || byte == '\n') {
-            output << '\n';
-            output.flush();
-            if (!line.empty() && (history.empty() || history.back() != line)) history.push_back(line);
-            return line;
-          } else if (byte == 3) {
-            output << "^C\n";
-            output.flush();
-            return std::string{};
-          } else if (byte == 4) {
-            if (line.empty()) {
-              output << '\n';
-              output.flush();
-              return std::nullopt;
-            }
-            if (cursor < line.size()) line.erase(cursor, nextCharacter(line, cursor) - cursor);
-          } else if (byte == 1) {
-            cursor = 0;
-          } else if (byte == 5) {
-            cursor = line.size();
-          } else if (byte == 2) {
-            cursor = previousCharacter(line, cursor);
-          } else if (byte == 6) {
-            cursor = nextCharacter(line, cursor);
-          } else if (byte == 11) {
-            yank = line.substr(cursor);
-            line.erase(cursor);
-          } else if (byte == 12) {
-            output << "\x1b[H\x1b[2J";
-          } else if (byte == 14) {
-            historyMove(line, cursor, historyPosition, draft, 1);
-          } else if (byte == 16) {
-            historyMove(line, cursor, historyPosition, draft, -1);
-          } else if (byte == 18) {
-            historySearchBackward(line, cursor, historyPosition);
-          } else if (byte == 20) {
-            if (cursor > 0 && line.size() > 1) {
-              const std::size_t right = cursor == line.size() ? previousCharacter(line, cursor) : cursor;
-              const std::size_t left = previousCharacter(line, right);
-              const std::size_t rightEnd = nextCharacter(line, right);
-              const std::string leftCharacter = line.substr(left, right - left);
-              const std::string rightCharacter = line.substr(right, rightEnd - right);
-              line.replace(left, rightEnd - left, rightCharacter + leftCharacter);
-              cursor = rightEnd;
-            }
-          } else if (byte == 21) {
-            yank = line.substr(0, cursor);
-            line.erase(0, cursor);
-            cursor = 0;
-          } else if (byte == 23) {
-            erasePreviousWord(line, cursor, yank);
-          } else if (byte == 25) {
-            line.insert(cursor, yank);
-            cursor += yank.size();
-          } else if (byte == 127 || byte == 8) {
-            if (cursor > 0) {
-              const std::size_t previous = previousCharacter(line, cursor);
-              line.erase(previous, cursor - previous);
-              cursor = previous;
-            }
-          } else if (byte == 27) {
-            escapeSequence(line, cursor, historyPosition, draft, yank);
-          } else if (byte >= 32) {
-            line.insert(cursor, 1, static_cast<char>(byte));
-            ++cursor;
-          } else {
-            redraw = false;
-          }
-
-          if (redraw) refresh(line, cursor, currentPrompt);
+          utilities::LineResult result = editor.readLine(prompt());
+          if (result.status == utilities::LineStatus::End) return std::nullopt;
+          if (result.status == utilities::LineStatus::Interrupt) continue;
+          return std::move(result.line);
         }
       }
 
       Context &context;
       std::ostream &output;
+      utilities::LineEditor editor;
       std::string input;
-      std::vector<std::string> history;
     };
 
     class InteractiveInput final : public std::istream {

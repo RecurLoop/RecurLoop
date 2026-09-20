@@ -95,7 +95,7 @@ let Shell:Hooks = phrase { dictionary = true permanent = true }
 
 // The core interactive reader prefers the process environment's PS1 and uses
 // this language value as a fallback when the environment does not define it.
-var PS1 = "$ "
+var PS1 = "> "
 
 // Linux/POSIX open(2) constants are used as literals in Shell:open_output.
 

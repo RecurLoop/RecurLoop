@@ -13,4 +13,5 @@ namespace recurloop {
   void executeStream(context::Context &context, std::istream &source, std::string_view path, Size line = 1,
                      Size position = 1);
   void executeCurrentBlock(context::Context &context, bool scoped = true);
+  int executeInputs(context::Context &context);
 } // namespace recurloop
