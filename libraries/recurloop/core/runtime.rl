@@ -158,6 +158,44 @@ phrase colon = ":" in root {
   type phrase_types_data
 }
 
+// Managed-session controls are ordinary longest-prefix phrases. Their host
+// actions only enqueue lifecycle operations; Session applies them after the
+// current request transaction has committed.
+phrase session_generations = ":generations" in root {
+  type phrase_types_elaborate
+  action host "session.generations"
+}
+
+phrase session_help = ":help" in root {
+  type phrase_types_elaborate
+  action host "session.help"
+}
+
+phrase session_load = ":load" in root {
+  type phrase_types_elaborate
+  action host "source.include"
+}
+
+phrase session_publish = ":publish" in root {
+  type phrase_types_elaborate
+  action host "session.publish"
+}
+
+phrase session_quit = ":quit" in root {
+  type phrase_types_elaborate
+  action host "session.quit"
+}
+
+phrase session_exit = ":exit" in root {
+  type phrase_types_elaborate
+  action host "session.quit"
+}
+
+phrase session_refresh = ":refresh" in root {
+  type phrase_types_elaborate
+  action host "session.refresh"
+}
+
 phrase semicolon = ";" in root {
   type phrase_types_data
 }

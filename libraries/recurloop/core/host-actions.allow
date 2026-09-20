@@ -180,6 +180,11 @@ reference.commit
 reference.enter
 reference.whitespace
 scope.enter
+session.generations
+session.help
+session.publish
+session.quit
+session.refresh
 source.include
 syntax.define
 type-syntax.array

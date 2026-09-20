@@ -6,6 +6,7 @@
 #include <recurloop/Functions.hpp>
 #include <recurloop/PhraseDefinition.hpp>
 #include <recurloop/PhraseNames.hpp>
+#include <recurloop/SessionRequest.hpp>
 #include <recurloop/SyntaxPattern.hpp>
 #include <recurloop/TypeSyntax.hpp>
 #include <recurloop/Typed.hpp>
@@ -17,6 +18,7 @@ namespace recurloop {
     internal::register_language_actions(context);
     Debugger::registerActions(context);
     Engine::registerActions(context);
+    SessionRequestScope::registerActions(context);
     TypeSyntax::registerActions(context);
     Typed::registerActions(context);
     Expressions::registerActions(context);

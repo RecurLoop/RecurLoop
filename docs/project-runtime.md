@@ -125,18 +125,23 @@ having terminal escape handling mixed into the request protocol:
 printf 'print 42\n:quit\n' | socat - UNIX-CONNECT:/tmp/recurloop.sock
 ```
 
- A line that does not
-start with `:` is evaluated as one RecurLoop source request. Transport commands
-are:
+Every line is evaluated as a RecurLoop source request. Session controls are
+ordinary root phrases supplied by the source-defined core, so they work through
+stdio, Unix clients and embedded IDE terminals alike:
 
 ```text
 :generations   show project/lexicon/context/session/request ids
 :publish       publish this session as the next project generation
 :refresh       discard private session changes and attach the latest project
-:load <path>   evaluate one source file in this session
-:help          show transport commands
+:load "<path>" evaluate one source file in this session
+:help          show session phrases
 :quit          close this client
+:exit          close this client
 ```
+
+The phrases enqueue lifecycle work while source is executing; publication or
+refresh is applied after the request transaction commits. The socket transport
+does not parse or implement colon-prefixed commands.
 
 The ordinary language-level `exit` also exits an interactive console. On the
 server's stdio console it ends the RecurLoop process (and therefore the server);
@@ -147,3 +152,48 @@ returns to the `> ` prompt without creating a request.
 Stdio and Unix sockets are transport adapters only. They do not own language
 state. Future HTTP/WebSocket/LSP adapters should open/use the same `Session`
 and `RequestGeneration` objects rather than adding another execution model.
+
+## Source-defined IDE
+
+The optional `ide.rli` layer keeps the entire project runner and IDE policy out
+of the C++ host. It uses only public process primitives and the existing generic
+`--serve --unix` runtime. GTK declarations, recursive Linux `inotify`, debounce,
+candidate builds, module loading and persistent terminal models are ordinary
+RecurLoop source. The concrete UI lives in `examples/07-workflows/ide/`:
+
+```text
+main.rl
+  include state.rl
+  include editor.rl
+  include files.rl
+  include terminals.rl
+  include view.rl
+```
+
+Run that directory as its own application:
+
+```bash
+./build/Release/bin/recurloop \
+  --file examples/07-workflows/ide/main.rl \
+  -- "$(pwd)/examples/07-workflows/ide"
+```
+
+For every rebuild, `ide.rli` starts a fresh RecurLoop server process, loads a
+small generated driver which includes `main.rl`, emits one lifecycle ELF object,
+publishes the candidate for new terminal sessions, links a versioned shared module
+and loads it with `dlopen`. The child receives a process-local build marker, so
+the replayed `ide` launch phrase is a no-op.
+
+Only after all those steps succeed does the stable GTK process unmount the old
+view and invoke the new module's mount function. Existing terminals keep their
+original server connection, lexicon generation and private session values; only
+new terminals connect to the latest generation. Retired servers and modules
+remain alive until IDE shutdown, so old sessions continue to work and queued GTK
+callbacks cannot target unmapped code. A failed candidate process and its files
+are discarded while the last good view and all terminal runtimes remain active.
+Rebuilding from a fresh process also means deleted definitions cannot leak into
+the new generation.
+
+This design deliberately performs a full replay for any watched change. It does
+not add a dependency graph, project runner, bridge symbols or IDE-specific state
+to the host.

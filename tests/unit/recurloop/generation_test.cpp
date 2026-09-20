@@ -14,7 +14,7 @@ namespace {
     runtime->initialize(1, argv);
     return recurloop::Project::create(runtime->getContext(), {program});
   }
-}
+} // namespace
 
 TEST(RecurloopGeneration, SessionsSharePublishedBaseButKeepPrivateState) {
   auto state = project();
@@ -51,7 +51,6 @@ TEST(RecurloopGeneration, FailedRequestRollsBackInPlaceValueWrites) {
   EXPECT_EQ(after.output, "7\n");
 }
 
-
 TEST(RecurloopGeneration, CommandLineSourcesExecuteInsideSessionRequests) {
   char program[] = "recurloop-test";
   char stringOption[] = "--string";
@@ -79,6 +78,34 @@ TEST(RecurloopGeneration, CommandLineSourcesExecuteInsideSessionRequests) {
   EXPECT_EQ(persisted.output, "17\n");
 }
 
+TEST(RecurloopGeneration, SessionControlsAreOrdinarySourcePhrases) {
+  auto state = project();
+  auto publisher = state->openSession();
+  auto client = state->openSession();
+
+  ASSERT_EQ(publisher->evaluate("const phrase_value = 73").status, 0);
+  const auto published = publisher->evaluate(":publish");
+  ASSERT_EQ(published.status, 0) << published.error;
+  EXPECT_NE(published.output.find("published project="), std::string::npos);
+
+  EXPECT_NE(client->evaluate("print phrase_value").status, 0);
+  const auto refreshed = client->evaluate(":refresh");
+  ASSERT_EQ(refreshed.status, 0) << refreshed.error;
+  EXPECT_NE(refreshed.output.find("refreshed project="), std::string::npos);
+  EXPECT_EQ(client->evaluate("print phrase_value").output, "73\n");
+
+  const auto generations = client->evaluate(":generations");
+  ASSERT_EQ(generations.status, 0) << generations.error;
+  EXPECT_NE(generations.output.find("project="), std::string::npos);
+
+  const auto help = client->evaluate(":help");
+  ASSERT_EQ(help.status, 0) << help.error;
+  EXPECT_NE(help.output.find(":publish"), std::string::npos);
+
+  const auto quit = client->evaluate(":quit");
+  ASSERT_EQ(quit.status, 0) << quit.error;
+  EXPECT_TRUE(quit.quit);
+}
 
 TEST(RecurloopGeneration, ResetKernelStaysEmptyInsideProjectSession) {
   char program[] = "recurloop-test";

@@ -11,19 +11,10 @@
 #include <cctype>
 #include <cstring>
 #include <iostream>
-#include <sstream>
 #include <thread>
 
 namespace recurloop {
   namespace {
-    std::string generationText(const Generations &generation) {
-      std::ostringstream output;
-      output << "project=" << generation.project << " lexicon=" << generation.lexicon
-             << " context=" << generation.context << " session=" << generation.session
-             << " request=" << generation.request;
-      return output.str();
-    }
-
     std::string trimLine(std::string line) {
       while (!line.empty() && (line.back() == '\n' || line.back() == '\r')) line.pop_back();
       return line;
@@ -37,8 +28,8 @@ namespace recurloop {
 
     bool languageExit(std::string_view line) {
       line = trim(line);
-      return line == "exit" || (line.size() > 4 && line.substr(0, 4) == "exit" &&
-                                std::isspace(static_cast<unsigned char>(line[4])));
+      return line == "exit" ||
+             (line.size() > 4 && line.substr(0, 4) == "exit" && std::isspace(static_cast<unsigned char>(line[4])));
     }
 
     bool connectSocket(int fd, const std::string &path) {
@@ -86,30 +77,6 @@ namespace recurloop {
 
   Server::CommandResult Server::handle(Session &session, std::string_view line) {
     try {
-      if (line == ":quit" || line == ":exit") return {{}, true, 0};
-      if (line == ":help") {
-        return {"commands: :generations, :publish, :refresh, :load <path>, :quit\n", false, 0};
-      }
-      if (line == ":generations") return {generationText(session.generations()) + "\n", false, 0};
-      if (line == ":refresh") {
-        session.refresh();
-        return {"refreshed " + generationText(session.generations()) + "\n", false, 0};
-      }
-      if (line == ":publish") {
-        auto generation = session.publish();
-        return {"published project=" + std::to_string(generation->id) +
-                    " lexicon=" + std::to_string(generation->lexicon->id()) + "\n",
-                false, 0};
-      }
-      constexpr std::string_view loadPrefix = ":load ";
-      if (line.starts_with(loadPrefix)) {
-        SessionResponse response = session.executeFile(std::string(line.substr(loadPrefix.size())));
-        std::string text = std::move(response.output);
-        text += response.error;
-        if (response.status != 0) text += "\nstatus=" + std::to_string(response.status) + "\n";
-        return {std::move(text), false, response.status};
-      }
-
       const bool exits = languageExit(line);
       SessionResponse response = session.evaluate(line);
       std::string text = std::move(response.output);
@@ -119,7 +86,7 @@ namespace recurloop {
         if (!text.empty() && text.back() != '\n') text.push_back('\n');
         text += "status=" + std::to_string(response.status) + "\n";
       }
-      return {std::move(text), successfulExit, response.status};
+      return {std::move(text), response.quit || successfulExit, response.status};
     } catch (const Exception &error) {
       return {error.description() + "\n", false, error.status()};
     } catch (const std::exception &error) {
@@ -301,12 +268,11 @@ namespace recurloop {
       auto finished = std::make_shared<std::atomic<bool>>(false);
       std::lock_guard lock(clientsMutex_);
       clientFds_.insert(fd);
-      clientThreads_.push_back(ClientThread{
-          std::thread([this, fd, finished] {
-            serveUnixClient(fd);
-            finished->store(true, std::memory_order_release);
-          }),
-          std::move(finished)});
+      clientThreads_.push_back(ClientThread{std::thread([this, fd, finished] {
+                                              serveUnixClient(fd);
+                                              finished->store(true, std::memory_order_release);
+                                            }),
+                                            std::move(finished)});
     }
   }
 

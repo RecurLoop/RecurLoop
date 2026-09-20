@@ -16,6 +16,7 @@ namespace recurloop {
 
   struct SessionResponse {
     int status = 0;
+    bool quit = false;
     std::string output;
     std::string error;
     Generations generations;
@@ -29,7 +30,9 @@ namespace recurloop {
     Session(const Session &) = delete;
     Session &operator=(const Session &) = delete;
 
-    GenerationId id() const { return id_; }
+    GenerationId id() const {
+      return id_;
+    }
     SessionResponse evaluate(std::string_view source, std::string_view path = {});
     SessionResponse executeFile(const std::string &path);
     SessionResponse executeArguments(int startIndex, std::ostream *out = nullptr, std::ostream *err = nullptr);

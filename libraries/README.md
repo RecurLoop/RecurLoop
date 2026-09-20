@@ -8,6 +8,7 @@ these libraries are imported and combined; it is not their source of truth.
 - `shell/` — shell language library built on LanguageKit.
 - `inferred/` — inferred-language library built on LanguageKit.
 - `http/` — HTTP language library built on LanguageKit.
+- `ide.rl` — source-defined GTK applications: clean-process hot reload, Unix-runtime sessions, inotify, persistent terminal models and widget FFI. The concrete IDE UI lives in `examples/07-workflows/ide/*.rl`.
 - `embed/` — generic compile-time binary embedding built on native `bits` literals.
 - `shaders/` — optional GLSL/HLSL -> SPIR-V + native SPIR-V builder.
 - `window/` — optional GLFW window/Vulkan-surface binding.
@@ -26,7 +27,7 @@ They are written to `build/Release/libraries/` and can be imported by name:
 build/Release/bin/recurloop --library shell --library inferred -
 ```
 
-`language-kit.rli` is the shared base. The shell, inferred, and HTTP images are
+`language-kit.rli` is the shared base. The shell, inferred, HTTP, and IDE images are
 deterministic dependency deltas: importing one automatically imports
 `language-kit.rli` first unless the same base image is already loaded. Keep the
 standard-library images together when distributing them; dependency paths are

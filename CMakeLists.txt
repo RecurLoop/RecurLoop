@@ -392,6 +392,7 @@ set(RECURLOOP_LANGUAGE_KIT_IMAGE "${RECURLOOP_LIBRARY_OUTPUT_DIR}/language-kit.r
 set(RECURLOOP_SHELL_IMAGE "${RECURLOOP_LIBRARY_OUTPUT_DIR}/shell.rli")
 set(RECURLOOP_INFERRED_IMAGE "${RECURLOOP_LIBRARY_OUTPUT_DIR}/inferred.rli")
 set(RECURLOOP_HTTP_IMAGE "${RECURLOOP_LIBRARY_OUTPUT_DIR}/http.rli")
+set(RECURLOOP_IDE_IMAGE "${RECURLOOP_LIBRARY_OUTPUT_DIR}/ide.rli")
 set(RECURLOOP_EMBED_IMAGE "${RECURLOOP_LIBRARY_OUTPUT_DIR}/embed.rli")
 set(RECURLOOP_SHADERS_IMAGE "${RECURLOOP_LIBRARY_OUTPUT_DIR}/shaders.rli")
 set(RECURLOOP_WINDOW_IMAGE "${RECURLOOP_LIBRARY_OUTPUT_DIR}/window.rli")
@@ -411,7 +412,11 @@ add_custom_command(
 
 function(recurloop_add_language_library name source output)
     get_filename_component(source_directory "${source}" DIRECTORY)
-    file(GLOB_RECURSE library_sources CONFIGURE_DEPENDS "${source_directory}/*.rl")
+    if(source_directory STREQUAL "${CMAKE_CURRENT_SOURCE_DIR}/libraries")
+        set(library_sources "${source}")
+    else()
+        file(GLOB_RECURSE library_sources CONFIGURE_DEPENDS "${source_directory}/*.rl")
+    endif()
 
     set(import_arguments --library language-kit)
     set(import_dependencies "${RECURLOOP_LANGUAGE_KIT_IMAGE}")
@@ -444,6 +449,9 @@ recurloop_add_language_library(inferred
 recurloop_add_language_library(http
     "${CMAKE_CURRENT_SOURCE_DIR}/libraries/http/library.rl"
     "${RECURLOOP_HTTP_IMAGE}")
+recurloop_add_language_library(ide
+    "${CMAKE_CURRENT_SOURCE_DIR}/libraries/ide.rl"
+    "${RECURLOOP_IDE_IMAGE}")
 recurloop_add_language_library(embed
     "${CMAKE_CURRENT_SOURCE_DIR}/libraries/embed/library.rl"
     "${RECURLOOP_EMBED_IMAGE}")
@@ -475,6 +483,7 @@ add_custom_target(RecurloopLibraries
         "${RECURLOOP_SHELL_IMAGE}"
         "${RECURLOOP_INFERRED_IMAGE}"
         "${RECURLOOP_HTTP_IMAGE}"
+        "${RECURLOOP_IDE_IMAGE}"
         "${RECURLOOP_EMBED_IMAGE}")
 set_target_properties(RecurloopLibraries PROPERTIES FOLDER "Libraries")
 
@@ -483,6 +492,7 @@ install(FILES
     "${RECURLOOP_SHELL_IMAGE}"
     "${RECURLOOP_INFERRED_IMAGE}"
     "${RECURLOOP_HTTP_IMAGE}"
+    "${RECURLOOP_IDE_IMAGE}"
     "${RECURLOOP_EMBED_IMAGE}"
     DESTINATION "${RECURLOOP_INSTALL_LIBRARY_DIR}"
     COMPONENT Libraries)
