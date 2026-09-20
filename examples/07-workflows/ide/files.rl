@@ -18,7 +18,7 @@ let IDE_App:add_file = fn (state:IDE_App:State*, full:u8*) -> void {
     if !state || !full || IDE_App:has_file(state, full) { return }
     let relative = IDE:relative(state.host.root, full)
     if !relative { return }
-    let button = gtk_button_new_with_label(relative)
+    let button = Gui:button(relative)
     free(relative)
     if !button { return }
 
@@ -30,8 +30,8 @@ let IDE_App:add_file = fn (state:IDE_App:State*, full:u8*) -> void {
     if !item.path { free(cast(u8*, item)); return }
     state.files = item
 
-    g_signal_connect_data(button, "clicked", IDE_App:on_file_clicked, cast(u8*, item), cast(u8*, 0), 0)
-    gtk_box_pack_start(state.file_box, button, 0, 0, 1)
+    Gui:on_click(button, IDE_App:on_file_clicked, cast(u8*, item))
+    Gui:append(state.file_box, button, 0, 1)
 }
 
 let IDE_App:scan_tree = fn (state:IDE_App:State*, path:u8*) -> void {

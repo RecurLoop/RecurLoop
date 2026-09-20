@@ -1,7 +1,8 @@
 # Native IDE workflow with source hot reload
 
-This Linux workflow requires GTK 3 with the `libgtk-3.so` linker name and
-`clang` in `PATH` (on Debian/Ubuntu, install `libgtk-3-dev` and `clang`).
+The current `gui.rli` backend requires GTK 3 with the `libgtk-3.so` linker name,
+and the hot-reload module linker requires `clang` in `PATH` (on Debian/Ubuntu,
+install `libgtk-3-dev` and `clang`).  IDE source itself does not call GTK.
 
 Build RecurLoop and libraries:
 
@@ -36,7 +37,9 @@ to the generation and private session in which they were opened; newly created
 terminals use the latest generation. A failed build leaves the old view mounted.
 
 The runner, watcher, process management and module loading are implemented in
-`libraries/ide.rl`; this workflow adds no IDE-specific code to the C++ host.
+`libraries/ide.rl`.  All widgets/layout/events go through `Gui:*` from
+`libraries/gui/library.rl`; the IDE source contains no GTK calls and adds no
+IDE-specific code to the C++ host.
 
 A simple visual test is to edit the `FILES - hot reload` label in `view.rl` and
 press Save.  The window stays open and the changed label appears after reload.

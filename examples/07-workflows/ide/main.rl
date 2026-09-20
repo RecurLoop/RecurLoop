@@ -1,6 +1,6 @@
 // RecurLoop IDE is a normal source-defined application.
 //
-// The source library provides GTK bindings and the complete hot-reload runner.
+// ide.rli provides the hot-reload runner and depends on the source-defined gui.rli.
 // This file is the application root; its includes are replayed in a fresh
 // RecurLoop process for every candidate generation.
 

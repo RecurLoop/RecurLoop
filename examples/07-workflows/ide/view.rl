@@ -6,9 +6,7 @@ let IDE_App:update_status = fn (state:IDE_App:State*) -> void {
     let error = state.host.runner.last_error
 
     let text = LanguageKit:Text:new()
-    if !text {
-        return
-    }
+    if !text { return }
     if status == 0 { text.append("ready") } else { text.append("build error") }
     text.append(" | generation ")
     IDE:append_u64(text, generation)
@@ -24,7 +22,7 @@ let IDE_App:update_status = fn (state:IDE_App:State*) -> void {
     }
     let ready = text.take()
     text.destroy()
-    if ready { gtk_label_set_text(state.status, ready); free(ready) }
+    if ready { Gui:label_text(state.status, ready); free(ready) }
 }
 
 let IDE_App:mount = fn (host:IDE:Host*) -> void {
@@ -32,7 +30,7 @@ let IDE_App:mount = fn (host:IDE:Host*) -> void {
     let state = cast(IDE_App:State*, malloc(72))
     if !state { return }
     state.host = host
-    state.root_box = gtk_box_new(1, 4)
+    state.root_box = Gui:column(4)
     state.file_box = cast(u8*, 0)
     state.editor = cast(u8*, 0)
     state.file_label = cast(u8*, 0)
@@ -43,69 +41,59 @@ let IDE_App:mount = fn (host:IDE:Host*) -> void {
     host.user_data = cast(u8*, state)
     host.content = state.root_box
 
-    gtk_window_set_title(host.window, "RecurLoop IDE - source hot reload")
-    gtk_window_set_default_size(host.window, 1280, 820)
+    Gui:window_title(host.window, "RecurLoop IDE - source hot reload")
+    Gui:window_size(host.window, 1280, 820)
 
-    let main_pane = gtk_paned_new(0)
-    let right_pane = gtk_paned_new(1)
-    gtk_container_add(host.window, state.root_box)
-    gtk_box_pack_start(state.root_box, main_pane, 1, 1, 0)
+    let main_pane = Gui:split_horizontal()
+    let right_pane = Gui:split_vertical()
+    Gui:add(host.window, state.root_box)
+    Gui:append(state.root_box, main_pane, 1, 0)
 
     // Explorer. Change this code and Save: the whole view is remounted from the
     // newly published generation without restarting the process.
-    let explorer = gtk_box_new(1, 4)
-    let explorer_header = gtk_label_new("FILES - hot reload")
-    gtk_box_pack_start(explorer, explorer_header, 0, 1, 4)
-    state.file_box = gtk_box_new(1, 1)
-    let file_scroll = gtk_scrolled_window_new(cast(u8*, 0), cast(u8*, 0))
-    gtk_scrolled_window_set_policy(file_scroll, 1, 1)
-    gtk_container_add(file_scroll, state.file_box)
-    gtk_box_pack_start(explorer, file_scroll, 1, 1, 0)
-    gtk_paned_pack1(main_pane, explorer, 0, 0)
-    gtk_paned_set_position(main_pane, 260)
+    let explorer = Gui:column(4)
+    let explorer_header = Gui:label("FILES - hot reload")
+    Gui:append(explorer, explorer_header, 0, 4)
+    state.file_box = Gui:column(1)
+    let file_scroll = Gui:scroll(state.file_box)
+    Gui:append(explorer, file_scroll, 1, 0)
+    Gui:split_first(main_pane, explorer, 0)
+    Gui:split_position(main_pane, 260)
 
     // Editor.
-    let editor_box = gtk_box_new(1, 4)
-    let editor_toolbar = gtk_box_new(0, 6)
-    state.file_label = gtk_label_new("No file selected")
-    let save = gtk_button_new_with_label("Save")
-    g_signal_connect_data(save, "clicked", IDE_App:on_save, cast(u8*, state), cast(u8*, 0), 0)
-    let accelerators = gtk_accel_group_new()
-    if accelerators {
-        gtk_window_add_accel_group(host.window, accelerators)
-        gtk_widget_add_accelerator(save, "clicked", accelerators, 115, 4, 1)
-    }
-    gtk_box_pack_start(editor_toolbar, state.file_label, 1, 1, 4)
-    gtk_box_pack_end(editor_toolbar, save, 0, 0, 4)
-    state.editor = gtk_text_view_new()
-    gtk_text_view_set_monospace(state.editor, 1)
-    let editor_scroll = gtk_scrolled_window_new(cast(u8*, 0), cast(u8*, 0))
-    gtk_scrolled_window_set_policy(editor_scroll, 1, 1)
-    gtk_container_add(editor_scroll, state.editor)
-    gtk_box_pack_start(editor_box, editor_toolbar, 0, 1, 0)
-    gtk_box_pack_start(editor_box, editor_scroll, 1, 1, 0)
+    let editor_box = Gui:column(4)
+    let editor_toolbar = Gui:row(6)
+    state.file_label = Gui:label("No file selected")
+    let save = Gui:button("Save")
+    Gui:on_click(save, IDE_App:on_save, cast(u8*, state))
+    Gui:shortcut_click(host.window, save, Gui:Key:S(), Gui:Modifier:Control())
+    Gui:append(editor_toolbar, state.file_label, 1, 4)
+    Gui:append_end(editor_toolbar, save, 0, 4)
+    state.editor = Gui:editor()
+    let editor_scroll = Gui:scroll(state.editor)
+    Gui:append(editor_box, editor_toolbar, 0, 0)
+    Gui:append(editor_box, editor_scroll, 1, 0)
 
     // Terminals. Existing runtime sessions retain their original generation;
     // only a newly created terminal connects to the current runner generation.
-    let terminal_box = gtk_box_new(1, 4)
-    let terminal_toolbar = gtk_box_new(0, 6)
-    let terminal_label = gtk_label_new("TERMINALS")
-    let add_terminal = gtk_button_new_with_label("New terminal")
-    g_signal_connect_data(add_terminal, "clicked", IDE_App:on_add_terminal, cast(u8*, state), cast(u8*, 0), 0)
-    gtk_box_pack_start(terminal_toolbar, terminal_label, 1, 1, 4)
-    gtk_box_pack_end(terminal_toolbar, add_terminal, 0, 0, 4)
-    state.notebook = gtk_notebook_new()
-    gtk_notebook_set_scrollable(state.notebook, 1)
-    gtk_box_pack_start(terminal_box, terminal_toolbar, 0, 1, 0)
-    gtk_box_pack_start(terminal_box, state.notebook, 1, 1, 0)
+    let terminal_box = Gui:column(4)
+    let terminal_toolbar = Gui:row(6)
+    let terminal_label = Gui:label("TERMINALS")
+    let add_terminal = Gui:button("New terminal")
+    Gui:on_click(add_terminal, IDE_App:on_add_terminal, cast(u8*, state))
+    Gui:append(terminal_toolbar, terminal_label, 1, 4)
+    Gui:append_end(terminal_toolbar, add_terminal, 0, 4)
+    state.notebook = Gui:tabs()
+    Gui:append(terminal_box, terminal_toolbar, 0, 0)
+    Gui:append(terminal_box, state.notebook, 1, 0)
 
-    gtk_paned_pack1(right_pane, editor_box, 1, 0)
-    gtk_paned_pack2(right_pane, terminal_box, 1, 0)
-    gtk_paned_set_position(right_pane, 500)
-    gtk_paned_pack2(main_pane, right_pane, 1, 0)
+    Gui:split_first(right_pane, editor_box, 1)
+    Gui:split_second(right_pane, terminal_box, 1)
+    Gui:split_position(right_pane, 500)
+    Gui:split_second(main_pane, right_pane, 1)
 
-    state.status = gtk_label_new("starting")
-    gtk_box_pack_end(state.root_box, state.status, 0, 1, 4)
+    state.status = Gui:label("starting")
+    Gui:append_end(state.root_box, state.status, 0, 4)
 
     IDE_App:scan_tree(state, host.root)
     if host.selected { IDE_App:open_path(state, host.selected) }

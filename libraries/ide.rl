@@ -1,10 +1,10 @@
 // =============================================================================
-// RecurLoop native IDE framework.
+// RecurLoop native IDE runtime.
 //
-// This library intentionally contains only stable native/runtime primitives:
-// GTK bindings, a source-defined project runner, inotify watching and
-// persistent terminal models. The C++ host only supplies its existing generic
-// Unix-session runtime; project/reload policy lives in this library.
+// This library contains the stable project runner, inotify watching, hot-reload
+// lifecycle and persistent terminal models.  UI primitives come from gui.rli;
+// concrete application composition lives in examples/07-workflows/ide/*.rl.
+// The C++ host remains unaware of both GUI and IDE policy.
 // =============================================================================
 
 languagekit_native_begin
@@ -52,60 +52,9 @@ extern dlsym(handle:u8*, symbol:u8*) -> u8* abi sysv-amd64
 extern dlclose(handle:u8*) -> i32 abi sysv-amd64
 extern dlerror() -> u8* abi sysv-amd64
 
-// GTK / GLib bindings intentionally stay low-level.  Application code decides
-// which widgets exist and how they are composed.
-let IDE:Signal = fn (widget:u8*, data:u8*) -> void
-let IDE:Timeout = fn (data:u8*) -> i32
+// GUI widgets are provided by gui.rli.  This library owns only the stable
+// project/runtime/hot-reload state and never talks to GTK directly.
 let IDE:Lifecycle = fn (action:i64, host:u8*) -> void
-
-extern gtk_init_check(argc:i32*, argv:u8***) -> i32 abi sysv-amd64
-extern gtk_window_new(kind:i32) -> u8* abi sysv-amd64
-extern gtk_window_set_title(window:u8*, title:u8*) -> void abi sysv-amd64
-extern gtk_window_set_default_size(window:u8*, width:i32, height:i32) -> void abi sysv-amd64
-extern gtk_box_new(orientation:i32, spacing:i32) -> u8* abi sysv-amd64
-extern gtk_paned_new(orientation:i32) -> u8* abi sysv-amd64
-extern gtk_paned_pack1(paned:u8*, child:u8*, resize:i32, shrink:i32) -> void abi sysv-amd64
-extern gtk_paned_pack2(paned:u8*, child:u8*, resize:i32, shrink:i32) -> void abi sysv-amd64
-extern gtk_paned_set_position(paned:u8*, position:i32) -> void abi sysv-amd64
-extern gtk_scrolled_window_new(hadjustment:u8*, vadjustment:u8*) -> u8* abi sysv-amd64
-extern gtk_scrolled_window_set_policy(window:u8*, horizontal:i32, vertical:i32) -> void abi sysv-amd64
-extern gtk_container_add(container:u8*, child:u8*) -> void abi sysv-amd64
-extern gtk_box_pack_start(box:u8*, child:u8*, expand:i32, fill:i32, padding:u32) -> void abi sysv-amd64
-extern gtk_box_pack_end(box:u8*, child:u8*, expand:i32, fill:i32, padding:u32) -> void abi sysv-amd64
-extern gtk_label_new(text:u8*) -> u8* abi sysv-amd64
-extern gtk_label_set_text(label:u8*, text:u8*) -> void abi sysv-amd64
-extern gtk_label_set_xalign(label:u8*, x:f32) -> void abi sysv-amd64
-extern gtk_button_new_with_label(text:u8*) -> u8* abi sysv-amd64
-extern gtk_text_view_new() -> u8* abi sysv-amd64
-extern gtk_text_view_get_buffer(view:u8*) -> u8* abi sysv-amd64
-extern gtk_text_view_set_monospace(view:u8*, monospace:i32) -> void abi sysv-amd64
-extern gtk_text_view_set_editable(view:u8*, editable:i32) -> void abi sysv-amd64
-extern gtk_text_view_set_cursor_visible(view:u8*, visible:i32) -> void abi sysv-amd64
-extern gtk_text_buffer_set_text(buffer:u8*, text:u8*, bytes:i32) -> void abi sysv-amd64
-extern gtk_text_buffer_get_start_iter(buffer:u8*, iterator:u8*) -> void abi sysv-amd64
-extern gtk_text_buffer_get_end_iter(buffer:u8*, iterator:u8*) -> void abi sysv-amd64
-extern gtk_text_buffer_get_text(buffer:u8*, start:u8*, finish:u8*, include_hidden:i32) -> u8* abi sysv-amd64
-extern gtk_entry_new() -> u8* abi sysv-amd64
-extern gtk_entry_set_placeholder_text(entry:u8*, text:u8*) -> void abi sysv-amd64
-extern gtk_entry_get_text(entry:u8*) -> u8* abi sysv-amd64
-extern gtk_entry_set_text(entry:u8*, text:u8*) -> void abi sysv-amd64
-extern gtk_notebook_new() -> u8* abi sysv-amd64
-extern gtk_notebook_append_page(notebook:u8*, child:u8*, tab:u8*) -> i32 abi sysv-amd64
-extern gtk_notebook_set_current_page(notebook:u8*, page:i32) -> void abi sysv-amd64
-extern gtk_notebook_set_scrollable(notebook:u8*, scrollable:i32) -> void abi sysv-amd64
-extern gtk_widget_set_hexpand(widget:u8*, expand:i32) -> void abi sysv-amd64
-extern gtk_widget_set_vexpand(widget:u8*, expand:i32) -> void abi sysv-amd64
-extern gtk_widget_show_all(widget:u8*) -> void abi sysv-amd64
-extern gtk_widget_grab_focus(widget:u8*) -> void abi sysv-amd64
-extern gtk_widget_destroy(widget:u8*) -> void abi sysv-amd64
-extern gtk_accel_group_new() -> u8* abi sysv-amd64
-extern gtk_window_add_accel_group(window:u8*, group:u8*) -> void abi sysv-amd64
-extern gtk_widget_add_accelerator(widget:u8*, signal:u8*, group:u8*, key:u32, modifiers:u32, flags:u32) -> void abi sysv-amd64
-extern gtk_main() -> void abi sysv-amd64
-extern gtk_main_quit() -> void abi sysv-amd64
-extern g_signal_connect_data(instance:u8*, signal:u8*, callback:IDE:Signal, data:u8*, destroy:u8*, flags:u32) -> u64 abi sysv-amd64
-extern g_timeout_add(interval:u32, callback:IDE:Timeout, data:u8*) -> u32 abi sysv-amd64
-extern g_free(value:u8*) -> void abi sysv-amd64
 
 record IDE:Timespec {
     seconds:i64
@@ -840,7 +789,7 @@ let IDE:mount_current = fn (host:IDE:Host*) -> i32 {
     if !host || !host.runner || !host.runner.lifecycle { return 1 }
     let lifecycle = host.runner.lifecycle
     lifecycle(1, cast(u8*, host))
-    if host.window { gtk_widget_show_all(host.window) }
+    if host.window { Gui:show(host.window) }
     return 0
 }
 
@@ -857,7 +806,7 @@ let IDE:reload = fn (host:IDE:Host*, path:u8*) -> void {
     // callbacks can never jump into unmapped code after the view is destroyed.
     if host.runner.lifecycle { let lifecycle = host.runner.lifecycle; lifecycle(2, cast(u8*, host)) }
     if host.content {
-        gtk_widget_destroy(host.content)
+        Gui:destroy(host.content)
         host.content = cast(u8*, 0)
     }
     host.user_data = cast(u8*, 0)
@@ -916,7 +865,7 @@ let IDE:watch_tick = fn (data:u8*) -> i32 {
     return 1
 }
 
-let IDE:on_destroy = fn (widget:u8*, data:u8*) -> void { gtk_main_quit() }
+let IDE:on_destroy = fn (widget:u8*, data:u8*) -> void { Gui:quit() }
 
 let IDE:free_host = fn (host:IDE:Host*) -> void {
     if !host { return }
@@ -935,7 +884,7 @@ let IDE:run = fn (program:u8*, root:u8*) -> i64 {
     let resolved = realpath(root, cast(u8*, 0))
     if !resolved { return 1 }
     defer free(resolved)
-    if gtk_init_check(cast(i32*, 0), cast(u8***, 0)) == 0 { return 1 }
+    if !Gui:initialize() { return 1 }
 
     let host = cast(IDE:Host*, malloc(96))
     if !host { return 1 }
@@ -953,11 +902,9 @@ let IDE:run = fn (program:u8*, root:u8*) -> i64 {
     host.terminal_number = 0
     if !host.root || !host.entry { IDE:free_host(host); return 1 }
 
-    host.window = gtk_window_new(0)
+    host.window = Gui:window("RecurLoop application", 1280, 820)
     if !host.window { IDE:free_host(host); return 1 }
-    gtk_window_set_title(host.window, "RecurLoop application")
-    gtk_window_set_default_size(host.window, 1280, 820)
-    g_signal_connect_data(host.window, "destroy", IDE:on_destroy, cast(u8*, host), cast(u8*, 0), 0)
+    Gui:on_destroy(host.window, IDE:on_destroy, cast(u8*, host))
 
     host.runner = IDE:Runner:new(program, host.entry)
     if !host.runner { IDE:free_host(host); return 1 }
@@ -966,9 +913,9 @@ let IDE:run = fn (program:u8*, root:u8*) -> i64 {
     else if candidate { host.runner.remember_failure(candidate) }
 
     host.watcher = IDE:Watcher:new(host.root)
-    if host.watcher { g_timeout_add(50, IDE:watch_tick, cast(u8*, host)) }
-    gtk_widget_show_all(host.window)
-    gtk_main()
+    if host.watcher { Gui:timer(50, IDE:watch_tick, cast(u8*, host)) }
+    Gui:show(host.window)
+    Gui:run()
 
     if host.runner && host.runner.lifecycle {
         let lifecycle = host.runner.lifecycle
