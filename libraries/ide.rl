@@ -2,9 +2,9 @@
 // RecurLoop native IDE runtime.
 //
 // This library contains the stable project runner, inotify watching, hot-reload
-// lifecycle and persistent terminal models.  UI primitives come from gui.rli;
-// concrete application composition lives in examples/07-workflows/ide/*.rl.
-// The C++ host remains unaware of both GUI and IDE policy.
+// lifecycle, one shared project runtime and persistent terminal models. UI
+// primitives come from gui.rli; concrete application composition lives in
+// examples/07-workflows/ide/*.rl. The C++ host remains unaware of GUI/IDE policy.
 // =============================================================================
 
 languagekit_native_begin
@@ -37,6 +37,10 @@ extern waitpid(pid:i32, status:i32*, options:i32) -> i32 abi sysv-amd64
 extern _exit(status:i32) -> void abi sysv-amd64
 extern kill(pid:i32, signal:i32) -> i32 abi sysv-amd64
 extern unlink(path:u8*) -> i32 abi sysv-amd64
+extern rmdir(path:u8*) -> i32 abi sysv-amd64
+extern mkdir(path:u8*, mode:u32) -> i32 abi sysv-amd64
+extern rename(old_path:u8*, new_path:u8*) -> i32 abi sysv-amd64
+extern access(path:u8*, mode:i32) -> i32 abi sysv-amd64
 extern getpid() -> i32 abi sysv-amd64
 extern getenv(name:u8*) -> u8* abi sysv-amd64
 extern setenv(name:u8*, value:u8*, overwrite:i32) -> i32 abi sysv-amd64
@@ -133,6 +137,39 @@ record IDE:Host {
     terminal_number:i64
 }
 
+// Stable view data layout. UI behavior remains in examples/07-workflows/ide/*.rl
+// and can be replaced on every project publication without redefining records.
+let IDE_App = phrase { dictionary = true permanent = true }
+var IDE_App:hot_reload_probe = 1
+
+record IDE_App:FileItem {
+    state:u8*
+    path:u8*
+    depth:i64
+    directory:i64
+    next:IDE_App:FileItem*
+}
+
+record IDE_App:TerminalView {
+    state:u8*
+    model:IDE:Terminal*
+    output:u8*
+    entry:u8*
+    next:IDE_App:TerminalView*
+}
+
+record IDE_App:State {
+    host:IDE:Host*
+    root_box:u8*
+    file_box:u8*
+    editor:u8*
+    file_label:u8*
+    status:u8*
+    notebook:u8*
+    files:IDE_App:FileItem*
+    terminal_views:IDE_App:TerminalView*
+}
+
 let IDE:copy = fn (text:u8*) -> u8* {
     if !text { return cast(u8*, 0) }
     let bytes = strlen(text)
@@ -204,6 +241,14 @@ let IDE:write_file = fn (path:u8*, data:u8*) -> i64 {
     return cast(u64, fwrite(data, 1, bytes, stream)) == bytes
 }
 
+let IDE:file_exists = fn (path:u8*) -> i64 {
+    if !path { return 0 }
+    let stream = fopen(path, "rb")
+    if !stream { return 0 }
+    fclose(stream)
+    return 1
+}
+
 let IDE:skip_directory = fn (name:u8*) -> i64 {
     if !name { return 1 }
     return strcmp(name, ".") == 0 || strcmp(name, "..") == 0 || strcmp(name, ".git") == 0 ||
@@ -216,6 +261,107 @@ let IDE:is_directory = fn (path:u8*) -> i64 {
     if !directory { return 0 }
     closedir(directory)
     return 1
+}
+
+let IDE:path_exists = fn (path:u8*) -> i64 {
+    if !path { return 0 }
+    return access(path, 0) == 0
+}
+
+let IDE:leaf_name = fn (path:u8*) -> u8* {
+    if !path { return cast(u8*, 0) }
+    let bytes = cast(i64, strlen(path))
+    var start = 0
+    var i = 0
+    while i < bytes {
+        if path[i] == 47 { start = i + 1 }
+        i += 1
+    }
+    return IDE:copy(&path[start])
+}
+
+let IDE:parent_path = fn (path:u8*) -> u8* {
+    if !path { return cast(u8*, 0) }
+    let bytes = cast(i64, strlen(path))
+    if bytes == 0 { return IDE:copy(".") }
+    var i = bytes
+    while i > 0 && path[i - 1] != 47 { i -= 1 }
+    if i == 0 { return IDE:copy(".") }
+    if i == 1 { return IDE:copy("/") }
+    let result = cast(u8*, malloc(i))
+    if !result { return cast(u8*, 0) }
+    memcpy(result, path, i - 1)
+    result[i - 1] = 0
+    return result
+}
+
+let IDE:path_is_inside = fn (path:u8*, prefix:u8*) -> i64 {
+    if !path || !prefix { return 0 }
+    var i = 0
+    while prefix[i] != 0 && path[i] == prefix[i] { i += 1 }
+    if prefix[i] != 0 { return 0 }
+    return path[i] == 0 || path[i] == 47
+}
+
+let IDE:valid_leaf_name = fn (name:u8*) -> i64 {
+    if !name || name[0] == 0 { return 0 }
+    if strcmp(name, ".") == 0 || strcmp(name, "..") == 0 { return 0 }
+    var i = 0
+    while name[i] != 0 {
+        if name[i] == 47 || name[i] == 92 { return 0 }
+        i += 1
+    }
+    return 1
+}
+
+let IDE:create_empty_file = fn (path:u8*) -> i64 {
+    if !path || IDE:path_exists(path) { return 0 }
+    let stream = fopen(path, "wb")
+    if !stream { return 0 }
+    fclose(stream)
+    return 1
+}
+
+let IDE:create_directory = fn (path:u8*) -> i64 {
+    if !path || IDE:path_exists(path) { return 0 }
+    return mkdir(path, cast(u32, 493)) == 0
+}
+
+let IDE:rename_path = fn (old_path:u8*, new_path:u8*) -> i64 {
+    if !old_path || !new_path || IDE:path_exists(new_path) { return 0 }
+    return rename(old_path, new_path) == 0
+}
+
+let IDE:remove_path = fn (path:u8*) -> i64 {
+    if !path { return 0 }
+    if !IDE:is_directory(path) { return unlink(path) == 0 }
+
+    let directory = opendir(path)
+    if !directory { return 0 }
+    var ok:i64 = 1
+    var entry = readdir(directory)
+    while entry {
+        let name = &entry[19]
+        if strcmp(name, ".") != 0 && strcmp(name, "..") != 0 {
+            let child = IDE:join(path, name)
+            if child {
+                let kind = entry[18]
+                let is_dir = kind == 4 || (kind == 0 && IDE:is_directory(child))
+                if is_dir {
+                    if !IDE:remove_path(child) { ok = 0 }
+                } else {
+                    if unlink(child) != 0 { ok = 0 }
+                }
+                free(child)
+            } else {
+                ok = 0
+            }
+        }
+        entry = readdir(directory)
+    }
+    closedir(directory)
+    if !ok { return 0 }
+    return rmdir(path) == 0
 }
 
 let IDE:append_u64 = fn (text:LanguageKit:Text*, input:u64) -> i64 {
@@ -245,11 +391,12 @@ let IDE:append_u64 = fn (text:LanguageKit:Text*, input:u64) -> i64 {
 // =============================================================================
 // Source-defined project runtime.
 //
-// Each candidate generation is built in a fresh ordinary `recurloop --serve`
-// process. The source-defined runner talks to the existing line protocol over
-// a Unix socket, emits one PIC object containing the application lifecycle,
-// links a versioned module and loads it into the GTK process. Failed candidates
-// are discarded without touching the mounted generation.
+// One ordinary `recurloop --serve` process owns the project for the whole IDE
+// lifetime. Candidate builds use short-lived sessions on that same project.
+// A candidate is published only after source compilation and native linking
+// succeed, so failed builds never replace the shared project generation.
+// Existing terminal sessions can then use ordinary `:refresh` to attach to the
+// newly published generation; no terminal is stranded on an old server.
 // =============================================================================
 
 let IDE:text_contains = fn (text:u8*, needle:u8*) -> i64 {
@@ -435,14 +582,22 @@ let IDE:Runner:stop = fn (self:IDE:Runner*) -> void {
 let IDE:Runner:spawn_server = fn (self:IDE:Runner*) -> i64 {
     if !self || !self.program || !self.socket_path { return 0 }
     unlink(self.socket_path)
-    let args = cast(u8**, malloc(48))
+    let args = cast(u8**, malloc(112))
     if !args { return 0 }
     args[0] = self.program
-    args[1] = "--serve"
-    args[2] = "--unix"
-    args[3] = self.socket_path
-    args[4] = "--no-stdio"
-    args[5] = cast(u8*, 0)
+    args[1] = "--library-path"
+    args[2] = "build/Release/libraries"
+    args[3] = "--library"
+    args[4] = "language-kit"
+    args[5] = "--library"
+    args[6] = "gui"
+    args[7] = "--library"
+    args[8] = "ide"
+    args[9] = "--serve"
+    args[10] = "--unix"
+    args[11] = self.socket_path
+    args[12] = "--no-stdio"
+    args[13] = cast(u8*, 0)
     setenv("RECURLOOP_IDE_PROJECT_BUILD", "1", 1)
     let pid = fork()
     if pid < 0 { unsetenv("RECURLOOP_IDE_PROJECT_BUILD"); free(cast(u8*, args)); return 0 }
@@ -483,7 +638,7 @@ let IDE:Runner:driver_source = fn (self:IDE:Runner*, driver:u8*) -> i64 {
 
 let IDE:Runner:link_module = fn (self:IDE:Runner*) -> i64 {
     if !self || !self.object_path || !self.module_path { return 0 }
-    let args = cast(u8**, malloc(64))
+    let args = cast(u8**, malloc(72))
     if !args { return 0 }
     args[0] = "clang"
     args[1] = "-shared"
@@ -491,8 +646,9 @@ let IDE:Runner:link_module = fn (self:IDE:Runner*) -> i64 {
     args[3] = "-o"
     args[4] = self.module_path
     args[5] = "-lgtk-3"
-    args[6] = "-lc"
-    args[7] = cast(u8*, 0)
+    args[6] = "-lgdk-3"
+    args[7] = "-lc"
+    args[8] = cast(u8*, 0)
     let pid = fork()
     if pid < 0 { free(cast(u8*, args)); return 0 }
     if pid == 0 {
@@ -510,14 +666,14 @@ let IDE:Runner:link_module = fn (self:IDE:Runner*) -> i64 {
 }
 
 let IDE:Runner:candidate = fn (self:IDE:Runner*) -> IDE:Runner* {
-    if !self { return cast(IDE:Runner*, 0) }
+    if !self || self.pid <= 0 || !self.socket_path { return cast(IDE:Runner*, 0) }
     let next = cast(IDE:Runner*, malloc(104))
     if !next { return cast(IDE:Runner*, 0) }
     next.program = IDE:copy(self.program)
     next.root = IDE:copy(self.root)
     next.revision = self.revision + 1
     next.generation = self.generation + 1
-    next.socket_path = IDE:artifact(next.revision, ".sock")
+    next.socket_path = cast(u8*, 0)
     next.object_path = IDE:artifact(next.revision, ".o")
     next.module_path = IDE:artifact(next.revision, ".so")
     next.pid = -1
@@ -527,27 +683,23 @@ let IDE:Runner:candidate = fn (self:IDE:Runner*) -> IDE:Runner* {
     next.module = cast(u8*, 0)
     next.lifecycle = cast(IDE:Lifecycle, 0)
     next.retired = cast(IDE:RetiredGeneration*, 0)
-    if !next.program || !next.root || !next.socket_path || !next.object_path || !next.module_path {
+    if !next.program || !next.root || !next.object_path || !next.module_path {
         next.last_error = IDE:copy("cannot allocate project generation")
         return next
     }
 
     let driver = IDE:artifact(next.revision, ".rl")
-    if !driver || !next.driver_source(driver) || !next.spawn_server() {
-        if !next.last_error { next.last_error = IDE:copy("cannot start clean project runtime") }
+    if !driver || !next.driver_source(driver) {
+        if !next.last_error { next.last_error = IDE:copy("cannot create project build driver") }
         if driver { unlink(driver); free(driver) }
         return next
     }
 
-    var build = cast(IDE:RuntimeSession*, 0)
-    var attempt = 0
-    while !build && attempt < 100 {
-        build = IDE:RuntimeSession:new(next)
-        if !build { usleep(10000) }
-        attempt += 1
-    }
+    // Native compilation is transactional and intentionally not published.
+    // The generated lifecycle helper therefore never enters the shared lexicon.
+    let build = IDE:RuntimeSession:new(self)
     if !build {
-        next.last_error = IDE:copy("cannot connect to project runtime")
+        next.last_error = IDE:copy("cannot connect build session to project runtime")
         unlink(driver); free(driver)
         return next
     }
@@ -559,16 +711,35 @@ let IDE:Runner:candidate = fn (self:IDE:Runner*) -> IDE:Runner* {
     }
     if !command || build.request(command.data) != 0 {
         next.last_error = IDE:copy(build.last_error)
-    } else if build.request(":publish") != 0 || !build.last_output || !IDE:text_contains(build.last_output, "published project=") {
-        next.last_error = IDE:copy(build.last_error)
-        if !next.last_error { next.last_error = IDE:copy("project publication failed") }
     } else if !next.link_module() {
         let error = dlerror()
         next.last_error = IDE:copy(error)
         if !next.last_error { next.last_error = IDE:copy("native lifecycle link failed") }
     } else {
-        next.last_status = 0
-        next.last_output = IDE:copy("project generation built")
+        // Publish only the reloadable application source in a second session of
+        // the same Project. This keeps compiler-only phrases out of generations
+        // visible to terminals while retaining atomic failed-build behavior.
+        let publish = IDE:RuntimeSession:new(self)
+        if !publish {
+            next.last_error = IDE:copy("cannot connect publication session to project runtime")
+        } else {
+            var source = LanguageKit:Text:new()
+            if source {
+                source.append(":load ")
+                if !IDE:append_source_string(source, self.root) { source.destroy(); source = cast(LanguageKit:Text*, 0) }
+            }
+            if !source || publish.request(source.data) != 0 {
+                next.last_error = IDE:copy(publish.last_error)
+            } else if publish.request(":publish") != 0 || !publish.last_output || !IDE:text_contains(publish.last_output, "published project=") {
+                next.last_error = IDE:copy(publish.last_error)
+                if !next.last_error { next.last_error = IDE:copy("project publication failed") }
+            } else {
+                next.last_status = 0
+                next.last_output = IDE:copy(publish.last_output)
+            }
+            if source { source.destroy() }
+            publish.destroy()
+        }
     }
     if command { command.destroy() }
     build.destroy()
@@ -608,28 +779,29 @@ let IDE:Runner:destroy = fn (self:IDE:Runner*) -> void {
 
 let IDE:Runner:adopt = fn (self:IDE:Runner*, next:IDE:Runner*) -> i64 {
     if !self || !next || next.last_status != 0 || !next.lifecycle { return 0 }
-    if self.pid > 0 || self.module || self.socket_path {
+
+    // Only native lifecycle modules are retired. The project server/socket are
+    // stable for the whole IDE lifetime so all terminal sessions share one
+    // publication graph and ordinary :refresh always sees the latest publish.
+    if self.module || self.object_path || self.module_path {
         let retired = cast(IDE:RetiredGeneration*, malloc(48))
         if !retired { return 0 }
-        retired.pid = self.pid
+        retired.pid = -1
         retired.handle = self.module
-        retired.socket_path = self.socket_path
+        retired.socket_path = cast(u8*, 0)
         retired.object_path = self.object_path
         retired.module_path = self.module_path
         retired.next = self.retired
         self.retired = retired
-        self.pid = -1
         self.module = cast(u8*, 0)
-        self.socket_path = cast(u8*, 0)
         self.object_path = cast(u8*, 0)
         self.module_path = cast(u8*, 0)
     }
+
     if self.last_output { free(self.last_output) }
     if self.last_error { free(self.last_error) }
-    self.socket_path = next.socket_path; next.socket_path = cast(u8*, 0)
     self.object_path = next.object_path; next.object_path = cast(u8*, 0)
     self.module_path = next.module_path; next.module_path = cast(u8*, 0)
-    self.pid = next.pid; next.pid = -1
     self.generation = next.generation
     self.revision = next.revision
     self.last_status = 0
@@ -657,7 +829,7 @@ let IDE:Runner:new = fn (program:u8*, root:u8*) -> IDE:Runner* {
     if !self { return cast(IDE:Runner*, 0) }
     self.program = IDE:copy(program)
     self.root = IDE:copy(root)
-    self.socket_path = cast(u8*, 0)
+    self.socket_path = IDE:artifact(0, ".sock")
     self.object_path = cast(u8*, 0)
     self.module_path = cast(u8*, 0)
     self.pid = -1
@@ -669,7 +841,8 @@ let IDE:Runner:new = fn (program:u8*, root:u8*) -> IDE:Runner* {
     self.module = cast(u8*, 0)
     self.lifecycle = cast(IDE:Lifecycle, 0)
     self.retired = cast(IDE:RetiredGeneration*, 0)
-    if !self.program || !self.root { self.destroy(); return cast(IDE:Runner*, 0) }
+    if !self.program || !self.root || !self.socket_path { self.destroy(); return cast(IDE:Runner*, 0) }
+    if !self.spawn_server() { self.destroy(); return cast(IDE:Runner*, 0) }
     return self
 }
 
@@ -889,7 +1062,11 @@ let IDE:run = fn (program:u8*, root:u8*) -> i64 {
     let host = cast(IDE:Host*, malloc(96))
     if !host { return 1 }
     host.root = IDE:copy(resolved)
-    host.entry = IDE:join(resolved, "main.rl")
+    host.entry = IDE:join(resolved, "application.rl")
+    if !IDE:file_exists(host.entry) {
+        if host.entry { free(host.entry) }
+        host.entry = realpath("examples/07-workflows/ide/application.rl", cast(u8*, 0))
+    }
     host.runner = cast(IDE:Runner*, 0)
     host.window = cast(u8*, 0)
     host.content = cast(u8*, 0)
@@ -926,19 +1103,19 @@ let IDE:run = fn (program:u8*, root:u8*) -> i64 {
 }
 
 // Source-level launch marker. Candidate runtimes receive an explicit build
-// argument, so replaying main.rl never starts another GTK event loop.
+// argument, so project-server source replay never starts another GTK event loop.
 let ide = phrase {
     type = <phrase-types:elaborate>
     action = fn (state:Context*, called:Phrase*) -> void {
         if getenv("RECURLOOP_IDE_PROJECT_BUILD") { return }
         var index = state.exec.args.index
         if index >= state.exec.args.count || !state.exec.args.values[index] || strcmp(state.exec.args.values[index], "--") != 0 {
-            context:diagnostic:error(state, "ide requires: -- <application-directory>")
+            context:diagnostic:error(state, "ide requires: -- <workspace-directory>")
             return
         }
         index += 1
         if index >= state.exec.args.count || index + 1 != state.exec.args.count {
-            context:diagnostic:error(state, "ide accepts exactly one application directory after --")
+            context:diagnostic:error(state, "ide accepts exactly one workspace directory after --")
             return
         }
         let root = state.exec.args.values[index]

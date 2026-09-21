@@ -1,6 +1,7 @@
 let IDE_App:terminal_render = fn (view:IDE_App:TerminalView*) -> void {
     if !view || !view.model || !view.output { return }
     Gui:text_set(view.output, view.model.transcript)
+    Gui:text_scroll_end(view.output)
 }
 
 let IDE_App:on_terminal_activate = fn (widget:u8*, data:u8*) -> void {
@@ -9,6 +10,8 @@ let IDE_App:on_terminal_activate = fn (widget:u8*, data:u8*) -> void {
     let source = Gui:input_text(view.entry)
     if !source || source[0] == 0 { return }
 
+    // The transcript is a terminal stream, not a chat history. Input is shown
+    // with the same prompt as stdio RecurLoop and output follows immediately.
     view.model.append("> ")
     view.model.append(source)
     view.model.append("\n")
@@ -19,13 +22,14 @@ let IDE_App:on_terminal_activate = fn (widget:u8*, data:u8*) -> void {
     if error && error[0] != 0 { view.model.append(error); view.model.append("\n") }
     IDE_App:terminal_render(view)
     Gui:input_set(view.entry, "")
+    Gui:focus(view.entry)
 }
 
 let IDE_App:terminal_title = fn (model:IDE:Terminal*) -> u8* {
     let title = LanguageKit:Text:new()
     if !title { return cast(u8*, 0) }
     defer title.destroy()
-    title.append("Terminal ")
+    title.append("recurloop ")
     IDE:append_u64(title, cast(u64, model.number))
     return title.take()
 }
@@ -37,22 +41,36 @@ let IDE_App:add_terminal_view = fn (state:IDE_App:State*, model:IDE:Terminal*) -
     view.state = cast(u8*, state)
     view.model = model
     view.output = Gui:text_view()
-    view.entry = Gui:input("RecurLoop command")
+    view.entry = Gui:input("")
     view.next = state.terminal_views
     state.terminal_views = view
 
-    let page_box = Gui:column(4)
+    Gui:class_add(view.output, "terminal-output")
+    Gui:class_add(view.entry, "terminal-input")
+    Gui:input_frame(view.entry, 0)
+
+    let page_box = Gui:column(0)
+    Gui:class_add(page_box, "terminal-panel")
     let scroll = Gui:scroll(view.output)
     Gui:expand_y(scroll, 1)
+
+    let command = Gui:row(0)
+    Gui:class_add(command, "terminal-command")
+    let prompt = Gui:label(">")
+    Gui:class_add(prompt, "terminal-prompt")
+    Gui:append(command, prompt, 0, 0)
+    Gui:append(command, view.entry, 1, 0)
+
     Gui:on_activate(view.entry, IDE_App:on_terminal_activate, cast(u8*, view))
     Gui:append(page_box, scroll, 1, 0)
-    Gui:append_end(page_box, view.entry, 0, 0)
+    Gui:append_end(page_box, command, 0, 0)
 
     IDE_App:terminal_render(view)
     let title_text = IDE_App:terminal_title(model)
     let page = Gui:tabs_append(state.notebook, page_box, title_text)
     if title_text { free(title_text) }
     Gui:tabs_select(state.notebook, page)
+    Gui:focus(view.entry)
 }
 
 let IDE_App:on_add_terminal = fn (widget:u8*, data:u8*) -> void {
