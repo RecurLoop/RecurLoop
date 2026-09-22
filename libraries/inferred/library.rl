@@ -106,7 +106,7 @@ record Inferred:Parser {
 }
 
 let Inferred:Expr:new = fn (kind:i64) -> Inferred:Expr* {
-    let self = cast(Inferred:Expr*, malloc(80))
+    let self = alloc(Inferred:Expr)
     if !self { return cast(Inferred:Expr*, 0) }
     self.kind = kind; self.op = 0; self.number = 0; self.text = cast(u8*, 0)
     self.symbol = 0; self.inferred_kind = 0
@@ -116,7 +116,7 @@ let Inferred:Expr:new = fn (kind:i64) -> Inferred:Expr* {
 }
 
 let Inferred:Stmt:new = fn (kind:i64) -> Inferred:Stmt* {
-    let self = cast(Inferred:Stmt*, malloc(56))
+    let self = alloc(Inferred:Stmt)
     if !self { return cast(Inferred:Stmt*, 0) }
     self.kind = kind; self.name = cast(u8*, 0); self.symbol = 0
     self.expr = cast(Inferred:Expr*, 0); self.body = cast(Inferred:Stmt*, 0)
@@ -202,7 +202,7 @@ let Inferred:database_cleanup = phrase {
 let Inferred:database = fn (state:Context*) -> Inferred:Database* {
     let current = LanguageKit:state_get(state, "__inferred_database")
     if current { return cast(Inferred:Database*, current) }
-    let db = cast(Inferred:Database*, malloc(16))
+    let db = alloc(Inferred:Database)
     if !db { return cast(Inferred:Database*, 0) }
     db.functions = cast(Inferred:Function*, 0); db.tail = cast(Inferred:Function*, 0)
     let root = context:phrase:find(state, "Inferred")
@@ -221,7 +221,7 @@ let Inferred:find_function = fn (db:Inferred:Database*, symbol:i64) -> Inferred:
 }
 
 let Inferred:Parser:new = fn (state:Context*, source:u8*) -> Inferred:Parser* {
-    let self = cast(Inferred:Parser*, malloc(40))
+    let self = alloc(Inferred:Parser)
     if !self { return cast(Inferred:Parser*, 0) }
     self.state = state; self.source = source; self.length = cast(i64, strlen(source))
     self.position = 0; self.error = 0
@@ -305,11 +305,11 @@ let Inferred:Parser:parse_expr_mode = fn (self:Inferred:Parser*, mode:i64) -> In
         if Inferred:Parser:match_ch(self, cast(u8, 40)) {
             let e = Inferred:Expr:new(4); if !e { return e }
             e.text = name; e.symbol = LanguageKit:intern(self.state, name)
-            var cap = 4; var count = 0; var args = cast(Inferred:Expr**, malloc(cap * 8))
+            var cap = 4; var count = 0; var args = cast(Inferred:Expr**, malloc(cap * sizeof(Inferred:Expr*)))
             if !Inferred:Parser:match_ch(self, cast(u8, 41)) {
                 var more = 1
                 while more {
-                    if count == cap { cap *= 2; args = cast(Inferred:Expr**, realloc(cast(u8*, args), cap * 8)) }
+                    if count == cap { cap *= 2; args = cast(Inferred:Expr**, realloc(cast(u8*, args), cap * sizeof(Inferred:Expr*))) }
                     args[count] = Inferred:Parser:parse_expr_mode(self, 0); if !args[count] { return cast(Inferred:Expr*, 0) }; count += 1
                     if Inferred:Parser:match_ch(self, cast(u8, 44)) { } else { more = 0 }
                 }
@@ -423,19 +423,19 @@ let Inferred:parse_function = fn (state:Context*, source:u8*) -> Inferred:Functi
     if !Inferred:Parser:keyword(p, "fn") { Inferred:Parser:fail(p, "Inferred: function expects 'fn'"); return cast(Inferred:Function*, 0) }
     let name = Inferred:Parser:identifier(p); if !name { Inferred:Parser:fail(p, "Inferred: function expects a name"); return cast(Inferred:Function*, 0) }
     if !Inferred:Parser:match_ch(p, cast(u8, 40)) { Inferred:Parser:fail(p, "Inferred: function expects '('"); return cast(Inferred:Function*, 0) }
-    var cap = 4; var count = 0; var params = cast(u8**, malloc(cap * 8)); var symbols = cast(i64*, malloc(cap * 8))
+    var cap = 4; var count = 0; var params = cast(u8**, malloc(cap * sizeof(u8*))); var symbols = cast(i64*, malloc(cap * sizeof(i64)))
     if !Inferred:Parser:match_ch(p, cast(u8, 41)) {
         var more = 1
         while more {
             let param = Inferred:Parser:identifier(p); if !param { Inferred:Parser:fail(p, "Inferred: parameter expects a name"); return cast(Inferred:Function*, 0) }
-            if count == cap { cap *= 2; params = cast(u8**, realloc(cast(u8*, params), cap * 8)); symbols = cast(i64*, realloc(cast(u8*, symbols), cap * 8)) }
+            if count == cap { cap *= 2; params = cast(u8**, realloc(cast(u8*, params), cap * sizeof(u8*))); symbols = cast(i64*, realloc(cast(u8*, symbols), cap * sizeof(i64))) }
             params[count] = param; symbols[count] = Inferred:category(state, "Variables", param); count += 1
             if Inferred:Parser:match_ch(p, cast(u8, 44)) { } else { more = 0 }
         }
         if !Inferred:Parser:match_ch(p, cast(u8, 41)) { Inferred:Parser:fail(p, "Inferred: expected ')' after parameters"); return cast(Inferred:Function*, 0) }
     }
     let body = Inferred:Parser:parse_block(p); if !body && p.error { return cast(Inferred:Function*, 0) }
-    let f = cast(Inferred:Function*, malloc(80)); if !f { return cast(Inferred:Function*, 0) }
+    let f = alloc(Inferred:Function); if !f { return cast(Inferred:Function*, 0) }
     f.name = name; f.symbol = Inferred:category(state, "Functions", name); Inferred:category(state, "Grammar", name)
     f.arity = count; f.params = params; f.param_symbols = symbols; f.body = body
     f.specializations = cast(Inferred:Specialization*, 0); f.specialization_tail = cast(Inferred:Specialization*, 0)
@@ -449,7 +449,7 @@ let Inferred:Env:find = fn (env:Inferred:Env*, symbol:i64) -> LanguageKit:Value*
 
 let Inferred:Env:set = fn (env:Inferred:Env*, symbol:i64, value:LanguageKit:Value*) -> Inferred:Env* {
     var e = env; while e { if e.symbol == symbol { e.value = value; return env }; e = e.next }
-    let n = cast(Inferred:Env*, malloc(24)); if !n { return env }; n.symbol = symbol; n.value = value; n.next = env; return n
+    let n = alloc(Inferred:Env); if !n { return env }; n.symbol = symbol; n.value = value; n.next = env; return n
 }
 
 let Inferred:TypeEnv:find = fn (env:Inferred:TypeEnv*, symbol:i64) -> i64 {
@@ -458,7 +458,7 @@ let Inferred:TypeEnv:find = fn (env:Inferred:TypeEnv*, symbol:i64) -> i64 {
 
 let Inferred:TypeEnv:set = fn (env:Inferred:TypeEnv*, symbol:i64, kind:i64) -> Inferred:TypeEnv* {
     var e = env; while e { if e.symbol == symbol { e.kind = kind; return env }; e = e.next }
-    let n = cast(Inferred:TypeEnv*, malloc(24)); if !n { return env }; n.symbol = symbol; n.kind = kind; n.next = env; return n
+    let n = alloc(Inferred:TypeEnv); if !n { return env }; n.symbol = symbol; n.kind = kind; n.next = env; return n
 }
 
 let Inferred:TypeEnv:release_until = fn (env:Inferred:TypeEnv*, stop:Inferred:TypeEnv*) -> void {
@@ -479,7 +479,7 @@ let Inferred:clone_expr = fn (state:Context*, expr:Inferred:Expr*, types:Inferre
     if expr.kind == 2 { out.inferred_kind = Inferred:TypeEnv:find(types, expr.symbol); return out }
     if expr.kind == 4 {
         if expr.argc > 0 {
-            out.args = cast(Inferred:Expr**, malloc(expr.argc * 8)); var i = 0
+            out.args = cast(Inferred:Expr**, malloc(expr.argc * sizeof(Inferred:Expr*))); var i = 0
             while i < expr.argc { out.args[i] = Inferred:clone_expr(state, expr.args[i], types); i += 1 }
         }
         out.inferred_kind = 0; return out
@@ -592,7 +592,7 @@ let Inferred:native_binary = fn (state:Context*, op:i64, left:LanguageKit:Value*
 
 let Inferred:native_args = fn (argc:i64) -> LanguageKit:Value** {
     if argc <= 0 { return cast(LanguageKit:Value**, 0) }
-    return cast(LanguageKit:Value**, malloc(argc * 8))
+    return cast(LanguageKit:Value**, malloc(argc * sizeof(LanguageKit:Value*)))
 }
 
 let Inferred:native_arg = fn (args:LanguageKit:Value**, index:i64, value:LanguageKit:Value*) -> LanguageKit:Value** {
@@ -895,7 +895,7 @@ let Inferred:invoke_native_scalar = fn (state:Context*, entry:i64, args:Language
     if entry == 0 || argc < 0 { return 0 }
     var raw = cast(u64*, 0)
     if argc > 0 {
-        raw = cast(u64*, malloc(argc * 8))
+        raw = cast(u64*, malloc(argc * sizeof(u64)))
         if !raw { return 0 }
     }
     defer free(cast(u8*, raw))
@@ -910,9 +910,9 @@ let Inferred:invoke_native_scalar = fn (state:Context*, entry:i64, args:Language
 
 let Inferred:create_specialization = fn (state:Context*, f:Inferred:Function*, args:LanguageKit:Value**, argc:i64) -> Inferred:Specialization* {
     if argc < 0 { return cast(Inferred:Specialization*, 0) }
-    let spec = cast(Inferred:Specialization*, malloc(56)); if !spec { return cast(Inferred:Specialization*, 0) }
+    let spec = alloc(Inferred:Specialization); if !spec { return cast(Inferred:Specialization*, 0) }
     spec.arity = argc; spec.kinds = cast(i64*, 0); spec.result_kind = 0
-    if argc > 0 { spec.kinds = cast(i64*, malloc(argc * 8)); if !spec.kinds { free(cast(u8*, spec)); return cast(Inferred:Specialization*, 0) } }
+    if argc > 0 { spec.kinds = cast(i64*, malloc(argc * sizeof(i64))); if !spec.kinds { free(cast(u8*, spec)); return cast(Inferred:Specialization*, 0) } }
     spec.native_entry = 0; spec.compiled_symbol = Inferred:native_symbol(f, args, argc)
     spec.state = 1; spec.next = cast(Inferred:Specialization*, 0)
     if !spec.compiled_symbol { Inferred:Specialization:destroy(spec); return cast(Inferred:Specialization*, 0) }

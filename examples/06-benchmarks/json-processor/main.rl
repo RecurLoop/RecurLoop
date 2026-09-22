@@ -138,7 +138,7 @@ record JsonValue {
 }
 
 let JsonValue:new = fn (kind:i64) -> JsonValue* {
-    var value:JsonValue* = cast(JsonValue*, malloc(72))
+    var value:JsonValue* = alloc(JsonValue)
     value.kind = kind
     value.number = 0
     value.boolean = 0
@@ -177,10 +177,10 @@ let JsonValue:new_string = fn (text:u8*, length:i64) -> JsonValue* {
 let JsonValue:new_container = fn (kind:i64, initial_capacity:i64) -> JsonValue* {
     var value = JsonValue:new(kind)
     value.capacity = initial_capacity
-    value.children = cast(u8**, malloc(initial_capacity * 8))
+    value.children = cast(u8**, malloc(initial_capacity * sizeof(u8*)))
 
     if kind == 5 {
-        value.keys = cast(u8**, malloc(initial_capacity * 8))
+        value.keys = cast(u8**, malloc(initial_capacity * sizeof(u8*)))
     }
 
     return value
@@ -192,11 +192,11 @@ let JsonValue:grow = fn (self:JsonValue*) -> i64 {
         new_capacity = 4
     }
 
-    var new_children:u8** = cast(u8**, malloc(new_capacity * 8))
+    var new_children:u8** = cast(u8**, malloc(new_capacity * sizeof(u8*)))
     var new_keys:u8** = cast(u8**, 0)
 
     if self.kind == 5 {
-        new_keys = cast(u8**, malloc(new_capacity * 8))
+        new_keys = cast(u8**, malloc(new_capacity * sizeof(u8*)))
     }
 
     var i = 0
@@ -303,7 +303,7 @@ record Parser {
 }
 
 let Parser:new = fn (text:u8*) -> Parser* {
-    var parser:Parser* = cast(Parser*, malloc(48))
+    var parser:Parser* = alloc(Parser)
     parser.text = text
     parser.length = Text:length(text)
     parser.position = 0
@@ -696,7 +696,7 @@ record Analytics {
 }
 
 let Analytics:new = fn () -> Analytics* {
-    var stats:Analytics* = cast(Analytics*, malloc(112))
+    var stats:Analytics* = alloc(Analytics)
     stats.nodes = 0
     stats.objects = 0
     stats.arrays = 0
@@ -849,7 +849,7 @@ record BenchmarkStats {
 }
 
 let BenchmarkStats:new = fn () -> BenchmarkStats* {
-    var stats:BenchmarkStats* = cast(BenchmarkStats*, malloc(88))
+    var stats:BenchmarkStats* = alloc(BenchmarkStats)
     stats.iterations = 0
     stats.parsed_nodes = 0
     stats.parsed_strings = 0

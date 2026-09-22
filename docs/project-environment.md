@@ -54,10 +54,14 @@ attaches to the current published Project only when the user explicitly runs
 
 ## Customization
 
-The standard source is under `libraries/ide/`. `IDE_App:*` functions are normal
-replaceable phrases. The default view exposes panel-level builders such as
-`IDE_App:create_explorer`, `IDE_App:create_editor`,
-`IDE_App:create_terminal_panel`, and `IDE_App:create_status`, while lower-level
-file/editor/terminal handlers can be replaced independently. Replacing
-`IDE_App:mount` allows a completely different application composition without a
-new C++ mode.
+`ide.rli` contains only the stable IDE runtime. The concrete application source
+lives under `examples/07-workflows/ide/`: `main.rl` includes the project-local
+explorer, editor, terminal and layout files and registers one lifecycle with
+`app.view(...)`. Those included files are dependency-stamped by the project
+cache, so changing a control or replacing the complete composition is a normal
+hot reload and does not require rebuilding `ide.rli`.
+
+Workspace mutation and directory enumeration stay behind the `IDE:*` runtime
+API. In particular the source-defined explorer does not depend on native
+`dirent` layout, which keeps the view boundary suitable for platform-specific
+filesystem backends.

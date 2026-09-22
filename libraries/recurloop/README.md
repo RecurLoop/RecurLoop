@@ -38,6 +38,20 @@ recurloop --file libraries/recurloop/core.rl
 recurloop --reset --import core.rli --file libraries/recurloop/core.rl
 ```
 
+## Typed allocation
+
+The core function language exposes type-driven allocation instead of requiring
+record byte counts to be duplicated in source:
+
+```text
+let node = alloc(My:Node)
+let bytes = sizeof(My:Node)
+```
+
+`alloc(Type)` returns `Type*` and always uses the current physical size of the
+type. `sizeof(Type)` returns that size as `u64`. Arrays and raw buffers still use
+ordinary allocation, but their element width can use `sizeof(ElementType)`.
+
 ## Clean build
 
 A clean checkout has no previous image, so CMake uses a private, non-installed

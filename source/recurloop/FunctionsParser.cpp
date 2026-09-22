@@ -527,6 +527,18 @@ namespace recurloop {
         return result;
       }
 
+      std::unique_ptr<Expression> parseTypeIntrinsic(const Token &start, std::string_view name) {
+        lexer.expect("(");
+        auto result = std::make_unique<Expression>();
+        result->kind = Expression::Kind::Unary;
+        result->syntax = exact(intrinsics, name);
+        result->text = start.text;
+        result->offset = start.offset;
+        result->declaredType = type();
+        lexer.expect(")");
+        return result;
+      }
+
       std::unique_ptr<Expression> parseIndex(Token operation, std::unique_ptr<Expression> base,
                                              lexicon::Phrase syntax) {
         ++expressionGroupDepth;
@@ -689,6 +701,16 @@ namespace recurloop {
         frame.result = frame.parser->parseCast(frame.start, syntax);
       }
 
+      void parseAllocateSyntax(context::Context &, lexicon::Phrase &) {
+        PrimaryParseFrame &frame = primaryParseFrame();
+        frame.result = frame.parser->parseTypeIntrinsic(frame.start, "alloc");
+      }
+
+      void parseSizeOfSyntax(context::Context &, lexicon::Phrase &) {
+        PrimaryParseFrame &frame = primaryParseFrame();
+        frame.result = frame.parser->parseTypeIntrinsic(frame.start, "sizeof");
+      }
+
       void parseIndexSyntax(context::Context &, lexicon::Phrase &syntax) {
         PostfixParseFrame &frame = postfixParseFrame();
         frame.result = frame.parser->parseIndex(std::move(frame.operation), std::move(frame.result), syntax);
@@ -728,6 +750,8 @@ namespace recurloop {
       context.actions().define("fn.primary.function", parseFunctionLiteralSyntax);
       context.actions().define("fn.primary.conditional", parseConditionalExpressionSyntax);
       context.actions().define("fn.primary.cast", parseCastSyntax);
+      context.actions().define("fn.primary.alloc", parseAllocateSyntax);
+      context.actions().define("fn.primary.sizeof", parseSizeOfSyntax);
       context.actions().define("fn.postfix.index", parseIndexSyntax);
       context.actions().define("fn.postfix.member", parseMemberSyntax);
       context.actions().define("fn.postfix.propagate", parsePropagationSyntax);
@@ -748,6 +772,8 @@ namespace recurloop {
       context.actions().define("fn.primary.function", parseFunctionLiteralSyntax);
       context.actions().define("fn.primary.conditional", parseConditionalExpressionSyntax);
       context.actions().define("fn.primary.cast", parseCastSyntax);
+      context.actions().define("fn.primary.alloc", parseAllocateSyntax);
+      context.actions().define("fn.primary.sizeof", parseSizeOfSyntax);
       context.actions().define("fn.postfix.index", parseIndexSyntax);
       context.actions().define("fn.postfix.member", parseMemberSyntax);
       context.actions().define("fn.postfix.propagate", parsePropagationSyntax);
@@ -803,6 +829,8 @@ namespace recurloop {
       intrinsic("cast", IntrinsicKind::Cast);
       intrinsic("&", IntrinsicKind::Address);
       intrinsic("*", IntrinsicKind::Dereference);
+      intrinsic("alloc", IntrinsicKind::Allocate);
+      intrinsic("sizeof", IntrinsicKind::SizeOf);
 
       lexicon::Phrase primaries = grammar.append("primary").make().enableSubdictionary().setType(data).save();
       const auto primary = [&](std::string_view name, lexicon::Phrase::Action parser,
@@ -815,6 +843,8 @@ namespace recurloop {
       primary("fn", parseFunctionLiteralSyntax);
       primary("if", parseConditionalExpressionSyntax);
       primary("cast", parseCastSyntax, exact(intrinsics, "cast"));
+      primary("alloc", parseAllocateSyntax, exact(intrinsics, "alloc"));
+      primary("sizeof", parseSizeOfSyntax, exact(intrinsics, "sizeof"));
 
       lexicon::Phrase postfixes = grammar.append("postfix").make().enableSubdictionary().setType(data).save();
       const auto postfix = [&](std::string_view name, lexicon::Phrase::Action parser) {
@@ -844,8 +874,8 @@ namespace recurloop {
       };
       bind(exact(grammar, "statements"),
            {"var", "let", "const", "set", "if", "while", "break", "continue", "return", "defer"});
-      bind(exact(grammar, IntrinsicDictionaryName), {"cast", "&", "*"});
-      bind(exact(grammar, "primary"), {"(", "{", "fn", "if", "cast"});
+      bind(exact(grammar, IntrinsicDictionaryName), {"cast", "&", "*", "alloc", "sizeof"});
+      bind(exact(grammar, "primary"), {"(", "{", "fn", "if", "cast", "alloc", "sizeof"});
       bind(exact(grammar, "postfix"), {"[", ".", "?", ":", "("});
     }
 

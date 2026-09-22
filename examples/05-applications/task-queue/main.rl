@@ -78,7 +78,7 @@ record TaskQueue {
 // ---------------------------------------------------------------------------
 
 let Task:new = fn (tid:i64, priority:i64, name:u8*) -> Task* {
-    var t:Task* = cast(Task*, malloc(24))
+    var t:Task* = alloc(Task)
     t.id = tid
     t.priority = priority
     t.name = name
@@ -99,10 +99,10 @@ let Task:label = fn (self:Task*) -> u8* {
 // ---------------------------------------------------------------------------
 
 let TaskQueue:new = fn (capacity:i64) -> TaskQueue* {
-    var q:TaskQueue* = cast(TaskQueue*, malloc(24))
+    var q:TaskQueue* = alloc(TaskQueue)
     q.capacity = capacity
     q.count = 0
-    q.tasks = cast(Task**, malloc(capacity * 8))
+    q.tasks = cast(Task**, malloc(capacity * sizeof(Task*)))
     return q
 }
 

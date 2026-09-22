@@ -80,6 +80,20 @@ phrase fn_grammar_intrinsics_cast = "cast" in fn_grammar_intrinsics {
   intrinsic cast
 }
 
+phrase fn_grammar_intrinsics_alloc = "alloc" in fn_grammar_intrinsics {
+  dictionary
+  prototype alloc
+  type phrase_types_data
+  intrinsic allocate
+}
+
+phrase fn_grammar_intrinsics_sizeof = "sizeof" in fn_grammar_intrinsics {
+  dictionary
+  prototype sizeof
+  type phrase_types_data
+  intrinsic size-of
+}
+
 phrase fn_grammar_postfix_lparen = "(" in fn_grammar_postfix {
   prototype lparen
   type phrase_types_callable
@@ -120,6 +134,18 @@ phrase fn_grammar_primary_cast = "cast" in fn_grammar_primary {
   prototype cast
   type phrase_types_callable
   action host "fn.primary.cast"
+}
+
+phrase fn_grammar_primary_alloc = "alloc" in fn_grammar_primary {
+  prototype alloc
+  type phrase_types_callable
+  action host "fn.primary.alloc"
+}
+
+phrase fn_grammar_primary_sizeof = "sizeof" in fn_grammar_primary {
+  prototype sizeof
+  type phrase_types_callable
+  action host "fn.primary.sizeof"
 }
 
 phrase fn_grammar_primary_fn = "fn" in fn_grammar_primary {
@@ -328,6 +354,30 @@ phrase fn_grammar_intrinsics_cast_fn_infer = "\0fn-infer" in fn_grammar_intrinsi
   type phrase_types_callable
   action host "fn.intrinsic.compile"
   intrinsic-behavior cast infer
+}
+
+phrase fn_grammar_intrinsics_alloc_fn_emit = "\0fn-emit" in fn_grammar_intrinsics_alloc {
+  type phrase_types_callable
+  action host "fn.intrinsic.compile"
+  intrinsic-behavior allocate emit
+}
+
+phrase fn_grammar_intrinsics_alloc_fn_infer = "\0fn-infer" in fn_grammar_intrinsics_alloc {
+  type phrase_types_callable
+  action host "fn.intrinsic.compile"
+  intrinsic-behavior allocate infer
+}
+
+phrase fn_grammar_intrinsics_sizeof_fn_emit = "\0fn-emit" in fn_grammar_intrinsics_sizeof {
+  type phrase_types_callable
+  action host "fn.intrinsic.compile"
+  intrinsic-behavior size-of emit
+}
+
+phrase fn_grammar_intrinsics_sizeof_fn_infer = "\0fn-infer" in fn_grammar_intrinsics_sizeof {
+  type phrase_types_callable
+  action host "fn.intrinsic.compile"
+  intrinsic-behavior size-of infer
 }
 
 phrase fn_grammar_statements_assignment_fn_emit = "\0fn-emit" in fn_grammar_statements_assignment {

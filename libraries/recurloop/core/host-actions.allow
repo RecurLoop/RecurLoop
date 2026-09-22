@@ -124,11 +124,13 @@ fn.postfix.index
 fn.postfix.member
 fn.postfix.propagate
 fn.postfix.qualify
+fn.primary.alloc
 fn.primary.block
 fn.primary.cast
 fn.primary.conditional
 fn.primary.function
 fn.primary.group
+fn.primary.sizeof
 fn.statement.emit-assignment
 fn.statement.emit-break
 fn.statement.emit-conditional

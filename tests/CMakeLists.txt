@@ -253,6 +253,11 @@ if(ENABLE_TESTS_FEATURE)
         DEPENDS
             ${RECURLOOP_CHECK_COMMON_FILES}
             "${CMAKE_CURRENT_SOURCE_DIR}/feature/recurloop/language/_everyday.rl")
+    recurloop_add_feature_test(recurloop/language/object_allocation.cmake
+        DEPENDS
+            ${RECURLOOP_CHECK_COMMON_FILES}
+            ${RECURLOOP_CHECK_COMPILER_FILES}
+            "${CMAKE_CURRENT_SOURCE_DIR}/feature/recurloop/language/_object_allocation.rl")
     recurloop_add_feature_test(recurloop/language/friendly_context_api.cmake
         DEPENDS ${RECURLOOP_CHECK_COMMON_FILES} ${RECURLOOP_CHECK_FRIENDLY_CONTEXT_EXAMPLE_FILES})
     recurloop_add_feature_test(recurloop/language/indentation_functions.cmake

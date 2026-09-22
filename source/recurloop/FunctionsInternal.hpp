@@ -67,7 +67,7 @@ namespace recurloop {
     using Lexer = SyntaxCursor;
     [[noreturn]] void lexerFail(const context::Context &context, std::size_t offset, const std::string &message);
 
-    enum class IntrinsicKind : std::uint8_t { Cast, Address, Dereference };
+    enum class IntrinsicKind : std::uint8_t { Cast, Address, Dereference, Allocate, SizeOf };
 
     struct ExpressionBody;
 

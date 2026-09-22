@@ -233,7 +233,7 @@ let Containers:next_capacity = fn (current:i64, minimum:i64) -> i64 {
 // ============================================================================
 
 let I64Vector:new = fn (initial_capacity:i64) -> I64Vector* {
-    let self = cast(I64Vector*, malloc(24))
+    let self = alloc(I64Vector)
     if !self {
         return cast(I64Vector*, 0)
     }
@@ -248,7 +248,7 @@ let I64Vector:new = fn (initial_capacity:i64) -> I64Vector* {
             free(cast(u8*, self))
             return cast(I64Vector*, 0)
         }
-        self.data = cast(i64*, malloc(capacity * 8))
+        self.data = cast(i64*, malloc(capacity * sizeof(i64)))
         if !self.data {
             free(cast(u8*, self))
             return cast(I64Vector*, 0)
@@ -271,7 +271,7 @@ let I64Vector:reserve = fn (self:I64Vector*, minimum:i64) -> i64 {
         return 0
     }
 
-    let replacement = cast(i64*, malloc(capacity * 8))
+    let replacement = cast(i64*, malloc(capacity * sizeof(i64)))
     if !replacement {
         return 0
     }
@@ -438,7 +438,7 @@ let I64Vector:destroy = fn (self:I64Vector*) -> void {
 // ============================================================================
 
 let ByteVector:new = fn (initial_capacity:i64) -> ByteVector* {
-    let self = cast(ByteVector*, malloc(24))
+    let self = alloc(ByteVector)
     if !self {
         return cast(ByteVector*, 0)
     }
@@ -584,7 +584,7 @@ let Containers:text_equals_bytes = fn (left:u8*, right:u8*, length:i64) -> i64 {
 }
 
 let Containers:String:with_capacity = fn (capacity:i64) -> Containers:String* {
-    let self = cast(Containers:String*, malloc(8))
+    let self = alloc(Containers:String)
     if !self {
         return cast(Containers:String*, 0)
     }
@@ -722,7 +722,7 @@ let Containers:Arena:new = fn (default_capacity:i64) -> Containers:Arena* {
         capacity = 256
     }
 
-    let self = cast(Containers:Arena*, malloc(40))
+    let self = alloc(Containers:Arena)
     if !self {
         return cast(Containers:Arena*, 0)
     }
@@ -741,7 +741,7 @@ let Containers:Arena:add_block = fn (self:Arena*, minimum_capacity:i64) -> i64 {
         capacity = minimum_capacity
     }
 
-    let block = cast(Containers:ArenaBlock*, malloc(32))
+    let block = alloc(Containers:ArenaBlock)
     if !block {
         return 0
     }
@@ -890,12 +890,12 @@ let Containers:StringInterner:new = fn (arena:Arena*, initial_capacity:i64) -> C
         capacity = 8
     }
 
-    let self = cast(Containers:StringInterner*, malloc(40))
+    let self = alloc(Containers:StringInterner)
     if !self {
         return cast(Containers:StringInterner*, 0)
     }
 
-    self.slots = cast(Containers:InternEntry**, malloc(capacity * 8))
+    self.slots = cast(Containers:InternEntry**, malloc(capacity * sizeof(Containers:InternEntry*)))
     if !self.slots {
         free(cast(u8*, self))
         return cast(Containers:StringInterner*, 0)
@@ -928,7 +928,7 @@ let Containers:StringInterner:rehash = fn (self:StringInterner*, minimum_capacit
         return 0
     }
 
-    let replacement = cast(Containers:InternEntry**, malloc(capacity * 8))
+    let replacement = cast(Containers:InternEntry**, malloc(capacity * sizeof(Containers:InternEntry*)))
     if !replacement {
         return 0
     }
@@ -1076,12 +1076,12 @@ let Containers:I64HashMap:new = fn (initial_capacity:i64) -> Containers:I64HashM
         capacity = 8
     }
 
-    let self = cast(Containers:I64HashMap*, malloc(32))
+    let self = alloc(Containers:I64HashMap)
     if !self {
         return cast(Containers:I64HashMap*, 0)
     }
 
-    self.entries = cast(Containers:I64MapEntry*, malloc(capacity * 24))
+    self.entries = cast(Containers:I64MapEntry*, malloc(capacity * sizeof(Containers:I64MapEntry)))
     if !self.entries {
         free(cast(u8*, self))
         return cast(Containers:I64HashMap*, 0)
@@ -1149,7 +1149,7 @@ let Containers:I64HashMap:rehash = fn (self:I64HashMap*, requested_capacity:i64)
         capacity = 8
     }
 
-    let replacement = cast(Containers:I64MapEntry*, malloc(capacity * 24))
+    let replacement = cast(Containers:I64MapEntry*, malloc(capacity * sizeof(Containers:I64MapEntry)))
     if !replacement {
         return 0
     }
@@ -1281,7 +1281,7 @@ record Containers:I64Deque {
 }
 
 let Containers:I64Deque:new = fn (initial_capacity:i64) -> Containers:I64Deque* {
-    let self = cast(Containers:I64Deque*, malloc(32))
+    let self = alloc(Containers:I64Deque)
     if !self {
         return cast(Containers:I64Deque*, 0)
     }
@@ -1297,7 +1297,7 @@ let Containers:I64Deque:new = fn (initial_capacity:i64) -> Containers:I64Deque* 
             free(cast(u8*, self))
             return cast(Containers:I64Deque*, 0)
         }
-        self.data = cast(i64*, malloc(capacity * 8))
+        self.data = cast(i64*, malloc(capacity * sizeof(i64)))
         if !self.data {
             free(cast(u8*, self))
             return cast(Containers:I64Deque*, 0)
@@ -1316,7 +1316,7 @@ let Containers:I64Deque:reserve = fn (self:I64Deque*, minimum:i64) -> i64 {
         return 0
     }
 
-    let replacement = cast(i64*, malloc(capacity * 8))
+    let replacement = cast(i64*, malloc(capacity * sizeof(i64)))
     if !replacement {
         return 0
     }

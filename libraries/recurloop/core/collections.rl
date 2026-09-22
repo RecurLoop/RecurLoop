@@ -24,7 +24,7 @@ record Core:Work:ByteBuffer {
 }
 
 let Core:Work:ByteBuffer:new = fn (state:Context*, initial:u64) -> Core:Work:ByteBuffer* {
-    let self = cast(Core:Work:ByteBuffer*, context:memory:allocate(state, 24))
+    let self = cast(Core:Work:ByteBuffer*, context:memory:allocate(state, sizeof(Core:Work:ByteBuffer)))
     if !self { return cast(Core:Work:ByteBuffer*, 0) }
     self.data = cast(u8*, 0)
     self.length = 0
@@ -81,14 +81,14 @@ record Core:Work:U64Vector {
 }
 
 let Core:Work:U64Vector:new = fn (state:Context*, initial:u64) -> Core:Work:U64Vector* {
-    let self = cast(Core:Work:U64Vector*, context:memory:allocate(state, 24))
+    let self = cast(Core:Work:U64Vector*, context:memory:allocate(state, sizeof(Core:Work:U64Vector)))
     if !self { return cast(Core:Work:U64Vector*, 0) }
     self.data = cast(u64*, 0)
     self.length = 0
     self.capacity = 0
     if initial {
         let capacity = Core:Work:next_capacity(0, initial)
-        self.data = cast(u64*, context:memory:allocate(state, capacity * 8))
+        self.data = cast(u64*, context:memory:allocate(state, capacity * sizeof(u64)))
         if !self.data { context:memory:release(state, cast(u8*, self)); return cast(Core:Work:U64Vector*, 0) }
         self.capacity = capacity
     }
@@ -148,7 +148,7 @@ record Core:Work:U64Deque {
 }
 
 let Core:Work:U64Deque:new = fn (state:Context*, initial:u64) -> Core:Work:U64Deque* {
-    let self = cast(Core:Work:U64Deque*, context:memory:allocate(state, 32))
+    let self = cast(Core:Work:U64Deque*, context:memory:allocate(state, sizeof(Core:Work:U64Deque)))
     if !self { return cast(Core:Work:U64Deque*, 0) }
     self.data = cast(u64*, 0)
     self.head = 0
@@ -156,7 +156,7 @@ let Core:Work:U64Deque:new = fn (state:Context*, initial:u64) -> Core:Work:U64De
     self.capacity = 0
     if initial {
         let capacity = Core:Work:next_capacity(0, initial)
-        self.data = cast(u64*, context:memory:allocate(state, capacity * 8))
+        self.data = cast(u64*, context:memory:allocate(state, capacity * sizeof(u64)))
         if !self.data { context:memory:release(state, cast(u8*, self)); return cast(Core:Work:U64Deque*, 0) }
         self.capacity = capacity
     }
@@ -167,7 +167,7 @@ let Core:Work:U64Deque:reserve = fn (self:Core:Work:U64Deque*, state:Context*, m
     if minimum <= self.capacity { return 1 }
     let capacity = Core:Work:next_capacity(self.capacity, minimum)
     if !capacity { return 0 }
-    let replacement = cast(u64*, context:memory:allocate(state, capacity * 8))
+    let replacement = cast(u64*, context:memory:allocate(state, capacity * sizeof(u64)))
     if !replacement { return 0 }
     var index = 0
     while index < self.length {
@@ -237,10 +237,10 @@ let Core:Work:hash_u64 = fn (value:u64) -> u64 {
 }
 
 let Core:Work:U64Map:new = fn (state:Context*, initial:u64) -> Core:Work:U64Map* {
-    let self = cast(Core:Work:U64Map*, context:memory:allocate(state, 32))
+    let self = cast(Core:Work:U64Map*, context:memory:allocate(state, sizeof(Core:Work:U64Map)))
     if !self { return cast(Core:Work:U64Map*, 0) }
     var capacity = Core:Work:next_capacity(0, initial)
-    self.entries = cast(Core:Work:U64MapEntry*, context:memory:allocate(state, capacity * 24))
+    self.entries = cast(Core:Work:U64MapEntry*, context:memory:allocate(state, capacity * sizeof(Core:Work:U64MapEntry)))
     if !self.entries { context:memory:release(state, cast(u8*, self)); return cast(Core:Work:U64Map*, 0) }
     var index = 0
     while index < capacity { self.entries[index].state = 0; index += 1 }
@@ -275,7 +275,7 @@ let Core:Work:U64Map:insert_raw = fn (self:Core:Work:U64Map*, key:u64, value:u64
 
 let Core:Work:U64Map:rehash = fn (self:Core:Work:U64Map*, state:Context*, requested:u64) -> i64 {
     let capacity = Core:Work:next_capacity(0, requested)
-    let replacement = cast(Core:Work:U64MapEntry*, context:memory:allocate(state, capacity * 24))
+    let replacement = cast(Core:Work:U64MapEntry*, context:memory:allocate(state, capacity * sizeof(Core:Work:U64MapEntry)))
     if !replacement { return 0 }
     var index = 0
     while index < capacity { replacement[index].state = 0; index += 1 }
@@ -343,7 +343,7 @@ record Core:Work:ArenaBlock { next:Core:Work:ArenaBlock* data:u8* used:u64 capac
 record Core:Work:Arena { head:Core:Work:ArenaBlock* default_capacity:u64 }
 
 let Core:Work:Arena:new = fn (state:Context*, default_capacity:u64) -> Core:Work:Arena* {
-    let self = cast(Core:Work:Arena*, context:memory:allocate(state, 16))
+    let self = cast(Core:Work:Arena*, context:memory:allocate(state, sizeof(Core:Work:Arena)))
     if !self { return cast(Core:Work:Arena*, 0) }
     self.head = cast(Core:Work:ArenaBlock*, 0)
     if default_capacity < 256 { default_capacity = 256 }
@@ -354,7 +354,7 @@ let Core:Work:Arena:new = fn (state:Context*, default_capacity:u64) -> Core:Work
 let Core:Work:Arena:add_block = fn (self:Core:Work:Arena*, state:Context*, minimum:u64) -> i64 {
     var capacity = self.default_capacity
     if capacity < minimum { capacity = minimum }
-    let block = cast(Core:Work:ArenaBlock*, context:memory:allocate(state, 32))
+    let block = cast(Core:Work:ArenaBlock*, context:memory:allocate(state, sizeof(Core:Work:ArenaBlock)))
     if !block { return 0 }
     block.data = context:memory:allocate(state, capacity)
     if !block.data { context:memory:release(state, cast(u8*, block)); return 0 }

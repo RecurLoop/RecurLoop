@@ -1,84 +1,74 @@
 # Source-defined RecurLoop IDE
 
-The IDE is a normal `.rli` library. There is no `recurloop-ide` executable and
-no separately staged `application.so`.
+The reusable `ide.rli` is an IDE runtime, not a concrete editor UI. It owns the
+native window lifetime, Project server, dependency-stamped cache, hot reload,
+workspace filesystem API and persistent terminal models. The explorer, editor,
+terminal widgets, buttons and complete layout live next to this launcher.
 
-Build the normal libraries:
+Build the normal libraries, then run the source directly:
 
 ```bash
 make libraries
+./build/Release/bin/recurloop --file examples/07-workflows/ide/main.rl
 ```
 
-Then run the launcher source directly:
+There is no `recurloop-ide` executable and no UI baked into `ide.rli`.
 
-```bash
-./build/Release/bin/recurloop --file examples/07-workflows/ide/demo.rl
-```
+## Project-local view
 
-`demo.rl` imports `ide.rli`, defines a small launcher function that creates
-`IDE:Config`, chooses the workspace, cache, watch root and reload mode, and then
-starts it from a top-level `var` initializer. Any `IDE_App:*` function can be
-replaced before that final initializer.
+`main.rl` imports `ide.rli` and includes:
 
-## Configuration
+- `app.rl` - application/view records owned by one mounted generation,
+- `editor.rl` - code editor behavior,
+- `explorer.rl` - file-tree presentation and controls,
+- `terminal.rl` - terminal widgets bound to persistent runtime models,
+- `view.rl` - layout plus the single `IDE:App:lifecycle` callback.
+
+The launcher selects that lifecycle explicitly with:
 
 ```recurloop
-let IDE_App:launch = fn () -> i64 {
-    let app = IDE:Config:new()
-    if !app { return 1 }
-
-    app.workspace("examples/07-workflows/ide")
-    app.source("examples/07-workflows/ide/demo.rl")
-    app.cache(".cache/recurloop")
-    app.watch(".")
-    app.reload("hot")
-
-    let status = app.open()
-    app.destroy()
-    return status
-}
-
-var IDE_App:launch_status = IDE_App:launch()
+app.view(IDE:App:lifecycle)
 ```
 
-Reload modes are `"hot"` / `"hot-reload"`, `"manual"` / `"manually"`, and
-`"off"` / `"no-reload"`. Manual mode shows a compact reload button in the
-editor toolbar. Hot mode watches `.rl` files with inotify and debounces saves.
-Heavy directories (`.git`, `build`, `.cache`, `node_modules`) are skipped.
+The runtime never knows whether the project uses a tree, tabs, a toolbar, a
+status bar or any particular editor layout. `host.user_data` belongs only to
+the currently mounted view object; there is no global/singleton application
+state shared between generations.
 
-The cache location is configured in source and defaults to
-`<workspace>/.cache/recurloop`. Direct launcher loads are cumulative `.rli` step
-checkpoints. Files reached through `include` are dependency-stamped into that
-step, so editing an included file invalidates the cached step automatically;
-imported `.rli` libraries are already compiled images.
+## Configuration and reload
 
-## Hot reload and terminal generations
+`IDE:Config` chooses the workspace, launcher source, cache, watch root, reload
+mode, native window properties and project view. Reload modes are `"hot"`,
+`"manual"`, and `"off"`.
 
-One persistent Project server is used for the whole IDE lifetime. A reload
-starts from the immutable `project.rli` baseline, restores the longest valid
-cache prefix, evaluates the launcher and optional `project.rl`, emits a new
-lifecycle object, links it, publishes the Project generation, and only then
-swaps the view.
+The cache defaults to `<workspace>/.cache/recurloop`. Direct launcher loads are
+cumulative `.rli` checkpoints. Files reached through `include` are dependency
+stamped, so changing `editor.rl`, `explorer.rl`, `terminal.rl` or `view.rl`
+invalidates the relevant project step without rebuilding `ide.rli`.
 
-After successful publication existing terminal sessions stay on their current
-generation and retain local variables and execution context. Run `:refresh` in a
-terminal when you deliberately want that session to attach to the latest Project
-generation. New terminals attach to the current published generation.
+On a successful hot reload the replacement lifecycle module is loaded before
+the visible generation is unmounted. The old view is then destroyed and a new
+project-local view is mounted against the same `IDE:Host`. Failed rebuilds keep
+the current visible view alive.
 
-Native hot-reload generations are linked against the GTK 3 runtime SONAMEs
-(`libgtk-3.so.0`, `libgdk-3.so.0`, `libgobject-2.0.so.0`, and
-`libglib-2.0.so.0`). This keeps worker-side validation deterministic without
-requiring GTK development linker symlinks.
+## Persistent runtime state
 
-## Customizing the IDE
+The window, Project server, cache, watcher and `IDE:Terminal` models live in
+`ide.rli` and survive view replacement. Existing terminal sessions therefore
+keep their transcript and execution generation across UI reloads. `:refresh`
+explicitly moves a terminal session to the latest published Project generation;
+new terminals start on the latest generation.
 
-The default implementation is shipped as source under `libraries/ide/` and is
-compiled into `ide.rli`. Its behavior is deliberately split into replaceable
-functions. For example, a launcher may replace `IDE_App:create_editor`,
-`IDE_App:create_explorer`, `IDE_App:create_terminal_panel`, `IDE_App:create_status`,
-`IDE_App:mount`, save/file handlers, terminal handlers, or any lower-level
-`IDE:*` function before the final `IDE_App:launch_status` initializer.
+Filesystem mutation also stays behind the runtime API (`IDE:read_file`,
+`IDE:write_file`, create/rename/remove helpers, and `IDE:visit_directory`). In
+particular `explorer.rl` no longer knows libc `dirent` offsets. That keeps the
+source-defined UI independent of the platform-specific filesystem backend.
 
-That keeps the standard IDE usable out of the box while allowing a project to
-replace a single control, a panel, or the complete composition without adding a
-C++ IDE mode.
+## Ownership boundary
+
+`ide.rli` should contain infrastructure that must survive or be reusable:
+window lifetime, project/cache/hot-reload machinery, workspace/filesystem
+operations and persistent terminal/runtime state. Concrete controls and layout
+belong in this directory. Adding a button, replacing the file tree, changing
+the editor composition or redesigning the terminal panel is therefore a normal
+source edit followed by hot reload, not a library rebuild.

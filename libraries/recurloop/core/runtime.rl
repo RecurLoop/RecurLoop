@@ -291,6 +291,10 @@ phrase alloc = "alloc" in root {
   type phrase_types_data
 }
 
+phrase sizeof = "sizeof" in root {
+  type phrase_types_data
+}
+
 phrase and = "and" in root {
   type phrase_types_data
 }

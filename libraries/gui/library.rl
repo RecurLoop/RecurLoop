@@ -50,6 +50,9 @@ extern gtk_paned_set_position(paned:u8*, position:i32) -> void abi sysv-amd64
 extern gtk_scrolled_window_new(hadjustment:u8*, vadjustment:u8*) -> u8* abi sysv-amd64
 extern gtk_scrolled_window_set_policy(window:u8*, horizontal:i32, vertical:i32) -> void abi sysv-amd64
 extern gtk_container_add(container:u8*, child:u8*) -> void abi sysv-amd64
+extern gtk_stack_new() -> u8* abi sysv-amd64
+extern gtk_stack_set_visible_child(stack:u8*, child:u8*) -> void abi sysv-amd64
+extern gtk_stack_set_transition_type(stack:u8*, transition:i32) -> void abi sysv-amd64
 extern gtk_box_pack_start(box:u8*, child:u8*, expand:i32, fill:i32, padding:u32) -> void abi sysv-amd64
 extern gtk_box_pack_end(box:u8*, child:u8*, expand:i32, fill:i32, padding:u32) -> void abi sysv-amd64
 extern gtk_label_new(text:u8*) -> u8* abi sysv-amd64
@@ -213,6 +216,24 @@ let Gui:row = fn (spacing:i32) -> u8* { return gtk_box_new(0, spacing) }
 let Gui:column = fn (spacing:i32) -> u8* { return gtk_box_new(1, spacing) }
 let Gui:split_horizontal = fn () -> u8* { return gtk_paned_new(0) }
 let Gui:split_vertical = fn () -> u8* { return gtk_paned_new(1) }
+
+// Stable render surface used by hot-reloadable applications. Children can be
+// fully constructed while detached from the visible generation, then selected
+// with one backend operation. Transition type 0 deliberately disables animated
+// overlap: generation replacement is an immediate state change.
+let Gui:stack = fn () -> u8* {
+    let result = gtk_stack_new()
+    if result { gtk_stack_set_transition_type(result, 0) }
+    return result
+}
+
+let Gui:stack_add = fn (stack:u8*, child:u8*) -> void {
+    if stack && child { gtk_container_add(stack, child) }
+}
+
+let Gui:stack_select = fn (stack:u8*, child:u8*) -> void {
+    if stack && child { gtk_stack_set_visible_child(stack, child) }
+}
 
 let Gui:split_first = fn (split:u8*, child:u8*, grow:i64) -> void {
     if split && child { gtk_paned_pack1(split, child, grow != 0, 0) }

@@ -1,5 +1,5 @@
-// Default compact IDE layout.  These builders are intentionally normal `let`
-// phrases: a launcher can replace any one of them before IDE:Config:open().
+// Project-local compact IDE layout. Runtime/window/cache/terminal models live
+// in ide.rli; every widget and callback in this file is hot-reloadable source.
 let IDE:App:update_status = fn (state:IDE:App:State*) -> void {
     if !state || !state.host || !state.host.runner || !state.status { return }
     let status = state.host.runner.last_status
@@ -18,8 +18,8 @@ let IDE:App:update_status = fn (state:IDE:App:State*) -> void {
     IDE:append_u64(text, generation)
     text.append("  |  rebuild ")
     IDE:append_u64(text, revision)
-    if state.host.reload_mode == IDE:Reload:Hot() { text.append("  |  hot reload") }
-    else if state.host.reload_mode == IDE:Reload:Manual() {
+    if IDE:view_reload_mode(state.host) == IDE:Reload:Hot() { text.append("  |  hot reload") }
+    else if IDE:view_reload_mode(state.host) == IDE:Reload:Manual() {
         if state.host.reload_pending { text.append("  |  changes pending") }
         else { text.append("  |  manual reload") }
     } else { text.append("  |  reload off") }
@@ -99,7 +99,7 @@ let IDE:App:create_editor = fn (state:IDE:App:State*) -> u8* {
     Gui:class_add(state.file_label, "path-label")
     Gui:append(toolbar, state.file_label, 1, 6)
 
-    if state.host.reload_mode == IDE:Reload:Manual() {
+    if IDE:view_reload_mode(state.host) == IDE:Reload:Manual() {
         let reload = Gui:icon_button("view-refresh-symbolic", "Reload IDE")
         Gui:on_click(reload, IDE:App:on_manual_reload, cast(u8*, state))
         Gui:append_end(toolbar, reload, 0, 2)
@@ -118,17 +118,26 @@ let IDE:App:create_editor = fn (state:IDE:App:State*) -> u8* {
 let IDE:App:create_terminal_panel = fn (state:IDE:App:State*) -> u8* {
     let box = Gui:column(0)
     Gui:class_add(box, "terminal-panel")
+
     let toolbar = Gui:row(6)
     Gui:class_add(toolbar, "ide-toolbar")
+
     let label = Gui:label("TERMINAL")
     Gui:label_align(label, cast(f32, 0.0))
+
+    //let remove_terminal = Gui:icon_button("list-remove-symbolic", "Remove Terminal")
     let add_terminal = Gui:icon_button("list-add-symbolic", "New Terminal")
+
     Gui:on_click(add_terminal, IDE:App:on_add_terminal, cast(u8*, state))
+
     Gui:append(toolbar, label, 1, 6)
+    //Gui:append_end(toolbar, remove_terminal, 0, 0)
     Gui:append_end(toolbar, add_terminal, 0, 4)
+
     state.notebook = Gui:tabs()
     Gui:append(box, toolbar, 0, 0)
     Gui:append(box, state.notebook, 1, 0)
+
     return box
 }
 
@@ -141,10 +150,11 @@ let IDE:App:create_status = fn (state:IDE:App:State*) -> u8* {
 
 let IDE:App:mount = fn (host:IDE:Host*) -> void {
     if !host || !host.window { return }
-    let state = cast(IDE:App:State*, malloc(72))
+    let state = alloc(IDE:App:State)
     if !state { return }
     state.host = host
     state.root_box = Gui:column(0)
+    if !state.root_box { free(cast(u8*, state)); return }
     Gui:class_add(state.root_box, "app-root")
     state.file_box = cast(u8*, 0)
     state.editor = cast(u8*, 0)
@@ -153,12 +163,6 @@ let IDE:App:mount = fn (host:IDE:Host*) -> void {
     state.notebook = cast(u8*, 0)
     state.files = cast(IDE:App:FileItem*, 0)
     state.terminal_views = cast(IDE:App:TerminalView*, 0)
-    host.user_data = cast(u8*, state)
-    host.content = state.root_box
-
-    if host.window_title { Gui:window_title(host.window, host.window_title) }
-    Gui:window_size(host.window, cast(i32, host.window_width), cast(i32, host.window_height))
-    Gui:add(host.window, state.root_box)
 
     let main = Gui:split_horizontal()
     let right = Gui:split_vertical()
@@ -179,6 +183,16 @@ let IDE:App:mount = fn (host:IDE:Host*) -> void {
     else if host.entry && IDE:file_exists(host.entry) { IDE:App:open_path(state, host.entry) }
     IDE:App:mount_terminals(state)
     IDE:App:update_status(state)
+
+    // This is the commit contract with ide.rli: all widgets are complete before
+    // the root enters the hidden stack slot. The runtime decides when this root
+    // becomes visible; project code never replaces the native window child.
+    if !IDE:view_attach(host, state.root_box, cast(u8*, state)) {
+        Gui:destroy(state.root_box)
+        IDE:App:free_files(state)
+        IDE:App:free_terminal_views(state)
+        free(cast(u8*, state))
+    }
 }
 
 let IDE:App:unmount = fn (host:IDE:Host*) -> void {
@@ -186,7 +200,6 @@ let IDE:App:unmount = fn (host:IDE:Host*) -> void {
     if !state { return }
     IDE:App:free_files(state)
     IDE:App:free_terminal_views(state)
-    host.user_data = cast(u8*, 0)
     free(cast(u8*, state))
 }
 
@@ -206,4 +219,15 @@ let IDE:App:runtime_ready = fn (host:IDE:Host*) -> void {
         Gui:show(state.notebook)
     }
     IDE:App:update_status(state)
+}
+
+// One lifecycle object is the only contract between ide.rli and this project
+// view. It deliberately contains no singleton state: IDE:view_data(host)
+// resolves the object owned by the active/staged/retiring generation.
+let IDE:App:lifecycle = fn (action:i64, raw:u8*) -> void {
+    let host = cast(IDE:Host*, raw)
+    if action == 1 { IDE:App:mount(host) }
+    else if action == 2 { IDE:App:unmount(host) }
+    else if action == 3 { IDE:App:reload_failed(host) }
+    else if action == 4 { IDE:App:runtime_ready(host) }
 }

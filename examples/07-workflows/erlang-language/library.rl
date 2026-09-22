@@ -207,7 +207,7 @@ record Erlang:Database {
 // Expr kinds: 1 integer, 2 atom, 3 variable, 4 text, 5 tuple, 6 list,
 // 7 call, 8 sequence, 9 match, 10 send, 11 receive, 12 binary, 13 funref.
 let Erlang:Expr:new = fn (kind:i64) -> Erlang:Expr* {
-    let self = cast(Erlang:Expr*, malloc(72))
+    let self = alloc(Erlang:Expr)
     if !self { return cast(Erlang:Expr*, 0) }
     self.kind = kind; self.number = 0; self.name = cast(u8*, 0); self.symbol = 0; self.arity = 0
     self.items = cast(u8*, 0); self.left = cast(Erlang:Expr*, 0); self.right = cast(Erlang:Expr*, 0)
@@ -238,7 +238,7 @@ let Erlang:Expr:make_binary = fn (state:Context*, name:u8*, left:Erlang:Expr*, r
 
 // Pattern kinds: 1 variable, 2 wildcard, 3 integer, 4 atom, 5 tuple, 6 list.
 let Erlang:Pattern:new = fn (kind:i64) -> Erlang:Pattern* {
-    let self = cast(Erlang:Pattern*, malloc(48))
+    let self = alloc(Erlang:Pattern)
     if !self { return cast(Erlang:Pattern*, 0) }
     self.kind = kind; self.number = 0; self.name = cast(u8*, 0); self.symbol = 0; self.arity = 0; self.items = cast(u8*, 0)
     return self
@@ -246,7 +246,7 @@ let Erlang:Pattern:new = fn (kind:i64) -> Erlang:Pattern* {
 
 // Value kinds: 1 integer, 2 atom, 3 text, 4 tuple, 5 list, 6 pid, 7 funref.
 let Erlang:Value:new = fn (kind:i64) -> Erlang:Value* {
-    let self = cast(Erlang:Value*, malloc(48))
+    let self = alloc(Erlang:Value)
     if !self { return cast(Erlang:Value*, 0) }
     self.kind = kind; self.number = 0; self.name = cast(u8*, 0); self.symbol = 0; self.arity = 0; self.items = cast(u8*, 0)
     return self
@@ -271,17 +271,17 @@ let Erlang:Env:find = fn (head:Erlang:EnvEntry*, symbol:i64) -> Erlang:Value* {
     return cast(Erlang:Value*, 0)
 }
 let Erlang:Env:bind = fn (head:Erlang:EnvEntry*, name:u8*, symbol:i64, value:Erlang:Value*) -> Erlang:EnvEntry* {
-    let item = cast(Erlang:EnvEntry*, malloc(32))
+    let item = alloc(Erlang:EnvEntry)
     if !item { return head }
     item.name = Erlang:copy_text(name); item.symbol = symbol; item.value = value; item.next = head
     return item
 }
 
 let Erlang:Database:new = fn () -> Erlang:Database* {
-    let self = cast(Erlang:Database*, malloc(48))
+    let self = alloc(Erlang:Database)
     if !self { return cast(Erlang:Database*, 0) }
     self.clauses = cast(Erlang:Clause*, 0); self.clauses_tail = cast(Erlang:Clause*, 0)
-    self.processes = cast(Erlang:Process*, malloc(56))
+    self.processes = alloc(Erlang:Process)
     if !self.processes { return cast(Erlang:Database*, 0) }
     self.processes.pid = 1; self.processes.status = 1; self.processes.function = cast(u8*, 0); self.processes.function_symbol = 0
     self.processes.mailbox_head = cast(Erlang:Message*, 0); self.processes.mailbox_tail = cast(Erlang:Message*, 0)
@@ -325,7 +325,7 @@ record Erlang:Parser {
 }
 
 let Erlang:Parser:new = fn (state:Context*, database:Erlang:Database*, source:u8*) -> Erlang:Parser* {
-    let self = cast(Erlang:Parser*, malloc(48))
+    let self = alloc(Erlang:Parser)
     if !self { return cast(Erlang:Parser*, 0) }
     self.state = state; self.database = database; self.source = source; self.length = cast(i64, strlen(source)); self.position = 0; self.error = 0
     return self
@@ -438,11 +438,11 @@ let Erlang:Parser:parse_pattern = fn (self:Erlang:Parser*) -> Erlang:Pattern* {
     if ch == 123 {
         self.position += 1
         var capacity = 4; var count = 0
-        var items = cast(Erlang:Pattern**, malloc(capacity * 8))
+        var items = cast(Erlang:Pattern**, malloc(capacity * sizeof(Erlang:Pattern*)))
         if !Erlang:Parser:match(self, 125) {
             var more = 1
             while more {
-                if count == capacity { capacity *= 2; items = cast(Erlang:Pattern**, realloc(cast(u8*, items), capacity * 8)) }
+                if count == capacity { capacity *= 2; items = cast(Erlang:Pattern**, realloc(cast(u8*, items), capacity * sizeof(Erlang:Pattern*))) }
                 items[count] = Erlang:Parser:parse_pattern(self); if !items[count] { return cast(Erlang:Pattern*, 0) }; count += 1
                 if Erlang:Parser:match(self, 44) { } else { more = 0 }
             }
@@ -453,11 +453,11 @@ let Erlang:Parser:parse_pattern = fn (self:Erlang:Parser*) -> Erlang:Pattern* {
     if ch == 91 {
         self.position += 1
         var capacity = 4; var count = 0
-        var items = cast(Erlang:Pattern**, malloc(capacity * 8))
+        var items = cast(Erlang:Pattern**, malloc(capacity * sizeof(Erlang:Pattern*)))
         if !Erlang:Parser:match(self, 93) {
             var more = 1
             while more {
-                if count == capacity { capacity *= 2; items = cast(Erlang:Pattern**, realloc(cast(u8*, items), capacity * 8)) }
+                if count == capacity { capacity *= 2; items = cast(Erlang:Pattern**, realloc(cast(u8*, items), capacity * sizeof(Erlang:Pattern*))) }
                 items[count] = Erlang:Parser:parse_pattern(self); if !items[count] { return cast(Erlang:Pattern*, 0) }; count += 1
                 if Erlang:Parser:match(self, 44) { } else { more = 0 }
             }
@@ -490,7 +490,7 @@ let Erlang:Expr:to_pattern = fn (state:Context*, expr:Erlang:Expr*) -> Erlang:Pa
         let p = Erlang:Pattern:new(pattern_kind)
         if !p { return p }
         p.arity = expr.arity
-        let items = cast(Erlang:Pattern**, malloc(expr.arity * 8))
+        let items = cast(Erlang:Pattern**, malloc(expr.arity * sizeof(Erlang:Pattern*)))
         var i = 0
         while i < expr.arity { items[i] = Erlang:Expr:to_pattern(state, cast(Erlang:Expr**, expr.items)[i]); if !items[i] { return cast(Erlang:Pattern*, 0) }; i += 1 }
         p.items = cast(u8*, items)
@@ -529,7 +529,7 @@ let Erlang:Parser:parse_receive = fn (self:Erlang:Parser*, parse:Erlang:ParseCal
             if !Erlang:Parser:match_pair(self, 45, 62) { Erlang:Parser:fail(self, "Erlang: receive clause expects '->'"); return cast(Erlang:Expr*, 0) }
             let body = Erlang:Parser:parse_sequence(self, parse)
             if !body { return cast(Erlang:Expr*, 0) }
-            let clause = cast(Erlang:ReceiveClause*, malloc(24))
+            let clause = alloc(Erlang:ReceiveClause)
             if !clause { return cast(Erlang:Expr*, 0) }
             clause.pattern = pattern; clause.body = cast(u8*, body); clause.next = cast(Erlang:ReceiveClause*, 0)
             if tail { tail.next = clause } else { head = clause }; tail = clause
@@ -562,11 +562,11 @@ let Erlang:Parser:parse_expr_mode = fn (self:Erlang:Parser*, mode:i64) -> Erlang
             if ch == 91 { close = 93; kind = 6 }
             self.position += 1
             var capacity = 4; var count = 0
-            var items = cast(Erlang:Expr**, malloc(capacity * 8))
+            var items = cast(Erlang:Expr**, malloc(capacity * sizeof(Erlang:Expr*)))
             if !Erlang:Parser:match(self, close) {
                 var more = 1
                 while more {
-                    if count == capacity { capacity *= 2; items = cast(Erlang:Expr**, realloc(cast(u8*, items), capacity * 8)) }
+                    if count == capacity { capacity *= 2; items = cast(Erlang:Expr**, realloc(cast(u8*, items), capacity * sizeof(Erlang:Expr*))) }
                     items[count] = Erlang:Parser:parse_expr_mode(self, 0); if !items[count] { return cast(Erlang:Expr*, 0) }; count += 1
                     if Erlang:Parser:match(self, 44) { } else { more = 0 }
                 }
@@ -594,11 +594,11 @@ let Erlang:Parser:parse_expr_mode = fn (self:Erlang:Parser*, mode:i64) -> Erlang
             }
             if Erlang:Parser:match(self, 40) {
                 var capacity = 4; var count = 0
-                var args = cast(Erlang:Expr**, malloc(capacity * 8))
+                var args = cast(Erlang:Expr**, malloc(capacity * sizeof(Erlang:Expr*)))
                 if !Erlang:Parser:match(self, 41) {
                     var more = 1
                     while more {
-                        if count == capacity { capacity *= 2; args = cast(Erlang:Expr**, realloc(cast(u8*, args), capacity * 8)) }
+                        if count == capacity { capacity *= 2; args = cast(Erlang:Expr**, realloc(cast(u8*, args), capacity * sizeof(Erlang:Expr*))) }
                         args[count] = Erlang:Parser:parse_expr_mode(self, 0); if !args[count] { return cast(Erlang:Expr*, 0) }; count += 1
                         if Erlang:Parser:match(self, 44) { } else { more = 0 }
                     }
@@ -654,11 +654,11 @@ let Erlang:parse_clause = fn (state:Context*, database:Erlang:Database*, parser:
     if !name { Erlang:Parser:fail(parser, "Erlang: expected function name"); return cast(Erlang:Clause*, 0) }
     if !Erlang:Parser:match(parser, 40) { free(name); Erlang:Parser:fail(parser, "Erlang: function expects '('"); return cast(Erlang:Clause*, 0) }
     var capacity = 4; var count = 0
-    var patterns = cast(Erlang:Pattern**, malloc(capacity * 8))
+    var patterns = cast(Erlang:Pattern**, malloc(capacity * sizeof(Erlang:Pattern*)))
     if !Erlang:Parser:match(parser, 41) {
         var more = 1
         while more {
-            if count == capacity { capacity *= 2; patterns = cast(Erlang:Pattern**, realloc(cast(u8*, patterns), capacity * 8)) }
+            if count == capacity { capacity *= 2; patterns = cast(Erlang:Pattern**, realloc(cast(u8*, patterns), capacity * sizeof(Erlang:Pattern*))) }
             patterns[count] = Erlang:Parser:parse_pattern(parser)
             if !patterns[count] { return cast(Erlang:Clause*, 0) }
             count += 1
@@ -669,7 +669,7 @@ let Erlang:parse_clause = fn (state:Context*, database:Erlang:Database*, parser:
     if !Erlang:Parser:match_pair(parser, 45, 62) { Erlang:Parser:fail(parser, "Erlang: function clause expects '->'"); return cast(Erlang:Clause*, 0) }
     let body = Erlang:Parser:parse_sequence(parser, Erlang:Parser:parse_expr_mode)
     if !body { return cast(Erlang:Clause*, 0) }
-    let clause = cast(Erlang:Clause*, malloc(48))
+    let clause = alloc(Erlang:Clause)
     if !clause { return cast(Erlang:Clause*, 0) }
     clause.name = name; clause.symbol = Erlang:categorize_symbol(state, "Functions", name); Erlang:categorize_symbol(state, "Grammar", name); clause.arity = count; clause.patterns = cast(u8*, patterns); clause.body = body; clause.next = cast(Erlang:Clause*, 0)
     return clause
@@ -769,7 +769,7 @@ let Erlang:Database:find_process = fn (self:Erlang:Database*, pid:i64) -> Erlang
 }
 
 let Erlang:Database:spawn = fn (state:Context*, self:Erlang:Database*, function:u8*, function_symbol:i64) -> Erlang:Process* {
-    let process = cast(Erlang:Process*, malloc(56))
+    let process = alloc(Erlang:Process)
     if !process { return cast(Erlang:Process*, 0) }
     process.pid = self.next_pid; self.next_pid += 1
     process.status = 0; process.function = Erlang:copy_text(function); process.function_symbol = function_symbol
@@ -783,7 +783,7 @@ let Erlang:Database:spawn = fn (state:Context*, self:Erlang:Database*, function:
 }
 
 let Erlang:Process:enqueue = fn (self:Erlang:Process*, value:Erlang:Value*) -> i64 {
-    let message = cast(Erlang:Message*, malloc(16))
+    let message = alloc(Erlang:Message)
     if !message { return 0 }
     message.value = value; message.next = cast(Erlang:Message*, 0)
     if self.mailbox_tail { self.mailbox_tail.next = message } else { self.mailbox_head = message }
@@ -867,7 +867,7 @@ let Erlang:apply_function_with = fn (dispatch:Erlang:RuntimeCallback, state:Cont
                 i += 1
             }
             if matched {
-                let frame = cast(Erlang:Frame*, malloc(8)); if !frame { return cast(Erlang:Value*, 0) }
+                let frame = alloc(Erlang:Frame); if !frame { return cast(Erlang:Value*, 0) }
                 frame.env = env
                 return cast(Erlang:Value*, dispatch(state, 1, cast(i64, clause.body), cast(i64, frame), 0))
             }
@@ -942,14 +942,14 @@ let Erlang:eval_with = fn (dispatch:Erlang:RuntimeCallback, state:Context*, expr
     }
     if expr.kind == 4 { return Erlang:Value:text(expr.name) }
     if expr.kind == 5 || expr.kind == 6 {
-        let items = cast(Erlang:Value**, malloc(expr.arity * 8))
+        let items = cast(Erlang:Value**, malloc(expr.arity * sizeof(Erlang:Value*)))
         var i = 0
         while i < expr.arity { items[i] = cast(Erlang:Value*, dispatch(state, 1, cast(i64, cast(Erlang:Expr**, expr.items)[i]), cast(i64, frame), 0)); if !items[i] { return cast(Erlang:Value*, 0) }; i += 1 }
         var kind = 4; if expr.kind == 6 { kind = 5 }
         return Erlang:Value:composite(kind, items, expr.arity)
     }
     if expr.kind == 7 {
-        let args = cast(Erlang:Value**, malloc(expr.arity * 8))
+        let args = cast(Erlang:Value**, malloc(expr.arity * sizeof(Erlang:Value*)))
         var i = 0
         while i < expr.arity { args[i] = cast(Erlang:Value*, dispatch(state, 1, cast(i64, cast(Erlang:Expr**, expr.items)[i]), cast(i64, frame), 0)); if !args[i] { return cast(Erlang:Value*, 0) }; i += 1 }
         return cast(Erlang:Value*, dispatch(state, 2, expr.symbol, cast(i64, args), expr.arity))

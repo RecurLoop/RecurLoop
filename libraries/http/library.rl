@@ -202,7 +202,7 @@ let Http:Request:header = fn (self:Http:Request*, name:u8*) -> u8* {
 
 let Http:Request:remember = fn (self:Http:Request*, text:u8*) -> u8* {
     if !self || !text { return text }
-    let item = cast(Http:OwnedText*, malloc(16))
+    let item = alloc(Http:OwnedText)
     if !item { free(text); return cast(u8*, 0) }
     item.value = text
     item.next = self.scratch
@@ -276,7 +276,7 @@ record Http:Limits {
 }
 
 let Http:Limits:defaults = fn () -> Http:Limits* {
-    let limits = cast(Http:Limits*, malloc(88))
+    let limits = alloc(Http:Limits)
     if !limits { return cast(Http:Limits*, 0) }
     limits.request_line = 16384
     limits.headers_total = 65536
@@ -440,7 +440,7 @@ let Http:write_all = fn (
 
 let Http:Response:header = fn (self:Http:Response*, name:u8*, value:u8*) -> void {
     if !self || self.sent || !name || !value { return }
-    let item = cast(Http:ResponseHeader*, malloc(24))
+    let item = alloc(Http:ResponseHeader)
     if !item { return }
     item.name = name
     item.value = value
@@ -644,7 +644,7 @@ let Http:BodyStream:new = fn (
     fd:i32, initial:u8*, initial_bytes:i64, deadline_ms:i64, io_scratch:u8*
 ) -> Http:BodyStream* {
     if initial_bytes < 0 || initial_bytes > 8192 || !io_scratch { return cast(Http:BodyStream*, 0) }
-    let stream = cast(Http:BodyStream*, malloc(48))
+    let stream = alloc(Http:BodyStream)
     if !stream { return cast(Http:BodyStream*, 0) }
     stream.buffer = cast(u8*, malloc(8192))
     if !stream.buffer { free(cast(u8*, stream)); return cast(Http:BodyStream*, 0) }
@@ -940,7 +940,7 @@ let Http:read_request = fn (fd:i32, limits:Http:Limits*, io_scratch:u8*, status:
         }
     }
 
-    let request = cast(Http:Request*, malloc(96))
+    let request = alloc(Http:Request)
     if !request {
         if body { free(body) }
         free(buffer)
@@ -1009,7 +1009,7 @@ let Http:read_request = fn (fd:i32, limits:Http:Limits*, io_scratch:u8*, status:
         while value_start < value_end && (buffer[value_start] == 32 || buffer[value_start] == 9) { value_start += 1 }
         while value_end > value_start && (buffer[value_end - 1] == 32 || buffer[value_end - 1] == 9) { value_end -= 1 }
         buffer[value_end] = 0
-        let item = cast(Http:Header*, malloc(24))
+        let item = alloc(Http:Header)
         if !item {
             request.destroy()
             status[0] = 500
@@ -1072,11 +1072,11 @@ record Http:SockAddrIn {
 
 let Http:WorkQueue:new = fn (capacity:i64) -> Http:WorkQueue* {
     if capacity < 1 || capacity > 65536 { return cast(Http:WorkQueue*, 0) }
-    let queue = cast(Http:WorkQueue*, malloc(56))
+    let queue = alloc(Http:WorkQueue)
     if !queue { return cast(Http:WorkQueue*, 0) }
     queue.mutex = cast(u8*, malloc(64))
     queue.condition = cast(u8*, malloc(64))
-    queue.items = cast(i32*, malloc(capacity * 4))
+    queue.items = cast(i32*, malloc(capacity * sizeof(i32)))
     queue.capacity = capacity
     queue.head = 0
     queue.tail = 0
@@ -1179,7 +1179,7 @@ let Http:Server:new_on_with_limits = fn (port:i64, address_text:u8*, limits:Http
         return cast(Http:Server*, 0)
     }
 
-    let socket_address = cast(Http:SockAddrIn*, malloc(16))
+    let socket_address = alloc(Http:SockAddrIn)
     if !socket_address {
         close(fd)
         free(cast(u8*, limits))
@@ -1207,7 +1207,7 @@ let Http:Server:new_on_with_limits = fn (port:i64, address_text:u8*, limits:Http
         return cast(Http:Server*, 0)
     }
 
-    let server = cast(Http:Server*, malloc(64))
+    let server = alloc(Http:Server)
     if !server {
         close(fd)
         free(cast(u8*, limits))
@@ -1244,7 +1244,7 @@ let Http:Server:new = fn (port:i64) -> Http:Server* {
 
 let Http:Server:route = fn (self:Http:Server*, method:u8*, path:u8*, handler:Http:Handler) -> i64 {
     if !self || !method || !path || !handler { return 0 }
-    let route = cast(Http:Route*, malloc(32))
+    let route = alloc(Http:Route)
     if !route { return 0 }
     route.method = Http:copy_text(method)
     route.path = Http:copy_text(path)
@@ -1333,7 +1333,7 @@ let Http:Server:serve_client = fn (self:Http:Server*, client:i32) -> i64 {
     var parse_status:i64 = 400
     let request = Http:read_request(client, self.limits, io_scratch, &parse_status)
     if !request {
-        let response = cast(Http:Response*, malloc(56))
+        let response = alloc(Http:Response)
         if response {
             response.fd = client
             response.sent = 0
@@ -1350,7 +1350,7 @@ let Http:Server:serve_client = fn (self:Http:Server*, client:i32) -> i64 {
     }
     defer request.destroy()
 
-    let response = cast(Http:Response*, malloc(56))
+    let response = alloc(Http:Response)
     if !response { return 0 }
     defer free(cast(u8*, response))
     response.fd = client

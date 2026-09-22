@@ -387,7 +387,7 @@ namespace recurloop::function_internal {
         if (action == "fn.operator.emit-greater-equal") return ">=";
         if (action == "fn.operator.emit-and") return "&&";
         if (action == "fn.operator.emit-or") return "||";
-        if (action == "fn.intrinsic.compile") return syntaxName(value.syntax, {"&", "*", "cast"});
+        if (action == "fn.intrinsic.compile") return syntaxName(value.syntax, {"&", "*", "cast", "alloc", "sizeof"});
         return {};
       }
 
@@ -603,6 +603,24 @@ namespace recurloop::function_internal {
 
       Emitted unary(const Expression &value, compiler::TypeId expected) {
         const std::string operation = operatorSymbol(value);
+        if (operation == "alloc") {
+          const compiler::TypeDescriptor descriptor = context.language().types.get(value.declaredType);
+          if (descriptor.kind == compiler::TypeKind::Void || descriptor.kind == compiler::TypeKind::Function ||
+              descriptor.size == 0)
+            fail({}, value.offset, "alloc requires a complete non-void object type");
+          llvm::FunctionType *allocatorType = llvm::FunctionType::get(
+              llvm::PointerType::getUnqual(llvmContext), {llvm::Type::getInt64Ty(llvmContext)}, false);
+          llvm::FunctionCallee allocator = module.getOrInsertFunction("malloc", allocatorType);
+          llvm::Value *bytes = llvm::ConstantInt::get(llvm::Type::getInt64Ty(llvmContext), descriptor.size);
+          return {builder.CreateCall(allocator, {bytes}), context.language().types.pointerTo(value.declaredType)};
+        }
+        if (operation == "sizeof") {
+          const compiler::TypeDescriptor descriptor = context.language().types.get(value.declaredType);
+          if (descriptor.kind == compiler::TypeKind::Void || descriptor.size == 0)
+            fail({}, value.offset, "sizeof requires a complete object type");
+          return {llvm::ConstantInt::get(llvm::Type::getInt64Ty(llvmContext), descriptor.size),
+                  context.language().types.find("u64")};
+        }
         if (value.declaredType != compiler::InvalidType || operation == "cast")
           return coerce(expression(*value.children[0]), value.declaredType, value.offset, true);
         if (operation == "&") {
@@ -862,6 +880,19 @@ namespace recurloop::function_internal {
         case Expression::Kind::MethodCall: return methodFunction(value).resultType;
         case Expression::Kind::Unary: {
           const std::string operation = operatorSymbol(value);
+          if (operation == "alloc") {
+            const compiler::TypeDescriptor descriptor = context.language().types.get(value.declaredType);
+            if (descriptor.kind == compiler::TypeKind::Void || descriptor.kind == compiler::TypeKind::Function ||
+                descriptor.size == 0)
+              fail({}, value.offset, "alloc requires a complete non-void object type");
+            return context.language().types.pointerTo(value.declaredType);
+          }
+          if (operation == "sizeof") {
+            const compiler::TypeDescriptor descriptor = context.language().types.get(value.declaredType);
+            if (descriptor.kind == compiler::TypeKind::Void || descriptor.size == 0)
+              fail({}, value.offset, "sizeof requires a complete object type");
+            return context.language().types.find("u64");
+          }
           if (value.declaredType != compiler::InvalidType || operation == "cast") return value.declaredType;
           if (operation == "!") return integerType;
           if (operation == "&") return context.language().types.pointerTo(infer(*value.children[0], expected));

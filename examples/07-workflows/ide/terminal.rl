@@ -36,7 +36,7 @@ let IDE:App:terminal_title = fn (model:IDE:Terminal*) -> u8* {
 
 let IDE:App:add_terminal_view = fn (state:IDE:App:State*, model:IDE:Terminal*) -> void {
     if !state || !model { return }
-    let view = cast(IDE:App:TerminalView*, malloc(40))
+    let view = alloc(IDE:App:TerminalView)
     if !view { return }
     view.state = cast(u8*, state)
     view.model = model
@@ -50,6 +50,7 @@ let IDE:App:add_terminal_view = fn (state:IDE:App:State*, model:IDE:Terminal*) -
     Gui:input_frame(view.entry, 0)
 
     let page_box = Gui:column(0)
+    view.page = page_box
     Gui:class_add(page_box, "terminal-panel")
     let scroll = Gui:scroll(view.output)
     Gui:expand_y(scroll, 1)

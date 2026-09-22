@@ -1,56 +1,26 @@
-// Native, lazy file explorer built on Gui:tree. Startup scans only the project
-// root. A directory is read when it is selected for the first time, so large
-// repositories do not block the initial IDE window while every path is walked.
+// Project-local lazy explorer. The runtime supplies filesystem operations and
+// directory enumeration; this file decides only how those resources are shown.
+
+let IDE:App:on_directory_entry = fn (path:u8*, name:u8*, directory:i64, data:u8*) -> void {
+    let load = cast(IDE:App:TreeLoad*, data)
+    if !load || !load.state || !load.tree || !path || !name { return }
+    let iterator = Gui:tree_append(load.tree, load.parent, name, path, directory)
+    Gui:tree_iter_free(iterator)
+}
 
 let IDE:App:add_tree_directory = fn (state:IDE:App:State*, tree:u8*, parent:u8*, path:u8*) -> void {
     if !state || !tree || !path { return }
+    let load = alloc(IDE:App:TreeLoad)
+    if !load { return }
+    defer free(cast(u8*, load))
+    load.state = state
+    load.tree = tree
+    load.parent = parent
 
-    // Folders first. Gui:tree_append gives each directory a placeholder child,
-    // which makes GTK draw its normal expander without recursively scanning it.
-    let directories = opendir(path)
-    if directories {
-        var entry = readdir(directories)
-        while entry {
-            let kind = entry[18]
-            let name = &entry[19]
-            if !IDE:skip_directory(name) {
-                let child = IDE:join(path, name)
-                if child {
-                    let is_dir = kind == 4 || (kind == 0 && IDE:is_directory(child))
-                    if is_dir {
-                        let iterator = Gui:tree_append(tree, parent, name, child, 1)
-                        Gui:tree_iter_free(iterator)
-                    }
-                    free(child)
-                }
-            }
-            entry = readdir(directories)
-        }
-        closedir(directories)
-    }
-
-    // Files directly in this directory. Nothing below child directories is read
-    // until the user opens that directory in the tree.
-    let files = opendir(path)
-    if !files { return }
-    var entry = readdir(files)
-    while entry {
-        let kind = entry[18]
-        let name = &entry[19]
-        if !IDE:skip_directory(name) {
-            let child = IDE:join(path, name)
-            if child {
-                let is_dir = kind == 4 || (kind == 0 && IDE:is_directory(child))
-                if !is_dir {
-                    let iterator = Gui:tree_append(tree, parent, name, child, 0)
-                    Gui:tree_iter_free(iterator)
-                }
-                free(child)
-            }
-        }
-        entry = readdir(files)
-    }
-    closedir(files)
+    // Enumeration belongs to ide.rli. The project controls only presentation,
+    // so it has no dependency on Linux dirent offsets or a future Windows API.
+    IDE:visit_directory(path, 1, IDE:App:on_directory_entry, cast(u8*, load))
+    IDE:visit_directory(path, 0, IDE:App:on_directory_entry, cast(u8*, load))
 }
 
 let IDE:App:on_tree_selected = fn (selection:u8*, data:u8*) -> void {

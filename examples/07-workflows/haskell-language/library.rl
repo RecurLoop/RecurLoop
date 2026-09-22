@@ -240,7 +240,7 @@ record Haskell:Database {
 }
 
 let Haskell:Expr:new = fn (kind:i64) -> Haskell:Expr* {
-    let self = cast(Haskell:Expr*, malloc(48))
+    let self = alloc(Haskell:Expr)
     if !self { return cast(Haskell:Expr*, 0) }
     self.kind = kind
     self.number = 0
@@ -280,7 +280,7 @@ let Haskell:Expr:binary = fn (state:Context*, name:u8*, left:Haskell:Expr*, righ
 }
 
 let Haskell:Pattern:new = fn (kind:i64) -> Haskell:Pattern* {
-    let self = cast(Haskell:Pattern*, malloc(48))
+    let self = alloc(Haskell:Pattern)
     if !self { return cast(Haskell:Pattern*, 0) }
     self.kind = kind
     self.number = 0
@@ -318,7 +318,7 @@ let Haskell:Pattern:constructor_owned = fn (state:Context*, name:u8*, args:Haske
 }
 
 let Haskell:Value:new = fn (kind:i64) -> Haskell:Value* {
-    let self = cast(Haskell:Value*, malloc(72))
+    let self = alloc(Haskell:Value)
     if !self { return cast(Haskell:Value*, 0) }
     self.kind = kind
     self.number = 0
@@ -361,7 +361,7 @@ let Haskell:Value:callable = fn (state:Context*, name:u8*, symbol:i64, arity:i64
 }
 
 let Haskell:Thunk:expression = fn (expr:Haskell:Expr*, env:Haskell:EnvEntry*) -> Haskell:Thunk* {
-    let self = cast(Haskell:Thunk*, malloc(40))
+    let self = alloc(Haskell:Thunk)
     if !self { return cast(Haskell:Thunk*, 0) }
     self.expr = expr
     self.env = cast(u8*, env)
@@ -378,7 +378,7 @@ let Haskell:Thunk:value_thunk = fn (value:Haskell:Value*) -> Haskell:Thunk* {
 }
 
 let Haskell:Env:bind = fn (head:Haskell:EnvEntry*, name:u8*, symbol:i64, thunk:Haskell:Thunk*) -> Haskell:EnvEntry* {
-    let item = cast(Haskell:EnvEntry*, malloc(32))
+    let item = alloc(Haskell:EnvEntry)
     if !item { return head }
     item.name = name
     item.symbol = symbol
@@ -397,7 +397,7 @@ let Haskell:Env:find = fn (head:Haskell:EnvEntry*, symbol:i64) -> Haskell:Thunk*
 }
 
 let Haskell:Database:new = fn () -> Haskell:Database* {
-    let self = cast(Haskell:Database*, malloc(32))
+    let self = alloc(Haskell:Database)
     if !self { return cast(Haskell:Database*, 0) }
     self.equations = cast(Haskell:Equation*, 0)
     self.equations_tail = cast(Haskell:Equation*, 0)
@@ -416,8 +416,8 @@ let Haskell:database = fn (state:Context*) -> Haskell:Database* {
         return cast(Haskell:Database*, 0)
     }
     // Lists are built-in algebraic constructors.
-    let nil = cast(Haskell:ConstructorDef*, malloc(32))
-    let cons = cast(Haskell:ConstructorDef*, malloc(32))
+    let nil = alloc(Haskell:ConstructorDef)
+    let cons = alloc(Haskell:ConstructorDef)
     if !nil || !cons { context:diagnostic:error(state, "Haskell: could not allocate list constructors"); return created }
     nil.name = Haskell:copy_text("__nil")
     nil.symbol = Haskell:categorize_symbol(state, "Constructors", "__nil")
@@ -437,7 +437,7 @@ let Haskell:database = fn (state:Context*) -> Haskell:Database* {
 }
 
 let Haskell:Database:add_constructor = fn (self:Haskell:Database*, state:Context*, name:u8*, arity:i64) -> i64 {
-    let item = cast(Haskell:ConstructorDef*, malloc(32))
+    let item = alloc(Haskell:ConstructorDef)
     if !item { return 0 }
     item.name = name
     item.symbol = Haskell:categorize_symbol(state, "Constructors", name)
@@ -486,7 +486,7 @@ record Haskell:Parser {
 }
 
 let Haskell:Parser:new = fn (state:Context*, database:Haskell:Database*, source:u8*) -> Haskell:Parser* {
-    let self = cast(Haskell:Parser*, malloc(48))
+    let self = alloc(Haskell:Parser)
     if !self { return cast(Haskell:Parser*, 0) }
     self.state = state
     self.database = database
@@ -576,14 +576,14 @@ let Haskell:Parser:parse_expr_mode = fn (self:Haskell:Parser*, mode:i64) -> Hask
             if !first { return cast(Haskell:Expr*, 0) }
             var capacity = 4
             var count = 0
-            var items = cast(Haskell:Expr**, malloc(capacity * 8))
+            var items = cast(Haskell:Expr**, malloc(capacity * sizeof(Haskell:Expr*)))
             if !items { return cast(Haskell:Expr*, 0) }
             items[count] = first
             count += 1
             while Haskell:Parser:match(self, 44) {
                 if count == capacity {
                     capacity *= 2
-                    let replacement = realloc(cast(u8*, items), capacity * 8)
+                    let replacement = realloc(cast(u8*, items), capacity * sizeof(Haskell:Expr*))
                     if !replacement { return cast(Haskell:Expr*, 0) }
                     items = cast(Haskell:Expr**, replacement)
                 }
@@ -694,7 +694,7 @@ let Haskell:Parser:parse_pattern_mode = fn (self:Haskell:Parser*, mode:i64) -> H
                 if arity == 0 {
                     return Haskell:Pattern:constructor_owned(self.state, name, cast(Haskell:Pattern**, 0), 0)
                 }
-                let args = cast(Haskell:Pattern**, malloc(arity * 8))
+                let args = cast(Haskell:Pattern**, malloc(arity * sizeof(Haskell:Pattern*)))
                 if !args { free(name); return cast(Haskell:Pattern*, 0) }
                 var i = 0
                 while i < arity {
@@ -729,7 +729,7 @@ let Haskell:Parser:parse_pattern_mode = fn (self:Haskell:Parser*, mode:i64) -> H
     if !left { return left }
     if Haskell:Parser:match(self, 58) {
         let right = Haskell:Parser:parse_pattern_mode(self, 0)
-        let args = cast(Haskell:Pattern**, malloc(16))
+        let args = cast(Haskell:Pattern**, malloc(2 * sizeof(Haskell:Pattern*)))
         if !args { return cast(Haskell:Pattern*, 0) }
         args[0] = left
         args[1] = right
@@ -807,7 +807,7 @@ let Haskell:parse_equation = fn (state:Context*, database:Haskell:Database*, sou
 
     var capacity = 4
     var count = 0
-    var patterns = cast(Haskell:Pattern**, malloc(capacity * 8))
+    var patterns = cast(Haskell:Pattern**, malloc(capacity * sizeof(Haskell:Pattern*)))
     if !patterns { free(name); return cast(Haskell:Equation*, 0) }
 
     var scanning = 1
@@ -820,7 +820,7 @@ let Haskell:parse_equation = fn (state:Context*, database:Haskell:Database*, sou
             if !pattern { return cast(Haskell:Equation*, 0) }
             if count == capacity {
                 capacity *= 2
-                let replacement = realloc(cast(u8*, patterns), capacity * 8)
+                let replacement = realloc(cast(u8*, patterns), capacity * sizeof(Haskell:Pattern*))
                 if !replacement { return cast(Haskell:Equation*, 0) }
                 patterns = cast(Haskell:Pattern**, replacement)
             }
@@ -835,7 +835,7 @@ let Haskell:parse_equation = fn (state:Context*, database:Haskell:Database*, sou
         Haskell:Parser:fail(parser, "Haskell: unexpected input after expression")
         return cast(Haskell:Equation*, 0)
     }
-    let equation = cast(Haskell:Equation*, malloc(48))
+    let equation = alloc(Haskell:Equation)
     if !equation { return cast(Haskell:Equation*, 0) }
     equation.name = name
     equation.symbol = Haskell:categorize_symbol(state, "Functions", name)
@@ -867,7 +867,7 @@ let Haskell:builtin_arity = fn (state:Context*, symbol:i64) -> i64 {
 
 let Haskell:copy_args_plus = fn (value:Haskell:Value*, argument:Haskell:Thunk*) -> Haskell:Thunk** {
     let count = value.applied + 1
-    let args = cast(Haskell:Thunk**, malloc(count * 8))
+    let args = cast(Haskell:Thunk**, malloc(count * sizeof(Haskell:Thunk*)))
     if !args { return cast(Haskell:Thunk**, 0) }
     var i = 0
     while i < value.applied { args[i] = cast(Haskell:Thunk**, value.args)[i]; i += 1 }

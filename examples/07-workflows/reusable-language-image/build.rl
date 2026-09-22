@@ -90,7 +90,7 @@ let install_phrase_types = phrase {
 install_phrase_types
 
 let verify_phrase_pair = fn () -> i64 {
-    let pair = cast(PhrasePair*, malloc(16))
+    let pair = alloc(PhrasePair)
     if !pair {
         return 0
     }

@@ -161,7 +161,7 @@ record Prolog:Term {
 }
 
 let Prolog:Term:new = fn (kind:i64) -> Prolog:Term* {
-    let self = cast(Prolog:Term*, malloc(56))
+    let self = alloc(Prolog:Term)
     if !self { return cast(Prolog:Term*, 0) }
     self.kind = kind
     self.number = 0
@@ -299,7 +299,7 @@ record Prolog:Query {
 }
 
 let Prolog:Parser:new = fn (state:Context*, source:u8*) -> Prolog:Parser* {
-    let self = cast(Prolog:Parser*, malloc(56))
+    let self = alloc(Prolog:Parser)
     if !self { return cast(Prolog:Parser*, 0) }
     self.state = state
     self.source = source
@@ -409,7 +409,7 @@ let Prolog:Parser:quoted_atom = fn (self:Prolog:Parser*) -> u8* {
 }
 
 let Prolog:Parser:add_variable = fn (self:Prolog:Parser*, term:Prolog:Term*) -> i64 {
-    let entry = cast(Prolog:VarEntry*, malloc(16))
+    let entry = alloc(Prolog:VarEntry)
     if !entry { self.fail("Prolog: out of memory while recording variable"); return 0 }
     entry.term = term
     entry.next = cast(Prolog:VarEntry*, 0)
@@ -471,7 +471,7 @@ let Prolog:Parser:append_term = fn (items:Prolog:Term***, count:i64*, capacity:i
     if count[0] == capacity[0] {
         var next_capacity = capacity[0] * 2
         if next_capacity < 4 { next_capacity = 4 }
-        let replacement = realloc(cast(u8*, items[0]), next_capacity * 8)
+        let replacement = realloc(cast(u8*, items[0]), next_capacity * sizeof(Prolog:Term*))
         if !replacement { return 0 }
         items[0] = cast(Prolog:Term**, replacement)
         capacity[0] = next_capacity
@@ -540,7 +540,7 @@ let Prolog:Parser:parse_term = fn (self:Prolog:Parser*) -> Prolog:Term* {
         var index = count
         while index > 0 {
             index -= 1
-            let args = cast(Prolog:Term**, malloc(16))
+            let args = cast(Prolog:Term**, malloc(2 * sizeof(Prolog:Term*)))
             if !args {
                 self.fail("Prolog: out of memory while building list")
                 Prolog:Term:destroy_tree(tail)
@@ -633,7 +633,7 @@ let Prolog:Parser:parse_goal = fn (self:Prolog:Parser*) -> Prolog:Term* {
     if self.match_byte(cast(u8, 61)) {
         let right = self.parse_term()
         if !right { Prolog:Term:destroy_tree(left); return cast(Prolog:Term*, 0) }
-        let args = cast(Prolog:Term**, malloc(16))
+        let args = cast(Prolog:Term**, malloc(2 * sizeof(Prolog:Term*)))
         if !args {
             self.fail("Prolog: out of memory while parsing unification")
             Prolog:Term:destroy_tree(left)
@@ -655,7 +655,7 @@ let Prolog:Parser:parse_goals_until_dot = fn (self:Prolog:Parser*) -> Prolog:Goa
         let term = self.parse_goal()
         if !term { done = 1 }
         else {
-            let goal = cast(Prolog:Goal*, malloc(16))
+            let goal = alloc(Prolog:Goal)
             if !goal {
                 self.fail("Prolog: out of memory while parsing goal list")
                 Prolog:Term:destroy_tree(term)
@@ -716,7 +716,7 @@ let Prolog:Parser:parse_clause = fn (self:Prolog:Parser*) -> Prolog:Clause* {
         return cast(Prolog:Clause*, 0)
     }
 
-    let clause = cast(Prolog:Clause*, malloc(32))
+    let clause = alloc(Prolog:Clause)
     if !clause {
         self.fail("Prolog: out of memory while creating clause")
         Prolog:Term:destroy_tree(head)
@@ -741,7 +741,7 @@ let Prolog:Parser:parse_query = fn (self:Prolog:Parser*) -> Prolog:Query* {
         Prolog:Goal:destroy_all(goals)
         return cast(Prolog:Query*, 0)
     }
-    let query = cast(Prolog:Query*, malloc(24))
+    let query = alloc(Prolog:Query)
     if !query {
         self.fail("Prolog: out of memory while creating query")
         Prolog:Goal:destroy_all(goals)
@@ -810,7 +810,7 @@ record Prolog:Database {
 }
 
 let Prolog:Database:new = fn () -> Prolog:Database* {
-    let self = cast(Prolog:Database*, malloc(16))
+    let self = alloc(Prolog:Database)
     if !self { return cast(Prolog:Database*, 0) }
     self.head = cast(Prolog:ClauseSource*, 0)
     self.tail = cast(Prolog:ClauseSource*, 0)
@@ -848,7 +848,7 @@ let Prolog:Database:add = fn (self:Prolog:Database*, state:Context*, text:u8*) -
     parsed.destroy()
     if !name { context:diagnostic:error(state, "Prolog: out of memory while indexing clause"); return 0 }
 
-    let item = cast(Prolog:ClauseSource*, malloc(40))
+    let item = alloc(Prolog:ClauseSource)
     if !item {
         free(name)
         context:diagnostic:error(state, "Prolog: out of memory while storing clause")
@@ -877,7 +877,7 @@ record Prolog:Trail {
 }
 
 let Prolog:Trail:new = fn () -> Prolog:Trail* {
-    let self = cast(Prolog:Trail*, malloc(24))
+    let self = alloc(Prolog:Trail)
     if !self { return cast(Prolog:Trail*, 0) }
     self.items = cast(Prolog:Term**, 0)
     self.length = 0
@@ -895,7 +895,7 @@ let Prolog:Trail:push = fn (self:Prolog:Trail*, variable:Prolog:Term*) -> i64 {
     if self.length == self.capacity {
         var capacity = self.capacity * 2
         if capacity < 16 { capacity = 16 }
-        let replacement = realloc(cast(u8*, self.items), capacity * 8)
+        let replacement = realloc(cast(u8*, self.items), capacity * sizeof(Prolog:Term*))
         if !replacement { return 0 }
         self.items = cast(Prolog:Term**, replacement)
         self.capacity = capacity
@@ -1108,7 +1108,7 @@ let Prolog:run_query = fn (state:Context*, source:u8*) -> i64 {
     let trail = Prolog:Trail:new()
     if !trail { context:diagnostic:error(state, "Prolog: could not allocate trail"); return 0 }
     defer trail.destroy()
-    let solver = cast(Prolog:Solver*, malloc(32))
+    let solver = alloc(Prolog:Solver)
     if !solver { context:diagnostic:error(state, "Prolog: could not allocate solver"); return 0 }
     defer free(cast(u8*, solver))
     solver.state = state

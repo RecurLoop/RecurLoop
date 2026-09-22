@@ -198,7 +198,7 @@ record TraceScratch {
 // ============================================================================
 
 let Material:new = fn (r:i64, g:i64, b:i64, reflectivity:i64) -> Material* {
-    var material:Material* = cast(Material*, malloc(32))
+    var material:Material* = alloc(Material)
     material.r = r
     material.g = g
     material.b = b
@@ -212,7 +212,7 @@ let Material:destroy = fn (self:Material*) -> i64 {
 }
 
 let Sphere:new = fn (x:i64, y:i64, z:i64, radius:i64, material:i64) -> Sphere* {
-    var sphere:Sphere* = cast(Sphere*, malloc(40))
+    var sphere:Sphere* = alloc(Sphere)
     sphere.x = x
     sphere.y = y
     sphere.z = z
@@ -227,7 +227,7 @@ let Sphere:destroy = fn (self:Sphere*) -> i64 {
 }
 
 let Ray:new = fn () -> Ray* {
-    var ray:Ray* = cast(Ray*, malloc(48))
+    var ray:Ray* = alloc(Ray)
     ray.ox = 0
     ray.oy = 0
     ray.oz = 0
@@ -243,7 +243,7 @@ let Ray:destroy = fn (self:Ray*) -> i64 {
 }
 
 let Color:new = fn () -> Color* {
-    var color:Color* = cast(Color*, malloc(24))
+    var color:Color* = alloc(Color)
     color.r = 0
     color.g = 0
     color.b = 0
@@ -256,7 +256,7 @@ let Color:destroy = fn (self:Color*) -> i64 {
 }
 
 let Hit:new = fn () -> Hit* {
-    var hit:Hit* = cast(Hit*, malloc(16))
+    var hit:Hit* = alloc(Hit)
     hit.t = -1
     hit.sphere = cast(Sphere*, 0)
     return hit
@@ -268,7 +268,7 @@ let Hit:destroy = fn (self:Hit*) -> i64 {
 }
 
 let RenderStats:new = fn () -> RenderStats* {
-    var stats:RenderStats* = cast(RenderStats*, malloc(72))
+    var stats:RenderStats* = alloc(RenderStats)
     stats.primary_rays = 0
     stats.trace_calls = 0
     stats.sphere_tests = 0
@@ -378,11 +378,11 @@ let Sphere:intersect = fn (self:Sphere*, ray:Ray*, out:Hit*) -> i64 {
 // ============================================================================
 
 let Scene:new = fn (sphere_capacity:i64, material_capacity:i64) -> Scene* {
-    var scene:Scene* = cast(Scene*, malloc(32))
+    var scene:Scene* = alloc(Scene)
     scene.sphere_count = 0
     scene.material_count = 0
-    scene.spheres = cast(Sphere**, malloc(sphere_capacity * 8))
-    scene.materials = cast(Material**, malloc(material_capacity * 8))
+    scene.spheres = cast(Sphere**, malloc(sphere_capacity * sizeof(Sphere*)))
+    scene.materials = cast(Material**, malloc(material_capacity * sizeof(Material*)))
     return scene
 }
 
@@ -444,10 +444,10 @@ let Scene:demo = fn () -> Scene* {
 // ============================================================================
 
 let TraceScratch:new = fn () -> TraceScratch* {
-    var scratch:TraceScratch* = cast(TraceScratch*, malloc(48))
-    scratch.rays = cast(Ray**, malloc(4 * 8))
-    scratch.colors = cast(Color**, malloc(4 * 8))
-    scratch.hits = cast(Hit**, malloc(4 * 8))
+    var scratch:TraceScratch* = alloc(TraceScratch)
+    scratch.rays = cast(Ray**, malloc(4 * sizeof(Ray*)))
+    scratch.colors = cast(Color**, malloc(4 * sizeof(Color*)))
+    scratch.hits = cast(Hit**, malloc(4 * sizeof(Hit*)))
 
     var i = 0
     while i < 4 {

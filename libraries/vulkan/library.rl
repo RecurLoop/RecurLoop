@@ -483,7 +483,7 @@ let Vulkan:clamp_u32 = fn (value:u32, minimum:u32, maximum:u32) -> u32 {
 }
 
 let Vulkan:create_instance = fn (application_name:u8*, extensions:u8**, extension_count:u32) -> u8* {
-    let app = cast(Vulkan:ApplicationInfo*, malloc(48))
+    let app = alloc(Vulkan:ApplicationInfo)
     if !app { return cast(u8*, 0) }
     defer free(cast(u8*, app))
     app.sType = Vulkan:StructureType:ApplicationInfo()
@@ -494,7 +494,7 @@ let Vulkan:create_instance = fn (application_name:u8*, extensions:u8**, extensio
     app.engineVersion = 1
     app.apiVersion = 4194304 // VK_API_VERSION_1_0
 
-    let create = cast(Vulkan:InstanceCreateInfo*, malloc(64))
+    let create = alloc(Vulkan:InstanceCreateInfo)
     if !create { return cast(u8*, 0) }
     defer free(cast(u8*, create))
     create.sType = Vulkan:StructureType:InstanceCreateInfo()
@@ -514,7 +514,7 @@ let Vulkan:create_instance = fn (application_name:u8*, extensions:u8**, extensio
 let Vulkan:pick_device = fn (instance:u8*, surface:u64) -> Vulkan:DeviceSelection* {
     var count:u32 = 0
     if vkEnumeratePhysicalDevices(instance, &count, cast(u8**, 0)) != 0 || count == 0 { return cast(Vulkan:DeviceSelection*, 0) }
-    let devices = cast(u8**, malloc(count * 8))
+    let devices = cast(u8**, malloc(count * sizeof(u8*)))
     if !devices { return cast(Vulkan:DeviceSelection*, 0) }
     defer free(cast(u8*, devices))
     if vkEnumeratePhysicalDevices(instance, &count, devices) != 0 { return cast(Vulkan:DeviceSelection*, 0) }
@@ -524,7 +524,7 @@ let Vulkan:pick_device = fn (instance:u8*, surface:u64) -> Vulkan:DeviceSelectio
         var queue_count:u32 = 0
         vkGetPhysicalDeviceQueueFamilyProperties(devices[d], &queue_count, cast(u8*, 0))
         if queue_count > 0 {
-            let queues = cast(Vulkan:QueueFamilyProperties*, malloc(queue_count * 24))
+            let queues = cast(Vulkan:QueueFamilyProperties*, malloc(queue_count * sizeof(Vulkan:QueueFamilyProperties)))
             if queues {
                 vkGetPhysicalDeviceQueueFamilyProperties(devices[d], &queue_count, cast(u8*, queues))
                 var q:u32 = 0
@@ -532,7 +532,7 @@ let Vulkan:pick_device = fn (instance:u8*, surface:u64) -> Vulkan:DeviceSelectio
                     var present:u32 = 0
                     if Vulkan:has_flag(queues[q].queueFlags, Vulkan:QueueGraphicsBit()) && queues[q].queueCount > 0 {
                         if vkGetPhysicalDeviceSurfaceSupportKHR(devices[d], q, surface, &present) == 0 && present != 0 {
-                            let result = cast(Vulkan:DeviceSelection*, malloc(16))
+                            let result = alloc(Vulkan:DeviceSelection)
                             if result {
                                 result.physical = devices[d]
                                 result.queue_family = q
@@ -554,7 +554,7 @@ let Vulkan:pick_device = fn (instance:u8*, surface:u64) -> Vulkan:DeviceSelectio
 let Vulkan:create_device = fn (selection:Vulkan:DeviceSelection*) -> Vulkan:Device* {
     if !selection { return cast(Vulkan:Device*, 0) }
     var priority:f32 = cast(f32, 1)
-    let queue_info = cast(Vulkan:DeviceQueueCreateInfo*, malloc(40))
+    let queue_info = alloc(Vulkan:DeviceQueueCreateInfo)
     if !queue_info { return cast(Vulkan:Device*, 0) }
     defer free(cast(u8*, queue_info))
     queue_info.sType = Vulkan:StructureType:DeviceQueueCreateInfo()
@@ -565,7 +565,7 @@ let Vulkan:create_device = fn (selection:Vulkan:DeviceSelection*) -> Vulkan:Devi
     queue_info.pQueuePriorities = &priority
 
     var extension:u8* = "VK_KHR_swapchain"
-    let create = cast(Vulkan:DeviceCreateInfo*, malloc(72))
+    let create = alloc(Vulkan:DeviceCreateInfo)
     if !create { return cast(Vulkan:Device*, 0) }
     defer free(cast(u8*, create))
     create.sType = Vulkan:StructureType:DeviceCreateInfo()
@@ -581,7 +581,7 @@ let Vulkan:create_device = fn (selection:Vulkan:DeviceSelection*) -> Vulkan:Devi
 
     var handle = cast(u8*, 0)
     if vkCreateDevice(selection.physical, cast(u8*, create), cast(u8*, 0), &handle) != 0 { return cast(Vulkan:Device*, 0) }
-    let result = cast(Vulkan:Device*, malloc(32))
+    let result = alloc(Vulkan:Device)
     if !result { vkDestroyDevice(handle, cast(u8*, 0)); return cast(Vulkan:Device*, 0) }
     result.handle = handle
     result.physical = selection.physical
@@ -601,7 +601,7 @@ let Vulkan:choose_composite_alpha = fn (supported:u32) -> u32 {
 
 let Vulkan:create_swapchain = fn (device:Vulkan:Device*, surface:u64, requested_width:u32, requested_height:u32) -> Vulkan:Swapchain* {
     if !device { return cast(Vulkan:Swapchain*, 0) }
-    let caps = cast(Vulkan:SurfaceCapabilities*, malloc(52))
+    let caps = alloc(Vulkan:SurfaceCapabilities)
     if !caps { return cast(Vulkan:Swapchain*, 0) }
     defer free(cast(u8*, caps))
     if vkGetPhysicalDeviceSurfaceCapabilitiesKHR(device.physical, surface, cast(u8*, caps)) != 0 { return cast(Vulkan:Swapchain*, 0) }
@@ -612,7 +612,7 @@ let Vulkan:create_swapchain = fn (device:Vulkan:Device*, surface:u64, requested_
 
     var format_count:u32 = 0
     if vkGetPhysicalDeviceSurfaceFormatsKHR(device.physical, surface, &format_count, cast(u8*, 0)) != 0 || format_count == 0 { return cast(Vulkan:Swapchain*, 0) }
-    let formats = cast(Vulkan:SurfaceFormat*, malloc(format_count * 8))
+    let formats = cast(Vulkan:SurfaceFormat*, malloc(format_count * sizeof(Vulkan:SurfaceFormat)))
     if !formats { return cast(Vulkan:Swapchain*, 0) }
     defer free(cast(u8*, formats))
     if vkGetPhysicalDeviceSurfaceFormatsKHR(device.physical, surface, &format_count, cast(u8*, formats)) != 0 { return cast(Vulkan:Swapchain*, 0) }
@@ -634,7 +634,7 @@ let Vulkan:create_swapchain = fn (device:Vulkan:Device*, surface:u64, requested_
     var image_count = caps.minImageCount + 1
     if caps.maxImageCount > 0 && image_count > caps.maxImageCount { image_count = caps.maxImageCount }
 
-    let create = cast(Vulkan:SwapchainCreateInfo*, malloc(104))
+    let create = alloc(Vulkan:SwapchainCreateInfo)
     if !create { return cast(Vulkan:Swapchain*, 0) }
     defer free(cast(u8*, create))
     create.sType = Vulkan:StructureType:SwapchainCreateInfoKHR()
@@ -665,8 +665,8 @@ let Vulkan:create_swapchain = fn (device:Vulkan:Device*, surface:u64, requested_
         vkDestroySwapchainKHR(device.handle, handle, cast(u8*, 0))
         return cast(Vulkan:Swapchain*, 0)
     }
-    let images = cast(u64*, malloc(actual_count * 8))
-    let views = cast(u64*, malloc(actual_count * 8))
+    let images = cast(u64*, malloc(actual_count * sizeof(u64)))
+    let views = cast(u64*, malloc(actual_count * sizeof(u64)))
     if !images || !views {
         if images { free(cast(u8*, images)) }; if views { free(cast(u8*, views)) }
         vkDestroySwapchainKHR(device.handle, handle, cast(u8*, 0))
@@ -680,7 +680,7 @@ let Vulkan:create_swapchain = fn (device:Vulkan:Device*, surface:u64, requested_
     var i:u32 = 0
     while i < actual_count {
         views[i] = 0
-        let view = cast(Vulkan:ImageViewCreateInfo*, malloc(80))
+        let view = alloc(Vulkan:ImageViewCreateInfo)
         if !view {
             var j:u32 = 0
             while j < i { if views[j] != 0 { vkDestroyImageView(device.handle, views[j], cast(u8*, 0)) }; j += 1 }
@@ -708,7 +708,7 @@ let Vulkan:create_swapchain = fn (device:Vulkan:Device*, surface:u64, requested_
         i += 1
     }
 
-    let result = cast(Vulkan:Swapchain*, malloc(48))
+    let result = alloc(Vulkan:Swapchain)
     if !result {
         i = 0; while i < actual_count { vkDestroyImageView(device.handle, views[i], cast(u8*, 0)); i += 1 }
         free(cast(u8*, images)); free(cast(u8*, views)); vkDestroySwapchainKHR(device.handle, handle, cast(u8*, 0))
@@ -727,7 +727,7 @@ let Vulkan:create_swapchain = fn (device:Vulkan:Device*, surface:u64, requested_
 
 let Vulkan:create_shader_module = fn (device:u8*, words:u32*, bytes:u64) -> u64 {
     if !device || !words || bytes < 20 || (bytes % 4) != 0 { return 0 }
-    let create = cast(Vulkan:ShaderModuleCreateInfo*, malloc(40))
+    let create = alloc(Vulkan:ShaderModuleCreateInfo)
     if !create { return 0 }
     defer free(cast(u8*, create))
     create.sType = Vulkan:StructureType:ShaderModuleCreateInfo()
@@ -741,7 +741,7 @@ let Vulkan:create_shader_module = fn (device:u8*, words:u32*, bytes:u64) -> u64 
 }
 
 let Vulkan:create_render_pass = fn (device:u8*, format:i32) -> u64 {
-    let attachment = cast(Vulkan:AttachmentDescription*, malloc(36))
+    let attachment = alloc(Vulkan:AttachmentDescription)
     if !attachment { return 0 }
     defer free(cast(u8*, attachment))
     attachment.flags = 0
@@ -754,13 +754,13 @@ let Vulkan:create_render_pass = fn (device:u8*, format:i32) -> u64 {
     attachment.initialLayout = 0
     attachment.finalLayout = 1000001002
 
-    let color_ref = cast(Vulkan:AttachmentReference*, malloc(8))
+    let color_ref = alloc(Vulkan:AttachmentReference)
     if !color_ref { return 0 }
     defer free(cast(u8*, color_ref))
     color_ref.attachment = 0
     color_ref.layout = 2
 
-    let subpass = cast(Vulkan:SubpassDescription*, malloc(72))
+    let subpass = alloc(Vulkan:SubpassDescription)
     if !subpass { return 0 }
     defer free(cast(u8*, subpass))
     subpass.flags = 0
@@ -774,7 +774,7 @@ let Vulkan:create_render_pass = fn (device:u8*, format:i32) -> u64 {
     subpass.preserveAttachmentCount = 0
     subpass.pPreserveAttachments = cast(u32*, 0)
 
-    let dependency = cast(Vulkan:SubpassDependency*, malloc(28))
+    let dependency = alloc(Vulkan:SubpassDependency)
     if !dependency { return 0 }
     defer free(cast(u8*, dependency))
     dependency.srcSubpass = 4294967295
@@ -785,7 +785,7 @@ let Vulkan:create_render_pass = fn (device:u8*, format:i32) -> u64 {
     dependency.dstAccessMask = Vulkan:AccessColorAttachmentWriteBit()
     dependency.dependencyFlags = 0
 
-    let create = cast(Vulkan:RenderPassCreateInfo*, malloc(64))
+    let create = alloc(Vulkan:RenderPassCreateInfo)
     if !create { return 0 }
     defer free(cast(u8*, create))
     create.sType = Vulkan:StructureType:RenderPassCreateInfo()
@@ -808,7 +808,7 @@ let Vulkan:create_graphics_pipeline = fn (device:u8*, swapchain:Vulkan:Swapchain
     let render_pass = Vulkan:create_render_pass(device, swapchain.format)
     if render_pass == 0 { return cast(Vulkan:Pipeline*, 0) }
 
-    let layout_info = cast(Vulkan:PipelineLayoutCreateInfo*, malloc(48))
+    let layout_info = alloc(Vulkan:PipelineLayoutCreateInfo)
     if !layout_info { vkDestroyRenderPass(device, render_pass, cast(u8*, 0)); return cast(Vulkan:Pipeline*, 0) }
     defer free(cast(u8*, layout_info))
     layout_info.sType = Vulkan:StructureType:PipelineLayoutCreateInfo()
@@ -820,7 +820,7 @@ let Vulkan:create_graphics_pipeline = fn (device:u8*, swapchain:Vulkan:Swapchain
         vkDestroyRenderPass(device, render_pass, cast(u8*, 0)); return cast(Vulkan:Pipeline*, 0)
     }
 
-    let stages = cast(Vulkan:PipelineShaderStageCreateInfo*, malloc(96))
+    let stages = alloc(Vulkan:PipelineShaderStageCreateInfo)
     if !stages {
         vkDestroyPipelineLayout(device, layout, cast(u8*, 0)); vkDestroyRenderPass(device, render_pass, cast(u8*, 0)); return cast(Vulkan:Pipeline*, 0)
     }
@@ -832,7 +832,7 @@ let Vulkan:create_graphics_pipeline = fn (device:u8*, swapchain:Vulkan:Swapchain
     stages[1].pNext = cast(u8*, 0); stages[1].flags = 0; stages[1].stage = 16
     stages[1].module = fragment_module; stages[1].pName = "main"; stages[1].pSpecializationInfo = cast(u8*, 0)
 
-    let vertex_input = cast(Vulkan:PipelineVertexInputStateCreateInfo*, malloc(48))
+    let vertex_input = alloc(Vulkan:PipelineVertexInputStateCreateInfo)
     if !vertex_input { vkDestroyPipelineLayout(device, layout, cast(u8*, 0)); vkDestroyRenderPass(device, render_pass, cast(u8*, 0)); return cast(Vulkan:Pipeline*, 0) }
     defer free(cast(u8*, vertex_input))
     vertex_input.sType = Vulkan:StructureType:PipelineVertexInputStateCreateInfo()
@@ -840,13 +840,13 @@ let Vulkan:create_graphics_pipeline = fn (device:u8*, swapchain:Vulkan:Swapchain
     vertex_input.vertexBindingDescriptionCount = 0; vertex_input.pVertexBindingDescriptions = cast(u8*, 0)
     vertex_input.vertexAttributeDescriptionCount = 0; vertex_input.pVertexAttributeDescriptions = cast(u8*, 0)
 
-    let assembly = cast(Vulkan:PipelineInputAssemblyStateCreateInfo*, malloc(32))
+    let assembly = alloc(Vulkan:PipelineInputAssemblyStateCreateInfo)
     if !assembly { vkDestroyPipelineLayout(device, layout, cast(u8*, 0)); vkDestroyRenderPass(device, render_pass, cast(u8*, 0)); return cast(Vulkan:Pipeline*, 0) }
     defer free(cast(u8*, assembly))
     assembly.sType = Vulkan:StructureType:PipelineInputAssemblyStateCreateInfo()
     assembly.pNext = cast(u8*, 0); assembly.flags = 0; assembly.topology = 3; assembly.primitiveRestartEnable = 0
 
-    let viewport = cast(Vulkan:Viewport*, malloc(24))
+    let viewport = alloc(Vulkan:Viewport)
     if !viewport { vkDestroyPipelineLayout(device, layout, cast(u8*, 0)); vkDestroyRenderPass(device, render_pass, cast(u8*, 0)); return cast(Vulkan:Pipeline*, 0) }
     defer free(cast(u8*, viewport))
     viewport.x = cast(f32, 0); viewport.y = cast(f32, 0)
@@ -855,13 +855,13 @@ let Vulkan:create_graphics_pipeline = fn (device:u8*, swapchain:Vulkan:Swapchain
     viewport.minDepth = cast(f32, 0)
     viewport.maxDepth = cast(f32, 1)
 
-    let scissor = cast(Vulkan:Rect2D*, malloc(16))
+    let scissor = alloc(Vulkan:Rect2D)
     if !scissor { vkDestroyPipelineLayout(device, layout, cast(u8*, 0)); vkDestroyRenderPass(device, render_pass, cast(u8*, 0)); return cast(Vulkan:Pipeline*, 0) }
     defer free(cast(u8*, scissor))
     scissor.offset.x = 0; scissor.offset.y = 0
     scissor.extent.width = swapchain.width; scissor.extent.height = swapchain.height
 
-    let viewport_state = cast(Vulkan:PipelineViewportStateCreateInfo*, malloc(48))
+    let viewport_state = alloc(Vulkan:PipelineViewportStateCreateInfo)
     if !viewport_state { vkDestroyPipelineLayout(device, layout, cast(u8*, 0)); vkDestroyRenderPass(device, render_pass, cast(u8*, 0)); return cast(Vulkan:Pipeline*, 0) }
     defer free(cast(u8*, viewport_state))
     viewport_state.sType = Vulkan:StructureType:PipelineViewportStateCreateInfo()
@@ -869,7 +869,7 @@ let Vulkan:create_graphics_pipeline = fn (device:u8*, swapchain:Vulkan:Swapchain
     viewport_state.viewportCount = 1; viewport_state.pViewports = viewport
     viewport_state.scissorCount = 1; viewport_state.pScissors = scissor
 
-    let raster = cast(Vulkan:PipelineRasterizationStateCreateInfo*, malloc(64))
+    let raster = alloc(Vulkan:PipelineRasterizationStateCreateInfo)
     if !raster { vkDestroyPipelineLayout(device, layout, cast(u8*, 0)); vkDestroyRenderPass(device, render_pass, cast(u8*, 0)); return cast(Vulkan:Pipeline*, 0) }
     defer free(cast(u8*, raster))
     raster.sType = Vulkan:StructureType:PipelineRasterizationStateCreateInfo()
@@ -880,7 +880,7 @@ let Vulkan:create_graphics_pipeline = fn (device:u8*, swapchain:Vulkan:Swapchain
     raster.depthBiasClamp = cast(f32, 0); raster.depthBiasSlopeFactor = cast(f32, 0)
     raster.lineWidth = cast(f32, 1)
 
-    let multisample = cast(Vulkan:PipelineMultisampleStateCreateInfo*, malloc(48))
+    let multisample = alloc(Vulkan:PipelineMultisampleStateCreateInfo)
     if !multisample { vkDestroyPipelineLayout(device, layout, cast(u8*, 0)); vkDestroyRenderPass(device, render_pass, cast(u8*, 0)); return cast(Vulkan:Pipeline*, 0) }
     defer free(cast(u8*, multisample))
     multisample.sType = Vulkan:StructureType:PipelineMultisampleStateCreateInfo()
@@ -889,7 +889,7 @@ let Vulkan:create_graphics_pipeline = fn (device:u8*, swapchain:Vulkan:Swapchain
     multisample.minSampleShading = cast(f32, 0); multisample.pSampleMask = cast(u32*, 0)
     multisample.alphaToCoverageEnable = 0; multisample.alphaToOneEnable = 0
 
-    let blend_attachment = cast(Vulkan:PipelineColorBlendAttachmentState*, malloc(32))
+    let blend_attachment = alloc(Vulkan:PipelineColorBlendAttachmentState)
     if !blend_attachment { vkDestroyPipelineLayout(device, layout, cast(u8*, 0)); vkDestroyRenderPass(device, render_pass, cast(u8*, 0)); return cast(Vulkan:Pipeline*, 0) }
     defer free(cast(u8*, blend_attachment))
     blend_attachment.blendEnable = 0
@@ -897,7 +897,7 @@ let Vulkan:create_graphics_pipeline = fn (device:u8*, swapchain:Vulkan:Swapchain
     blend_attachment.srcAlphaBlendFactor = 1; blend_attachment.dstAlphaBlendFactor = 0; blend_attachment.alphaBlendOp = 0
     blend_attachment.colorWriteMask = Vulkan:ColorComponentRGBA()
 
-    let blend = cast(Vulkan:PipelineColorBlendStateCreateInfo*, malloc(56))
+    let blend = alloc(Vulkan:PipelineColorBlendStateCreateInfo)
     if !blend { vkDestroyPipelineLayout(device, layout, cast(u8*, 0)); vkDestroyRenderPass(device, render_pass, cast(u8*, 0)); return cast(Vulkan:Pipeline*, 0) }
     defer free(cast(u8*, blend))
     blend.sType = Vulkan:StructureType:PipelineColorBlendStateCreateInfo()
@@ -905,7 +905,7 @@ let Vulkan:create_graphics_pipeline = fn (device:u8*, swapchain:Vulkan:Swapchain
     blend.attachmentCount = 1; blend.pAttachments = blend_attachment
     blend.blendConstant0 = cast(f32, 0); blend.blendConstant1 = cast(f32, 0); blend.blendConstant2 = cast(f32, 0); blend.blendConstant3 = cast(f32, 0)
 
-    let create = cast(Vulkan:GraphicsPipelineCreateInfo*, malloc(144))
+    let create = alloc(Vulkan:GraphicsPipelineCreateInfo)
     if !create { vkDestroyPipelineLayout(device, layout, cast(u8*, 0)); vkDestroyRenderPass(device, render_pass, cast(u8*, 0)); return cast(Vulkan:Pipeline*, 0) }
     defer free(cast(u8*, create))
     create.sType = Vulkan:StructureType:GraphicsPipelineCreateInfo()
@@ -923,14 +923,14 @@ let Vulkan:create_graphics_pipeline = fn (device:u8*, swapchain:Vulkan:Swapchain
         vkDestroyPipelineLayout(device, layout, cast(u8*, 0)); vkDestroyRenderPass(device, render_pass, cast(u8*, 0)); return cast(Vulkan:Pipeline*, 0)
     }
 
-    let framebuffers = cast(u64*, malloc(swapchain.image_count * 8))
+    let framebuffers = cast(u64*, malloc(swapchain.image_count * sizeof(u64)))
     if !framebuffers {
         vkDestroyPipeline(device, pipeline, cast(u8*, 0)); vkDestroyPipelineLayout(device, layout, cast(u8*, 0)); vkDestroyRenderPass(device, render_pass, cast(u8*, 0)); return cast(Vulkan:Pipeline*, 0)
     }
     var i:u32 = 0
     while i < swapchain.image_count {
         framebuffers[i] = 0
-        let framebuffer_info = cast(Vulkan:FramebufferCreateInfo*, malloc(64))
+        let framebuffer_info = alloc(Vulkan:FramebufferCreateInfo)
         if !framebuffer_info {
             var j:u32 = 0; while j < i { vkDestroyFramebuffer(device, framebuffers[j], cast(u8*, 0)); j += 1 }
             free(cast(u8*, framebuffers)); vkDestroyPipeline(device, pipeline, cast(u8*, 0)); vkDestroyPipelineLayout(device, layout, cast(u8*, 0)); vkDestroyRenderPass(device, render_pass, cast(u8*, 0)); return cast(Vulkan:Pipeline*, 0)
@@ -948,7 +948,7 @@ let Vulkan:create_graphics_pipeline = fn (device:u8*, swapchain:Vulkan:Swapchain
         i += 1
     }
 
-    let result = cast(Vulkan:Pipeline*, malloc(40))
+    let result = alloc(Vulkan:Pipeline)
     if !result {
         i = 0; while i < swapchain.image_count { vkDestroyFramebuffer(device, framebuffers[i], cast(u8*, 0)); i += 1 }
         free(cast(u8*, framebuffers)); vkDestroyPipeline(device, pipeline, cast(u8*, 0)); vkDestroyPipelineLayout(device, layout, cast(u8*, 0)); vkDestroyRenderPass(device, render_pass, cast(u8*, 0)); return cast(Vulkan:Pipeline*, 0)
@@ -960,18 +960,18 @@ let Vulkan:create_graphics_pipeline = fn (device:u8*, swapchain:Vulkan:Swapchain
 
 let Vulkan:create_frame_resources = fn (device:Vulkan:Device*) -> Vulkan:FrameResources* {
     if !device { return cast(Vulkan:FrameResources*, 0) }
-    let result = cast(Vulkan:FrameResources*, malloc(40))
+    let result = alloc(Vulkan:FrameResources)
     if !result { return result }
     result.command_pool = 0; result.command_buffer = cast(u8*, 0); result.image_available = 0; result.render_finished = 0; result.in_flight = 0
 
-    let pool_info = cast(Vulkan:CommandPoolCreateInfo*, malloc(24))
+    let pool_info = alloc(Vulkan:CommandPoolCreateInfo)
     if !pool_info { free(cast(u8*, result)); return cast(Vulkan:FrameResources*, 0) }
     defer free(cast(u8*, pool_info))
     pool_info.sType = Vulkan:StructureType:CommandPoolCreateInfo(); pool_info.pNext = cast(u8*, 0)
     pool_info.flags = Vulkan:CommandPoolResetCommandBufferBit(); pool_info.queueFamilyIndex = device.queue_family
     if vkCreateCommandPool(device.handle, cast(u8*, pool_info), cast(u8*, 0), &result.command_pool) != 0 { free(cast(u8*, result)); return cast(Vulkan:FrameResources*, 0) }
 
-    let allocation = cast(Vulkan:CommandBufferAllocateInfo*, malloc(32))
+    let allocation = alloc(Vulkan:CommandBufferAllocateInfo)
     if !allocation { vkDestroyCommandPool(device.handle, result.command_pool, cast(u8*, 0)); free(cast(u8*, result)); return cast(Vulkan:FrameResources*, 0) }
     defer free(cast(u8*, allocation))
     allocation.sType = Vulkan:StructureType:CommandBufferAllocateInfo(); allocation.pNext = cast(u8*, 0)
@@ -980,11 +980,11 @@ let Vulkan:create_frame_resources = fn (device:Vulkan:Device*) -> Vulkan:FrameRe
         vkDestroyCommandPool(device.handle, result.command_pool, cast(u8*, 0)); free(cast(u8*, result)); return cast(Vulkan:FrameResources*, 0)
     }
 
-    let semaphore_info = cast(Vulkan:SemaphoreCreateInfo*, malloc(24))
+    let semaphore_info = alloc(Vulkan:SemaphoreCreateInfo)
     if !semaphore_info { vkDestroyCommandPool(device.handle, result.command_pool, cast(u8*, 0)); free(cast(u8*, result)); return cast(Vulkan:FrameResources*, 0) }
     defer free(cast(u8*, semaphore_info))
     semaphore_info.sType = Vulkan:StructureType:SemaphoreCreateInfo(); semaphore_info.pNext = cast(u8*, 0); semaphore_info.flags = 0
-    let fence_info = cast(Vulkan:FenceCreateInfo*, malloc(24))
+    let fence_info = alloc(Vulkan:FenceCreateInfo)
     if !fence_info { vkDestroyCommandPool(device.handle, result.command_pool, cast(u8*, 0)); free(cast(u8*, result)); return cast(Vulkan:FrameResources*, 0) }
     defer free(cast(u8*, fence_info))
     fence_info.sType = Vulkan:StructureType:FenceCreateInfo(); fence_info.pNext = cast(u8*, 0); fence_info.flags = Vulkan:FenceSignaledBit()
@@ -1001,17 +1001,17 @@ let Vulkan:create_frame_resources = fn (device:Vulkan:Device*) -> Vulkan:FrameRe
 
 let Vulkan:record_triangle = fn (command_buffer:u8*, pipeline:Vulkan:Pipeline*, swapchain:Vulkan:Swapchain*, image_index:u32) -> i64 {
     if vkResetCommandBuffer(command_buffer, 0) != 0 { return 0 }
-    let begin = cast(Vulkan:CommandBufferBeginInfo*, malloc(32))
+    let begin = alloc(Vulkan:CommandBufferBeginInfo)
     if !begin { return 0 }
     defer free(cast(u8*, begin))
     begin.sType = Vulkan:StructureType:CommandBufferBeginInfo(); begin.pNext = cast(u8*, 0); begin.flags = 0; begin.pInheritanceInfo = cast(u8*, 0)
     if vkBeginCommandBuffer(command_buffer, cast(u8*, begin)) != 0 { return 0 }
 
-    let clear = cast(Vulkan:ClearValue*, malloc(16))
+    let clear = alloc(Vulkan:ClearValue)
     if !clear { return 0 }
     defer free(cast(u8*, clear))
     clear.word0 = 0; clear.word1 = 0; clear.word2 = 0; clear.word3 = 1065353216
-    let render = cast(Vulkan:RenderPassBeginInfo*, malloc(64))
+    let render = alloc(Vulkan:RenderPassBeginInfo)
     if !render { return 0 }
     defer free(cast(u8*, render))
     render.sType = Vulkan:StructureType:RenderPassBeginInfo(); render.pNext = cast(u8*, 0)
@@ -1041,7 +1041,7 @@ let Vulkan:draw_triangle_frame = fn (device:Vulkan:Device*, swapchain:Vulkan:Swa
     var wait_semaphore = frame.image_available
     var signal_semaphore = frame.render_finished
     var command_buffer = frame.command_buffer
-    let submit = cast(Vulkan:SubmitInfo*, malloc(72))
+    let submit = alloc(Vulkan:SubmitInfo)
     if !submit { return -1 }
     defer free(cast(u8*, submit))
     submit.sType = Vulkan:StructureType:SubmitInfo(); submit.pNext = cast(u8*, 0)
@@ -1051,7 +1051,7 @@ let Vulkan:draw_triangle_frame = fn (device:Vulkan:Device*, swapchain:Vulkan:Swa
     if vkQueueSubmit(device.queue, 1, cast(u8*, submit), frame.in_flight) != 0 { return -1 }
 
     var swapchain_handle = swapchain.handle
-    let present = cast(Vulkan:PresentInfo*, malloc(64))
+    let present = alloc(Vulkan:PresentInfo)
     if !present { return -1 }
     defer free(cast(u8*, present))
     present.sType = Vulkan:StructureType:PresentInfoKHR(); present.pNext = cast(u8*, 0)

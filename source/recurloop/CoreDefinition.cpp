@@ -695,7 +695,8 @@ namespace recurloop::internal {
       }
       if (spec.payload.kind == "intrinsic-behavior") {
         if (a.size() != 2) THROW(, "malformed intrinsic behavior")
-        const std::uint8_t kind = a[0] == "cast" ? 0 : a[0] == "address" ? 1 : a[0] == "dereference" ? 2 : 255;
+        const std::uint8_t kind = a[0] == "cast" ? 0 : a[0] == "address" ? 1 : a[0] == "dereference" ? 2
+                                      : a[0] == "allocate" ? 3 : a[0] == "size-of" ? 4 : 255;
         const std::uint8_t phase = a[1] == "infer" ? 0 : a[1] == "emit" ? 1 : a[1] == "lvalue" ? 2 : 255;
         if (kind == 255 || phase == 255) THROW(, "unknown intrinsic behavior")
         struct Behavior { std::uint8_t kind; std::uint8_t phase; } value{kind, phase};
@@ -703,7 +704,8 @@ namespace recurloop::internal {
       }
       if (spec.payload.kind == "assignment") { storeValue(phrase, static_cast<std::uint8_t>(a.at(0) == "direct")); return; }
       if (spec.payload.kind == "intrinsic") {
-        const std::uint8_t value = a.at(0) == "cast" ? 0 : a.at(0) == "address" ? 1 : a.at(0) == "dereference" ? 2 : 255;
+        const std::uint8_t value = a.at(0) == "cast" ? 0 : a.at(0) == "address" ? 1 : a.at(0) == "dereference" ? 2
+                                       : a.at(0) == "allocate" ? 3 : a.at(0) == "size-of" ? 4 : 255;
         if (value == 255) THROW(, "unknown intrinsic kind")
         storeValue(phrase, value); return;
       }

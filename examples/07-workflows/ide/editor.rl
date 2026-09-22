@@ -30,8 +30,8 @@ let IDE:App:on_save = fn (widget:u8*, data:u8*) -> void {
     let ok = IDE:write_file(state.host.selected, text)
     Gui:text_free(text)
     if ok {
-        if state.host.reload_mode == IDE:Reload:Hot() { IDE:App:set_status(state, "saved | hot reload pending") }
-        else if state.host.reload_mode == IDE:Reload:Manual() { IDE:App:set_status(state, "saved | reload available") }
+        if IDE:view_reload_mode(state.host) == IDE:Reload:Hot() { IDE:App:set_status(state, "saved | hot reload pending") }
+        else if IDE:view_reload_mode(state.host) == IDE:Reload:Manual() { IDE:App:set_status(state, "saved | reload available") }
         else { IDE:App:set_status(state, "saved") }
     } else { IDE:App:set_status(state, "save failed") }
 }

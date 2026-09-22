@@ -87,7 +87,7 @@ record Shaders:Binary {
 }
 
 let Shaders:Binary:new = fn () -> Shaders:Binary* {
-    let out = cast(Shaders:Binary*, malloc(32))
+    let out = alloc(Shaders:Binary)
     if !out { return cast(Shaders:Binary*, 0) }
     out.words = cast(u32*, 0)
     out.bytes = 0
@@ -250,9 +250,9 @@ record Shaders:Spirv:Builder {
 
 let Shaders:Spirv:Builder:new = fn (capacity:u64) -> Shaders:Spirv:Builder* {
     if capacity < 32 { capacity = 32 }
-    let self = cast(Shaders:Spirv:Builder*, malloc(32))
+    let self = alloc(Shaders:Spirv:Builder)
     if !self { return cast(Shaders:Spirv:Builder*, 0) }
-    self.words = cast(u32*, malloc(capacity * 4))
+    self.words = cast(u32*, malloc(capacity * sizeof(u32)))
     if !self.words { free(cast(u8*, self)); return cast(Shaders:Spirv:Builder*, 0) }
     self.length = 5
     self.capacity = capacity
@@ -271,7 +271,7 @@ let Shaders:Spirv:Builder:reserve = fn (self:Shaders:Spirv:Builder*, words:u64) 
     if needed <= self.capacity { return 1 }
     var capacity = self.capacity
     while capacity < needed { capacity *= 2 }
-    let replacement = realloc(cast(u8*, self.words), capacity * 4)
+    let replacement = realloc(cast(u8*, self.words), capacity * sizeof(u32))
     if !replacement { return 0 }
     self.words = cast(u32*, replacement)
     self.capacity = capacity
@@ -316,19 +316,19 @@ let Shaders:Spirv:Builder:emit1 = fn (self:Shaders:Spirv:Builder*, opcode:u32, a
 }
 
 let Shaders:Spirv:Builder:emit2 = fn (self:Shaders:Spirv:Builder*, opcode:u32, a:u32, b:u32) -> i64 {
-    let data = cast(u32*, malloc(8)); if !data { return 0 }; defer free(cast(u8*, data))
+    let data = cast(u32*, malloc(2 * sizeof(u32))); if !data { return 0 }; defer free(cast(u8*, data))
     data[0] = a; data[1] = b
     return self.instruction(opcode, data, 2)
 }
 
 let Shaders:Spirv:Builder:emit3 = fn (self:Shaders:Spirv:Builder*, opcode:u32, a:u32, b:u32, c:u32) -> i64 {
-    let data = cast(u32*, malloc(12)); if !data { return 0 }; defer free(cast(u8*, data))
+    let data = cast(u32*, malloc(3 * sizeof(u32))); if !data { return 0 }; defer free(cast(u8*, data))
     data[0] = a; data[1] = b; data[2] = c
     return self.instruction(opcode, data, 3)
 }
 
 let Shaders:Spirv:Builder:emit4 = fn (self:Shaders:Spirv:Builder*, opcode:u32, a:u32, b:u32, c:u32, d:u32) -> i64 {
-    let data = cast(u32*, malloc(16)); if !data { return 0 }; defer free(cast(u8*, data))
+    let data = cast(u32*, malloc(4 * sizeof(u32))); if !data { return 0 }; defer free(cast(u8*, data))
     data[0] = a; data[1] = b; data[2] = c; data[3] = d
     return self.instruction(opcode, data, 4)
 }
@@ -594,7 +594,7 @@ let Shaders:Source:expand = fn (state:Context*, owner:i64, source:u8*, bytes:i64
     let output = LanguageKit:Text:new()
     if !output { return cast(u8*, 0) }
 
-    let session = cast(Shaders:Source:Expansion*, malloc(56))
+    let session = alloc(Shaders:Source:Expansion)
     if !session { output.destroy(); return cast(u8*, 0) }
     session.state = state
     session.owner = owner

@@ -146,7 +146,7 @@ record OrderBook {
 // ============================================================================
 
 let Order:new = fn (id:i64, side:i64, price:i64, quantity:i64, sequence:i64) -> Order* {
-    var order:Order* = cast(Order*, malloc(48))
+    var order:Order* = alloc(Order)
     order.id = id
     order.side = side
     order.price = price
@@ -174,7 +174,7 @@ let Order:filled = fn (self:Order*) -> i64 {
 // ============================================================================
 
 let ExchangeStats:new = fn () -> ExchangeStats* {
-    var stats:ExchangeStats* = cast(ExchangeStats*, malloc(72))
+    var stats:ExchangeStats* = alloc(ExchangeStats)
     stats.submitted = 0
     stats.accepted = 0
     stats.rejected = 0
@@ -215,12 +215,12 @@ let ExchangeStats:record_trade = fn (self:ExchangeStats*, maker:Order*, taker:Or
 // ============================================================================
 
 let OrderBook:new = fn (capacity:i64) -> OrderBook* {
-    var book:OrderBook* = cast(OrderBook*, malloc(72))
+    var book:OrderBook* = alloc(OrderBook)
     book.capacity = capacity
     book.bid_count = 0
     book.ask_count = 0
-    book.bids = cast(Order**, malloc(capacity * 8))
-    book.asks = cast(Order**, malloc(capacity * 8))
+    book.bids = cast(Order**, malloc(capacity * sizeof(Order*)))
+    book.asks = cast(Order**, malloc(capacity * sizeof(Order*)))
     book.next_id = 1
     book.sequence = 1
     book.last_price = 10000

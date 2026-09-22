@@ -111,7 +111,7 @@ record LanguageKit:Text {
 }
 
 let LanguageKit:Text:new = fn () -> LanguageKit:Text* {
-    let self = cast(LanguageKit:Text*, malloc(24))
+    let self = alloc(LanguageKit:Text)
     if !self { return cast(LanguageKit:Text*, 0) }
     self.capacity = 32
     self.length = 0
@@ -353,7 +353,7 @@ let LanguageKit:Lifetime:set_control_head = fn (state:Context*, head:LanguageKit
 let LanguageKit:Lifetime:root = fn (state:Context*) -> LanguageKit:LifetimeScope* {
     let existing = cast(LanguageKit:LifetimeScope*, LanguageKit:state_get(state, "__languagekit_lifetime_root"))
     if existing { return existing }
-    let scope = cast(LanguageKit:LifetimeScope*, malloc(24))
+    let scope = alloc(LanguageKit:LifetimeScope)
     if !scope { context:diagnostic:error(state, "LanguageKit: could not allocate lifetime root"); return cast(LanguageKit:LifetimeScope*, 0) }
     scope.parent = cast(LanguageKit:LifetimeScope*, 0)
     scope.refs = cast(LanguageKit:LifetimeRef*, 0)
@@ -444,7 +444,7 @@ let LanguageKit:Lifetime:add_ref_to = fn (
 ) -> i64 {
     if !scope || !control { return 0 }
     if !LanguageKit:Lifetime:ref_slot_available(state) { return 0 }
-    let ref = cast(LanguageKit:LifetimeRef*, malloc(24))
+    let ref = alloc(LanguageKit:LifetimeRef)
     if !ref { context:diagnostic:error(state, "LanguageKit: could not allocate ownership reference"); return 0 }
     LanguageKit:Lifetime:ref_slot_added(state)
     ref.control = control
@@ -509,7 +509,7 @@ let LanguageKit:Lifetime:enter = fn (state:Context*) -> LanguageKit:LifetimeScop
         context:diagnostic:error(state, "LanguageKit: lifetime/call scope depth exceeded 1024")
         return cast(LanguageKit:LifetimeScope*, 0)
     }
-    let scope = cast(LanguageKit:LifetimeScope*, malloc(24))
+    let scope = alloc(LanguageKit:LifetimeScope)
     if !scope { context:diagnostic:error(state, "LanguageKit: could not allocate lifetime scope"); return cast(LanguageKit:LifetimeScope*, 0) }
     scope.parent = parent
     scope.refs = cast(LanguageKit:LifetimeRef*, 0)
@@ -555,7 +555,7 @@ let LanguageKit:Lifetime:adopt = fn (
         }
         return cast(u8*, 0)
     }
-    let control = cast(LanguageKit:LifetimeControl*, malloc(64))
+    let control = alloc(LanguageKit:LifetimeControl)
     if !control {
         if drop { let cleanup = drop; cleanup(state, pointer, userdata) }
         else { free(pointer) }
@@ -715,7 +715,7 @@ let LanguageKit:Lifetime:weak = fn (state:Context*, pointer:u8*) -> LanguageKit:
     let control = LanguageKit:Lifetime:control(state, pointer)
     if !control { return cast(LanguageKit:Weak*, 0) }
     if !LanguageKit:Lifetime:ref_slot_available(state) { return cast(LanguageKit:Weak*, 0) }
-    let weak = cast(LanguageKit:Weak*, malloc(8))
+    let weak = alloc(LanguageKit:Weak)
     if !weak { context:diagnostic:error(state, "LanguageKit: could not allocate weak ownership handle"); return cast(LanguageKit:Weak*, 0) }
     LanguageKit:Lifetime:ref_slot_added(state)
     weak.control = control
@@ -770,8 +770,8 @@ let LanguageKit:Lifetime:selftest = phrase {
         if scope {
             let pointer = LanguageKit:Lifetime:alloc(state, 16, LanguageKit:Lifetime:test_drop, 0)
             let weak = LanguageKit:Lifetime:weak(state, pointer)
-            let cycle_a = cast(LanguageKit:LifetimeProbe*, LanguageKit:Lifetime:alloc_raw(state, 8))
-            let cycle_b = cast(LanguageKit:LifetimeProbe*, LanguageKit:Lifetime:alloc_raw(state, 8))
+            let cycle_a = cast(LanguageKit:LifetimeProbe*, LanguageKit:Lifetime:alloc_raw(state, sizeof(LanguageKit:LifetimeProbe)))
+            let cycle_b = cast(LanguageKit:LifetimeProbe*, LanguageKit:Lifetime:alloc_raw(state, sizeof(LanguageKit:LifetimeProbe)))
             if cycle_a && cycle_b { cycle_a.other = cycle_b; cycle_b.other = cycle_a; region_ok = 1 }
             if pointer && weak && LanguageKit:Lifetime:retain_detached(state, pointer) { scope_ok = 1 }
             LanguageKit:Lifetime:leave(state, scope)
@@ -1184,7 +1184,7 @@ record LanguageKit:Reader {
 }
 
 let LanguageKit:Reader:new = fn (state:Context*, flags:i64) -> LanguageKit:Reader* {
-    let self = cast(LanguageKit:Reader*, malloc(64))
+    let self = alloc(LanguageKit:Reader)
     if !self { return cast(LanguageKit:Reader*, 0) }
     self.state = state
     self.flags = flags
@@ -1479,7 +1479,7 @@ record LanguageKit:SliceReader {
 let LanguageKit:SliceReader:new = fn (
     state:Context*, source:u8*, length:i64, flags:i64
 ) -> LanguageKit:SliceReader* {
-    let self = cast(LanguageKit:SliceReader*, malloc(80))
+    let self = alloc(LanguageKit:SliceReader)
     if !self { return cast(LanguageKit:SliceReader*, 0) }
     self.state = state
     self.source = source
@@ -1767,7 +1767,7 @@ record LanguageKit:Node {
 }
 
 let LanguageKit:Node:new = fn (kind:i64) -> LanguageKit:Node* {
-    let self = cast(LanguageKit:Node*, malloc(64))
+    let self = alloc(LanguageKit:Node)
     if !self { return cast(LanguageKit:Node*, 0) }
     self.kind = kind
     self.number = 0
@@ -1817,7 +1817,7 @@ record LanguageKit:Pattern {
 }
 
 let LanguageKit:Pattern:new = fn (kind:i64) -> LanguageKit:Pattern* {
-    let self = cast(LanguageKit:Pattern*, malloc(48))
+    let self = alloc(LanguageKit:Pattern)
     if !self { return cast(LanguageKit:Pattern*, 0) }
     self.kind = kind
     self.number = 0
@@ -1890,7 +1890,7 @@ let LanguageKit:Value:drop = fn (state:Context*, pointer:u8*, userdata:i64) -> v
 }
 
 let LanguageKit:Value:new = fn (state:Context*, kind:i64) -> LanguageKit:Value* {
-    let self = cast(LanguageKit:Value*, LanguageKit:Lifetime:alloc(state, 72, LanguageKit:Value:drop, 0))
+    let self = cast(LanguageKit:Value*, LanguageKit:Lifetime:alloc(state, sizeof(LanguageKit:Value), LanguageKit:Value:drop, 0))
     if !self { return cast(LanguageKit:Value*, 0) }
     self.kind = kind
     self.number = 0
@@ -2030,7 +2030,7 @@ let LanguageKit:ensure_binding = fn (state:Context*, name:u8*) -> LanguageKit:Bi
     let symbol = LanguageKit:intern(state, name)
     let existing = LanguageKit:binding(state, symbol)
     if existing { return existing }
-    let self = cast(LanguageKit:Binding*, malloc(64))
+    let self = alloc(LanguageKit:Binding)
     if !self { return cast(LanguageKit:Binding*, 0) }
     self.symbol = symbol
     self.name = LanguageKit:copy_text(name)
@@ -2115,7 +2115,7 @@ let LanguageKit:expression_callable = fn (state:Context*, called:Phrase*) -> voi
 
     var args = cast(LanguageKit:Value**, 0)
     if argc > 0 {
-        args = cast(LanguageKit:Value**, malloc(argc * 8))
+        args = cast(LanguageKit:Value**, malloc(argc * sizeof(LanguageKit:Value*)))
         if !args { return }
     }
     defer free(cast(u8*, args))

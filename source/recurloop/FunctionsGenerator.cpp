@@ -66,6 +66,7 @@ namespace recurloop {
     public:
       Generator(context::Context &context, const FunctionDefinition &signature)
           : context(context), signature(signature), integerType(context.language().types.find("i64")),
+            unsignedIntegerType(context.language().types.find("u64")),
             realType(context.language().types.find("f64")),
             bytePointer(context.language().types.pointerTo(context.language().types.find("u8"))),
             bitStringPointer(context.language().types.find("BitString*")),
@@ -265,6 +266,54 @@ namespace recurloop {
 
       compiler::TypeId inferCastIntrinsic(const Expression &value) {
         return value.declaredType;
+      }
+
+      compiler::TypeId allocatedType(const Expression &value) {
+        const compiler::TypeDescriptor descriptor = context.language().types.get(value.declaredType);
+        if (descriptor.kind == compiler::TypeKind::Void || descriptor.kind == compiler::TypeKind::Function ||
+            descriptor.size == 0)
+          fail({}, value.offset, "alloc requires a complete non-void object type");
+        return context.language().types.pointerTo(value.declaredType);
+      }
+
+      compiler::TypeId inferAllocateIntrinsic(const Expression &value) {
+        return allocatedType(value);
+      }
+
+      compiler::TypeId emitAllocateIntrinsic(const Expression &value) {
+        const compiler::TypeId result = allocatedType(value);
+        const compiler::TypeDescriptor descriptor = context.language().types.get(value.declaredType);
+        const bool padding = (temporaryDepth & 1u) != 0;
+        if (padding) {
+          emit("sub", "rsp, 8");
+          ++temporaryDepth;
+        }
+        emit("mov", "rdi, " + std::to_string(descriptor.size));
+        emitBytes({0xe8});
+        const std::size_t patch = code.size();
+        little(0, 4);
+        relocations.push_back({compiler::SectionKind::Text, patch, compiler::RelocationKind::PLTRelative32,
+                               "malloc", -4, true});
+        if (padding) {
+          emit("add", "rsp, 8");
+          --temporaryDepth;
+        }
+        return result;
+      }
+
+      compiler::TypeId inferSizeOfIntrinsic(const Expression &value) {
+        const compiler::TypeDescriptor descriptor = context.language().types.get(value.declaredType);
+        if (descriptor.kind == compiler::TypeKind::Void || descriptor.size == 0)
+          fail({}, value.offset, "sizeof requires a complete object type");
+        return unsignedIntegerType;
+      }
+
+      compiler::TypeId emitSizeOfIntrinsic(const Expression &value) {
+        const compiler::TypeDescriptor descriptor = context.language().types.get(value.declaredType);
+        if (descriptor.kind == compiler::TypeKind::Void || descriptor.size == 0)
+          fail({}, value.offset, "sizeof requires a complete object type");
+        emit("mov", "rax, " + std::to_string(descriptor.size));
+        return unsignedIntegerType;
       }
 
       compiler::TypeId emitAddressIntrinsic(const Expression &value, compiler::TypeId expected) {
@@ -1123,6 +1172,7 @@ namespace recurloop {
       context::Context &context;
       const FunctionDefinition &signature;
       compiler::TypeId integerType;
+      compiler::TypeId unsignedIntegerType;
       compiler::TypeId realType;
       compiler::TypeId bytePointer;
       compiler::TypeId bitStringPointer;
@@ -1257,6 +1307,16 @@ namespace recurloop {
             frame.result = frame.generator->emitDereferenceIntrinsic(*frame.expression);
           else
             frame.result = frame.generator->lvalueDereferenceIntrinsic(*frame.expression);
+          return;
+        case IntrinsicKind::Allocate:
+          frame.result = behavior.phase == IntrinsicPhase::Infer
+                             ? frame.generator->inferAllocateIntrinsic(*frame.expression)
+                             : frame.generator->emitAllocateIntrinsic(*frame.expression);
+          return;
+        case IntrinsicKind::SizeOf:
+          frame.result = behavior.phase == IntrinsicPhase::Infer
+                             ? frame.generator->inferSizeOfIntrinsic(*frame.expression)
+                             : frame.generator->emitSizeOfIntrinsic(*frame.expression);
           return;
         }
       }
@@ -1469,6 +1529,8 @@ namespace recurloop {
       intrinsic("cast", IntrinsicKind::Cast);
       intrinsic("&", IntrinsicKind::Address);
       intrinsic("*", IntrinsicKind::Dereference, true);
+      intrinsic("alloc", IntrinsicKind::Allocate);
+      intrinsic("sizeof", IntrinsicKind::SizeOf);
 
       lexicon::Phrase statements = exact(grammar, "statements");
       if (statements.isNull()) THROW(, "cannot install fn statement compiler behaviors without statement syntax")

@@ -149,7 +149,7 @@ record Shell:Text {
 }
 
 let Shell:Text:new = fn () -> Shell:Text* {
-    let text = cast(Shell:Text*, malloc(24))
+    let text = alloc(Shell:Text)
     if !text { return cast(Shell:Text*, 0) }
     text.data = cast(u8*, 0)
     text.length = 0
@@ -273,7 +273,7 @@ record Shell:Command {
 }
 
 let Shell:Command:new = fn () -> Shell:Command* {
-    let command = cast(Shell:Command*, malloc(24))
+    let command = alloc(Shell:Command)
     if !command { return cast(Shell:Command*, 0) }
     command.argv = cast(u8**, 0)
     command.argc = 0
@@ -291,7 +291,7 @@ let Shell:Command:reserve = fn (self:Shell:Command*, requested:i64) -> i64 {
         next *= 2
     }
 
-    let resized = cast(u8**, realloc(cast(u8*, self.argv), next * 8))
+    let resized = cast(u8**, realloc(cast(u8*, self.argv), next * sizeof(u8*)))
     if !resized { return 0 }
     self.argv = resized
     self.capacity = next
@@ -338,7 +338,7 @@ record Shell:Function {
 }
 
 let Shell:Function:new = fn (callback:Shell:FunctionPrototype) -> Shell:Function* {
-    let function = cast(Shell:Function*, malloc(8))
+    let function = alloc(Shell:Function)
     if !function { return cast(Shell:Function*, 0) }
     function.callback = callback
     return function
@@ -358,7 +358,7 @@ record Shell:Pipeline {
 }
 
 let Shell:Pipeline:new = fn () -> Shell:Pipeline* {
-    let pipeline = cast(Shell:Pipeline*, malloc(48))
+    let pipeline = alloc(Shell:Pipeline)
     if !pipeline { return cast(Shell:Pipeline*, 0) }
     pipeline.commands = cast(Shell:Command**, 0)
     pipeline.functions = cast(Shell:Function**, 0)
@@ -375,10 +375,10 @@ let Shell:Pipeline:reserve = fn (self:Shell:Pipeline*, requested:i64) -> i64 {
     var next = self.capacity
     if next < 2 { next = 2 }
     while next < requested { next *= 2 }
-    let commands = cast(Shell:Command**, realloc(cast(u8*, self.commands), next * 8))
+    let commands = cast(Shell:Command**, realloc(cast(u8*, self.commands), next * sizeof(Shell:Command*)))
     if !commands { return 0 }
     self.commands = commands
-    let functions = cast(Shell:Function**, realloc(cast(u8*, self.functions), next * 8))
+    let functions = cast(Shell:Function**, realloc(cast(u8*, self.functions), next * sizeof(Shell:Function*)))
     if !functions { return 0 }
     self.functions = functions
     self.capacity = next
@@ -454,7 +454,7 @@ record Shell:Build {
 }
 
 let Shell:Build:new = fn () -> Shell:Build* {
-    let build = cast(Shell:Build*, malloc(64))
+    let build = alloc(Shell:Build)
     if !build { return cast(Shell:Build*, 0) }
     build.pipeline = Shell:Pipeline:new()
     build.command = Shell:Command:new()
@@ -709,7 +709,7 @@ let Shell:Invocation:start = fn (
         return cast(Shell:Invocation*, 0)
     }
 
-    let invocation = cast(Shell:Invocation*, malloc(56))
+    let invocation = alloc(Shell:Invocation)
     if !invocation { return cast(Shell:Invocation*, 0) }
     invocation.pids = cast(i32*, 0)
     invocation.count = 0
@@ -729,7 +729,7 @@ let Shell:Invocation:start = fn (
     }
 
     fflush(cast(u8*, 0))
-    invocation.pids = cast(i32*, malloc(pipeline.count * 4))
+    invocation.pids = cast(i32*, malloc(pipeline.count * sizeof(i32)))
     if !invocation.pids {
         free(cast(u8*, invocation))
         return cast(Shell:Invocation*, 0)
@@ -737,7 +737,7 @@ let Shell:Invocation:start = fn (
 
     var capture_fds = cast(i32*, 0)
     if capture {
-        capture_fds = cast(i32*, malloc(8))
+        capture_fds = cast(i32*, malloc(2 * sizeof(i32)))
         if !capture_fds || pipe(capture_fds) != 0 {
             if capture_fds { free(cast(u8*, capture_fds)) }
             free(cast(u8*, invocation.pids))
@@ -751,7 +751,7 @@ let Shell:Invocation:start = fn (
     while index < pipeline.count && invocation.spawn_failed == 0 {
         var next_fds = cast(i32*, 0)
         if index + 1 < pipeline.count {
-            next_fds = cast(i32*, malloc(8))
+            next_fds = cast(i32*, malloc(2 * sizeof(i32)))
             if !next_fds || pipe(next_fds) != 0 {
                 if next_fds { free(cast(u8*, next_fds)) }
                 invocation.spawn_failed = 1
@@ -835,7 +835,7 @@ let Shell:Invocation:await = fn (self:Shell:Invocation*) -> i64 {
     if self.spawn_failed { first_failure = 126 }
     var index = 0
     while index < self.count {
-        let status = cast(i32*, malloc(4))
+        let status = alloc(i32)
         if status {
             status[0] = 0
             if waitpid(self.pids[index], status, cast(i32, 0)) >= 0 {
@@ -902,7 +902,7 @@ let Shell:run_pipeline = fn (pipeline:Shell:Pipeline*) -> i64 {
 let Shell:capture_pipeline = fn (pipeline:Shell:Pipeline*) -> Shell:Capture* {
     let invocation = Shell:Invocation:start(pipeline, 1)
     if !invocation { return cast(Shell:Capture*, 0) }
-    let result = cast(Shell:Capture*, malloc(16))
+    let result = alloc(Shell:Capture)
     if !result { invocation.destroy(); return cast(Shell:Capture*, 0) }
     result.output = Shell:copy_text(invocation.stdout())
     result.exit_code = invocation.exit_code()
@@ -925,7 +925,7 @@ record Shell:DirectoryGuard {
 
 let Shell:cwd_enter = fn (path:u8*) -> Shell:DirectoryGuard* {
     if !path { return cast(Shell:DirectoryGuard*, 0) }
-    let guard = cast(Shell:DirectoryGuard*, malloc(16))
+    let guard = alloc(Shell:DirectoryGuard)
     if !guard { return cast(Shell:DirectoryGuard*, 0) }
     guard.previous = cast(u8*, malloc(4096))
     guard.active = 0
@@ -964,7 +964,7 @@ record Shell:EnvGuard {
 
 let Shell:env_enter = fn (name:u8*, value:u8*) -> Shell:EnvGuard* {
     if !name || !value { return cast(Shell:EnvGuard*, 0) }
-    let guard = cast(Shell:EnvGuard*, malloc(24))
+    let guard = alloc(Shell:EnvGuard)
     if !guard { return cast(Shell:EnvGuard*, 0) }
     guard.name = name
     let old = getenv(name)
@@ -1005,7 +1005,7 @@ record Shell:Parallel {
 }
 
 let Shell:Parallel:new = fn () -> Shell:Parallel* {
-    let jobs = cast(Shell:Parallel*, malloc(24))
+    let jobs = alloc(Shell:Parallel)
     if !jobs { return cast(Shell:Parallel*, 0) }
     jobs.pids = cast(i32*, 0)
     jobs.count = 0
@@ -1018,7 +1018,7 @@ let Shell:Parallel:reserve = fn (self:Shell:Parallel*, requested:i64) -> i64 {
     var next = self.capacity
     if next < 4 { next = 4 }
     while next < requested { next *= 2 }
-    let grown = cast(i32*, realloc(cast(u8*, self.pids), next * 4))
+    let grown = cast(i32*, realloc(cast(u8*, self.pids), next * sizeof(i32)))
     if !grown { return 0 }
     self.pids = grown
     self.capacity = next
@@ -1045,7 +1045,7 @@ let Shell:Parallel:wait = fn (self:Shell:Parallel*) -> i64 {
     var first_failure = 0
     var i = 0
     while i < self.count {
-        let status = cast(i32*, malloc(4))
+        let status = alloc(i32)
         if !status {
             if first_failure == 0 { first_failure = 255 }
         } else {
