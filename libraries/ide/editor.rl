@@ -29,6 +29,9 @@ let IDE_App:on_save = fn (widget:u8*, data:u8*) -> void {
     if !text { IDE_App:set_status(state, "cannot read editor buffer"); return }
     let ok = IDE:write_file(state.host.selected, text)
     Gui:text_free(text)
-    if ok { IDE_App:set_status(state, "saved | hot reload pending") }
-    else { IDE_App:set_status(state, "save failed") }
+    if ok {
+        if state.host.reload_mode == IDE:Reload:Hot() { IDE_App:set_status(state, "saved | hot reload pending") }
+        else if state.host.reload_mode == IDE:Reload:Manual() { IDE_App:set_status(state, "saved | reload available") }
+        else { IDE_App:set_status(state, "saved") }
+    } else { IDE_App:set_status(state, "save failed") }
 }

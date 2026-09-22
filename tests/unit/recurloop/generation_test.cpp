@@ -1,9 +1,12 @@
 #include <gtest/gtest.h>
 
 #include <recurloop/Project.hpp>
+#include <recurloop/Execution.hpp>
 #include <recurloop/Recurloop.hpp>
 #include <recurloop/Session.hpp>
 
+#include <filesystem>
+#include <fstream>
 #include <sstream>
 
 namespace {
@@ -36,6 +39,21 @@ TEST(RecurloopGeneration, SessionsSharePublishedBaseButKeepPrivateState) {
   auto shared = second->evaluate("print answer + 1");
   ASSERT_EQ(shared.status, 0);
   EXPECT_EQ(shared.output, "42\n");
+}
+
+
+TEST(RecurloopGeneration, BaselineDiscardsPublishedEnvironmentState) {
+  auto state = project();
+  auto publisher = state->openSession();
+  ASSERT_EQ(publisher->evaluate("var temporary_environment_value = 91").status, 0);
+  ASSERT_EQ(publisher->evaluate(":publish").status, 0);
+
+  auto rebuilder = state->openSession();
+  ASSERT_EQ(rebuilder->evaluate("print temporary_environment_value").output, "91\n");
+  const auto baseline = rebuilder->evaluate(":baseline");
+  ASSERT_EQ(baseline.status, 0) << baseline.error;
+  EXPECT_NE(baseline.output.find("baseline project="), std::string::npos);
+  EXPECT_NE(rebuilder->evaluate("print temporary_environment_value").status, 0);
 }
 
 TEST(RecurloopGeneration, FailedRequestRollsBackInPlaceValueWrites) {
@@ -101,6 +119,7 @@ TEST(RecurloopGeneration, SessionControlsAreOrdinarySourcePhrases) {
   const auto help = client->evaluate(":help");
   ASSERT_EQ(help.status, 0) << help.error;
   EXPECT_NE(help.output.find(":publish"), std::string::npos);
+  EXPECT_NE(help.output.find(":baseline"), std::string::npos);
 
   const auto quit = client->evaluate(":quit");
   ASSERT_EQ(quit.status, 0) << quit.error;
@@ -130,4 +149,85 @@ TEST(RecurloopGeneration, ResetKernelStaysEmptyInsideProjectSession) {
   EXPECT_TRUE(output.str().empty());
   EXPECT_NE(errors.str().find("undefined phrase"), std::string::npos);
   EXPECT_EQ(errors.str().find("Phrase has no type"), std::string::npos);
+}
+
+
+TEST(RecurloopGeneration, ProjectFileCacheWritesAndRestoresRliSteps) {
+  namespace fs = std::filesystem;
+  const fs::path root = fs::temp_directory_path() / "recurloop-project-cache-generation-test";
+  std::error_code error;
+  fs::remove_all(root, error);
+  ASSERT_TRUE(fs::create_directories(root / "cache"));
+
+  const fs::path source = root / "source.rl";
+  {
+    std::ofstream out(source);
+    ASSERT_TRUE(out.is_open());
+    out << "var cached_value = 17\n";
+  }
+
+  auto state = project();
+  state->configureCache((root / "cache").string());
+
+  auto first = state->openSession();
+  ASSERT_EQ(first->evaluate(":baseline").status, 0);
+  ASSERT_EQ(first->evaluate(":cache").status, 0);
+  const auto firstLoad = first->executeFile(source.string());
+  ASSERT_EQ(firstLoad.status, 0) << firstLoad.error;
+  EXPECT_EQ(first->evaluate("print cached_value").output, "17\n");
+  EXPECT_TRUE(fs::is_regular_file(root / "cache" / "steps" / "000000.rli"));
+  EXPECT_TRUE(fs::is_regular_file(root / "cache" / "steps" / "000000.manifest"));
+  EXPECT_EQ(state->cacheWrites(), 1u);
+
+  auto second = state->openSession();
+  ASSERT_EQ(second->evaluate(":baseline").status, 0);
+  ASSERT_EQ(second->evaluate(":cache").status, 0);
+  const auto secondLoad = second->executeFile(source.string());
+  ASSERT_EQ(secondLoad.status, 0) << secondLoad.error;
+  EXPECT_EQ(second->evaluate("print cached_value").output, "17\n");
+  EXPECT_GE(state->cacheHits(), 1u);
+
+  fs::remove_all(root, error);
+}
+
+TEST(RecurloopGeneration, ProjectFileCachePreservesAssignmentsToBaselineValues) {
+  namespace fs = std::filesystem;
+  const fs::path root = fs::temp_directory_path() / "recurloop-project-cache-baseline-assignment-test";
+  std::error_code error;
+  fs::remove_all(root, error);
+  ASSERT_TRUE(fs::create_directories(root / "cache"));
+
+  char program[] = "recurloop-test";
+  char *argv[] = {program};
+  auto runtime = std::make_unique<recurloop::Recurloop>();
+  runtime->initialize(1, argv);
+  ASSERT_NO_THROW(recurloop::executeSource(runtime->getContext(), "var cached_probe = 1\n",
+                                           "<cache-baseline>", 1));
+  auto state = recurloop::Project::create(runtime->getContext(), {program});
+  state->configureCache((root / "cache").string());
+
+  const fs::path source = root / "source.rl";
+  {
+    std::ofstream out(source);
+    ASSERT_TRUE(out.is_open());
+    out << "cached_probe = 24\n";
+  }
+
+  auto first = state->openSession();
+  ASSERT_EQ(first->evaluate(":baseline").status, 0);
+  ASSERT_EQ(first->evaluate(":cache").status, 0);
+  const auto firstLoad = first->executeFile(source.string());
+  ASSERT_EQ(firstLoad.status, 0) << firstLoad.error;
+  EXPECT_EQ(first->evaluate("print cached_probe").output, "24\n");
+  EXPECT_EQ(state->cacheWrites(), 1u);
+
+  auto second = state->openSession();
+  ASSERT_EQ(second->evaluate(":baseline").status, 0);
+  ASSERT_EQ(second->evaluate(":cache").status, 0);
+  const auto secondLoad = second->executeFile(source.string());
+  ASSERT_EQ(secondLoad.status, 0) << secondLoad.error;
+  EXPECT_EQ(second->evaluate("print cached_probe").output, "24\n");
+  EXPECT_GE(state->cacheHits(), 1u);
+
+  fs::remove_all(root, error);
 }

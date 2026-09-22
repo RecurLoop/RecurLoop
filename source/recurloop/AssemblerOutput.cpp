@@ -11,6 +11,21 @@
 namespace recurloop {
   namespace assembler_internal {
 
+    void append_shared_library_options(std::vector<std::string> &arguments, context::Context &context) {
+      const std::vector<std::string> searchPaths = context.language().linkerSearchPaths();
+      for (const std::string &library : context.language().sharedLibraries()) {
+        const std::optional<std::string> path = compiler::DynamicLinker::libraryPath(library, searchPaths);
+        if (path) {
+          const std::filesystem::path resolved(*path);
+          const std::string directory = resolved.parent_path().empty() ? "." : resolved.parent_path().string();
+          arguments.push_back("-L" + directory);
+          arguments.push_back("-l:" + resolved.filename().string());
+        } else {
+          arguments.push_back("-l" + library);
+        }
+      }
+    }
+
     lexicon::Phrase assembler_ensure_label(context::Context &context, const std::string &name,
                                            const compiler::Assembler::Location &location) {
       if (!compiler::Assembler::isIdentifier(name)) assembler_fail(location, "invalid label name '" + name + "'");
@@ -350,6 +365,7 @@ namespace recurloop {
       arguments.push_back("-Wl,-z,now");
       arguments.push_back("-Wl,-z,noexecstack");
       arguments.push_back("-Wl,-z,separate-code");
+      arguments.push_back("-Wl,--build-id=sha1");
       if (!debug) arguments.push_back("-Wl,--strip-all");
     }
 
@@ -408,7 +424,7 @@ namespace recurloop {
       arguments.insert(arguments.end(), {object.get(), "-o", path});
       for (const std::string &searchPath : context.language().linkerSearchPaths())
         arguments.push_back("-L" + searchPath);
-      for (const std::string &library : context.language().sharedLibraries()) arguments.push_back("-l" + library);
+      append_shared_library_options(arguments, context);
 
       std::vector<char *> nativeArguments;
       nativeArguments.reserve(arguments.size() + 1);
@@ -589,7 +605,7 @@ namespace recurloop {
           arguments.push_back("--sysroot=" RECURLOOP_LLVM_SYSROOT);
         for (const std::string &searchPath : context.language().linkerSearchPaths())
           arguments.push_back("-L" + searchPath);
-        for (const std::string &library : context.language().sharedLibraries()) arguments.push_back("-l" + library);
+        append_shared_library_options(arguments, context);
         run_llvm_linker(arguments, path, "LLVM executable");
         linkedExternally = true;
         break;
@@ -1019,7 +1035,7 @@ namespace recurloop {
       if (std::string_view(RECURLOOP_LLVM_SYSROOT).size() != 0)
         arguments.push_back("--sysroot=" RECURLOOP_LLVM_SYSROOT);
       for (const std::string &path : context.language().linkerSearchPaths()) arguments.push_back("-L" + path);
-      for (const std::string &library : context.language().sharedLibraries()) arguments.push_back("-l" + library);
+      assembler_internal::append_shared_library_options(arguments, context);
       assembler_internal::run_llvm_linker(arguments, request->path, "LLVM executable");
       std::error_code error;
       std::filesystem::permissions(request->path,

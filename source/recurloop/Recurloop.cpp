@@ -298,6 +298,26 @@ namespace recurloop {
     };
   } // namespace
 
+  namespace {
+    thread_local void *sourceObserverUser = nullptr;
+    thread_local SourceCompletedCallback sourceObserverCallback = nullptr;
+
+    void notifySourceCompleted(context::Context &context, std::string_view path) {
+      if (sourceObserverCallback != nullptr) sourceObserverCallback(sourceObserverUser, context, path);
+    }
+  } // namespace
+
+  SourceObserverScope::SourceObserverScope(void *user, SourceCompletedCallback callback) noexcept
+      : previousUser_(sourceObserverUser), previousCallback_(sourceObserverCallback) {
+    sourceObserverUser = user;
+    sourceObserverCallback = callback;
+  }
+
+  SourceObserverScope::~SourceObserverScope() {
+    sourceObserverUser = previousUser_;
+    sourceObserverCallback = previousCallback_;
+  }
+
   void executeCurrentBlock(context::Context &context, bool scoped) {
     const Size lookup = context::Lookup::current(context).getAddress();
     ValueScope values(context, scoped);
@@ -365,6 +385,10 @@ namespace recurloop {
     context.source = outerSource;
     context.io.in = outerInput;
     context.exec.args.index = outerArgumentIndex;
+    // Snapshot only after the caller execution state has been restored. The
+    // semantic effects of the completed file remain in the context, while the
+    // cache never serializes a half-returned include/stream frame.
+    notifySourceCompleted(context, path);
   }
 
   int executeInputs(context::Context &context) {

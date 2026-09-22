@@ -3,8 +3,9 @@
 //
 // This library contains the stable project runner, inotify watching, hot-reload
 // lifecycle, one shared project runtime and persistent terminal models. UI
-// primitives come from gui.rli; concrete application composition lives in
-// examples/07-workflows/ide/*.rl. The C++ host remains unaware of GUI/IDE policy.
+// primitives come from gui.rli; the default composition lives in libraries/ide/
+// and launcher source may replace any IDE_App:* phrase. The C++ host remains
+// unaware of GUI/IDE policy.
 // =============================================================================
 
 languagekit_native_begin
@@ -17,6 +18,7 @@ let IDE = phrase { dictionary = true permanent = true }
 
 // libc / Linux filesystem. Common declarations come from language-kit.rli.
 extern realpath(path:u8*, resolved:u8*) -> u8* abi sysv-amd64
+extern readlink(path:u8*, target:u8*, size:u64) -> i64 abi sysv-amd64
 extern fopen(path:u8*, mode:u8*) -> u8* abi sysv-amd64
 extern fclose(stream:u8*) -> i32 abi sysv-amd64
 extern fseek(stream:u8*, offset:i64, origin:i32) -> i32 abi sysv-amd64
@@ -28,6 +30,7 @@ extern readdir(directory:u8*) -> u8* abi sysv-amd64
 extern closedir(directory:u8*) -> i32 abi sysv-amd64
 extern inotify_init1(flags:i32) -> i32 abi sysv-amd64
 extern inotify_add_watch(fd:i32, path:u8*, mask:u32) -> i32 abi sysv-amd64
+extern inotify_rm_watch(fd:i32, wd:i32) -> i32 abi sysv-amd64
 extern read(fd:i32, target:u8*, bytes:u64) -> i64 abi sysv-amd64
 extern clock_gettime(clock:i32, time:u8*) -> i32 abi sysv-amd64
 extern snprintf(buffer:u8*, size:u64, format:u8*, ...) -> i32 abi sysv-amd64
@@ -42,6 +45,7 @@ extern mkdir(path:u8*, mode:u32) -> i32 abi sysv-amd64
 extern rename(old_path:u8*, new_path:u8*) -> i32 abi sysv-amd64
 extern access(path:u8*, mode:i32) -> i32 abi sysv-amd64
 extern getpid() -> i32 abi sysv-amd64
+extern chdir(path:u8*) -> i32 abi sysv-amd64
 extern getenv(name:u8*) -> u8* abi sysv-amd64
 extern setenv(name:u8*, value:u8*, overwrite:i32) -> i32 abi sysv-amd64
 extern unsetenv(name:u8*) -> i32 abi sysv-amd64
@@ -59,6 +63,7 @@ extern dlerror() -> u8* abi sysv-amd64
 // GUI widgets are provided by gui.rli.  This library owns only the stable
 // project/runtime/hot-reload state and never talks to GTK directly.
 let IDE:Lifecycle = fn (action:i64, host:u8*) -> void
+let IDE:ShellLifecycle = fn (action:i64, host:u8*) -> void
 
 record IDE:Timespec {
     seconds:i64
@@ -89,6 +94,7 @@ record IDE:RetiredGeneration {
 record IDE:Runner {
     program:u8*
     root:u8*
+    application:u8*
     socket_path:u8*
     object_path:u8*
     module_path:u8*
@@ -101,6 +107,7 @@ record IDE:Runner {
     module:u8*
     lifecycle:IDE:Lifecycle
     retired:IDE:RetiredGeneration*
+    cache_directory:u8*
 }
 
 record IDE:RuntimeSession {
@@ -120,6 +127,17 @@ record IDE:Terminal {
     next:IDE:Terminal*
 }
 
+// Blocking project compilation/publication never runs on GTK's main thread.
+// A tiny helper RecurLoop process performs the work and this record is polled
+// with waitpid(WNOHANG) from a GTK timer.
+record IDE:Job {
+    pid:i32
+    kind:i32
+    revision:u64
+    source_path:u8*
+    result_path:u8*
+}
+
 // Stable application host.  `content` and `user_data` belong to the currently
 // mounted generation; everything else survives rebuilds.
 record IDE:Host {
@@ -135,12 +153,35 @@ record IDE:Host {
     selected:u8*
     pending_since:i64
     terminal_number:i64
+    shell_lifecycle:IDE:ShellLifecycle
+    initial_module:u8*
+    startup_phase:i64
+    watch_root:u8*
+    config_source:u8*
+    reload_mode:i64
+    reload_pending:i64
+    job:IDE:Job*
 }
 
-// Stable view data layout. UI behavior remains in examples/07-workflows/ide/*.rl
-// and can be replaced on every project publication without redefining records.
+// Stable view data layout. Default UI behavior lives in libraries/ide/*.rl and
+// can be replaced on every project publication without redefining records.
 let IDE_App = phrase { dictionary = true permanent = true }
 var IDE_App:hot_reload_probe = 1
+
+// Source-defined IDE configuration.  The launcher .rl owns this object; the
+// native host only receives resolved strings and a reload policy.
+record IDE:Config {
+    workspace_path:u8*
+    source_path:u8*
+    cache_path:u8*
+    watch_path:u8*
+    reload_mode:i64
+}
+
+let IDE:Reload = phrase { dictionary = true permanent = true }
+let IDE:Reload:Off = fn () -> i64 { return 0 }
+let IDE:Reload:Hot = fn () -> i64 { return 1 }
+let IDE:Reload:Manual = fn () -> i64 { return 2 }
 
 record IDE_App:FileItem {
     state:u8*
@@ -241,6 +282,7 @@ let IDE:write_file = fn (path:u8*, data:u8*) -> i64 {
     return cast(u64, fwrite(data, 1, bytes, stream)) == bytes
 }
 
+
 let IDE:file_exists = fn (path:u8*) -> i64 {
     if !path { return 0 }
     let stream = fopen(path, "rb")
@@ -268,6 +310,26 @@ let IDE:path_exists = fn (path:u8*) -> i64 {
     return access(path, 0) == 0
 }
 
+let IDE:ensure_directory = fn (path:u8*) -> i64 {
+    if !path { return 0 }
+    if IDE:is_directory(path) { return 1 }
+    if IDE:path_exists(path) { return 0 }
+    return mkdir(path, cast(u32, 493)) == 0
+}
+
+
+let IDE:project_cache_directory = fn (root:u8*) -> u8* {
+    if !root { return cast(u8*, 0) }
+    let cache = IDE:join(root, ".cache")
+    if !cache { return cast(u8*, 0) }
+    if !IDE:ensure_directory(cache) { free(cache); return cast(u8*, 0) }
+    let recurloop = IDE:join(cache, "recurloop")
+    free(cache)
+    if !recurloop { return cast(u8*, 0) }
+    if !IDE:ensure_directory(recurloop) { free(recurloop); return cast(u8*, 0) }
+    return recurloop
+}
+
 let IDE:leaf_name = fn (path:u8*) -> u8* {
     if !path { return cast(u8*, 0) }
     let bytes = cast(i64, strlen(path))
@@ -293,6 +355,95 @@ let IDE:parent_path = fn (path:u8*) -> u8* {
     memcpy(result, path, i - 1)
     result[i - 1] = 0
     return result
+}
+
+let IDE:ensure_directory_tree = fn (path:u8*) -> i64 {
+    if !path || path[0] == 0 { return 0 }
+    if IDE:is_directory(path) { return 1 }
+    if IDE:path_exists(path) { return 0 }
+    let parent = IDE:parent_path(path)
+    if parent {
+        let different = strcmp(parent, path) != 0
+        let trivial = strcmp(parent, ".") == 0
+        if different && !trivial && !IDE:is_directory(parent) && !IDE:ensure_directory_tree(parent) {
+            free(parent)
+            return 0
+        }
+        free(parent)
+    }
+    return mkdir(path, cast(u32, 493)) == 0 || IDE:is_directory(path)
+}
+
+
+// Resolve runtime assets from the running executable instead of embedding the
+// build machine's source/build paths.  This keeps the native IDE relocatable:
+// build trees use build/Release/{bin,libraries}, installed trees use
+// {bin,share/recurloop/{libraries,ide}}, and explicit environment overrides
+// remain available for development/package testing.
+let IDE:self_executable = fn () -> u8* {
+    let result = cast(u8*, malloc(4096))
+    if !result { return cast(u8*, 0) }
+    let bytes = readlink("/proc/self/exe", result, 4095)
+    if bytes <= 0 || bytes >= 4095 { free(result); return cast(u8*, 0) }
+    result[bytes] = 0
+    return result
+}
+
+let IDE:resolve_file = fn (path:u8*) -> u8* {
+    if !path || path[0] == 0 { return cast(u8*, 0) }
+    return realpath(path, cast(u8*, 0))
+}
+
+let IDE:resolve_host = fn () -> u8* {
+    let override = getenv("RECURLOOP_HOST")
+    if override && override[0] != 0 {
+        let resolved = IDE:resolve_file(override)
+        if resolved { return resolved }
+    }
+
+    let self = IDE:self_executable()
+    if !self { return cast(u8*, 0) }
+    defer free(self)
+    let directory = IDE:parent_path(self)
+    if !directory { return cast(u8*, 0) }
+    defer free(directory)
+    let candidate = IDE:join(directory, "recurloop")
+    if !candidate { return cast(u8*, 0) }
+    defer free(candidate)
+    return IDE:resolve_file(candidate)
+}
+
+
+let IDE:resolve_library_directory = fn (program:u8*) -> u8* {
+    if !program { return cast(u8*, 0) }
+    let directory = IDE:parent_path(program)
+    if !directory { return cast(u8*, 0) }
+    defer free(directory)
+    let prefix = IDE:parent_path(directory)
+    if !prefix { return cast(u8*, 0) }
+    defer free(prefix)
+
+    var candidate = IDE:join(prefix, "libraries")
+    if candidate {
+        let directory_handle = opendir(candidate)
+        if directory_handle { closedir(directory_handle); return candidate }
+        free(candidate)
+    }
+    candidate = IDE:join(prefix, "share/recurloop/libraries")
+    if candidate {
+        let directory_handle = opendir(candidate)
+        if directory_handle { closedir(directory_handle); return candidate }
+        free(candidate)
+    }
+    return cast(u8*, 0)
+}
+
+let IDE:has_suffix = fn (text:u8*, suffix:u8*) -> i64 {
+    if !text || !suffix { return 0 }
+    let text_bytes = cast(i64, strlen(text))
+    let suffix_bytes = cast(i64, strlen(suffix))
+    if suffix_bytes > text_bytes { return 0 }
+    return strcmp(&text[text_bytes - suffix_bytes], suffix) == 0
 }
 
 let IDE:path_is_inside = fn (path:u8*, prefix:u8*) -> i64 {
@@ -443,10 +594,27 @@ let IDE:artifact = fn (revision:u64, ending:u8*) -> u8* {
     let path = cast(u8*, malloc(256))
     if !path { return cast(u8*, 0) }
     let process = getpid()
-    let bytes = snprintf(path, 256, "/tmp/recurloop-ide-%d-%llu%s", process, revision, ending)
+    let bytes = snprintf(path, 256, "/tmp/recurloop-ide-module-%d-%llu%s", process, revision, ending)
     if bytes < 0 || bytes >= 256 { free(path); return cast(u8*, 0) }
     return path
 }
+
+// Native hot-reload artifacts belong to the configured IDE cache.  The Unix
+// socket remains in /tmp because it is runtime state, not a compiled artifact.
+let IDE:Runner:cache_artifact = fn (self:IDE:Runner*, revision:u64, ending:u8*) -> u8* {
+    if !self || !ending || !self.cache_directory { return IDE:artifact(revision, ending) }
+    let directory = IDE:join(self.cache_directory, "ide")
+    if !directory { return cast(u8*, 0) }
+    defer free(directory)
+    if !IDE:ensure_directory_tree(directory) { return cast(u8*, 0) }
+
+    let path = cast(u8*, malloc(512))
+    if !path { return cast(u8*, 0) }
+    let bytes = snprintf(path, 512, "%s/generation-%d-%llu%s", directory, getpid(), revision, ending)
+    if bytes < 0 || bytes >= 512 { free(path); return cast(u8*, 0) }
+    return path
+}
+
 
 let IDE:connect_socket = fn (path:u8*) -> i32 {
     if !path || strlen(path) >= 108 { return -1 }
@@ -534,6 +702,50 @@ let IDE:RuntimeSession:request = fn (self:IDE:RuntimeSession*, command:u8*) -> i
     return self.last_status
 }
 
+let IDE:RuntimeSession:load_file = fn (self:IDE:RuntimeSession*, path:u8*) -> i32 {
+    if !self || !path { return 1 }
+    // Internal server transport command. Unlike the language-level `:load`
+    // phrase, this reaches Session::executeFile(), which is the cache boundary
+    // for project source and therefore restores/writes step .rli images.
+    let command = LanguageKit:Text:new()
+    if !command { return 1 }
+    defer command.destroy()
+    command.append(":load-file\t")
+    command.append(path)
+    return self.request(command.data)
+}
+
+let IDE:RuntimeSession:load_optional_file = fn (self:IDE:RuntimeSession*, path:u8*) -> i32 {
+    if !path || !IDE:file_exists(path) { return 0 }
+    return self.load_file(path)
+}
+
+
+let IDE:RuntimeSession:load_project_file = fn (self:IDE:RuntimeSession*, runner:IDE:Runner*) -> i32 {
+    if !self || !runner || !runner.root { return 1 }
+    let project = IDE:join(runner.root, "project.rl")
+    if !project { return 1 }
+    let status = self.load_optional_file(project)
+    free(project)
+    return status
+}
+
+let IDE:RuntimeSession:load_entry = fn (self:IDE:RuntimeSession*, runner:IDE:Runner*) -> i32 {
+    if !self || !runner || !runner.application { return 1 }
+    if self.request(":baseline") != 0 { return 1 }
+    if self.request(":cache") != 0 { return 1 }
+    if self.load_file(runner.application) != 0 { return 1 }
+    return self.load_project_file(runner)
+}
+
+let IDE:RuntimeSession:load_environment = fn (self:IDE:RuntimeSession*, runner:IDE:Runner*) -> i32 {
+    return self.load_entry(runner)
+}
+
+let IDE:RuntimeSession:load_view_environment = fn (self:IDE:RuntimeSession*, runner:IDE:Runner*) -> i32 {
+    return self.load_entry(runner)
+}
+
 let IDE:RuntimeSession:new = fn (runner:IDE:Runner*) -> IDE:RuntimeSession* {
     if !runner || !runner.socket_path { return cast(IDE:RuntimeSession*, 0) }
     let fd = IDE:connect_socket(runner.socket_path)
@@ -579,76 +791,139 @@ let IDE:Runner:stop = fn (self:IDE:Runner*) -> void {
     if self.socket_path { unlink(self.socket_path) }
 }
 
-let IDE:Runner:spawn_server = fn (self:IDE:Runner*) -> i64 {
-    if !self || !self.program || !self.socket_path { return 0 }
+let IDE:Runner:start_server = fn (self:IDE:Runner*) -> i64 {
+    if !self || !self.program || !self.root || !self.socket_path { return 0 }
     unlink(self.socket_path)
-    let args = cast(u8**, malloc(112))
-    if !args { return 0 }
-    args[0] = self.program
-    args[1] = "--library-path"
-    args[2] = "build/Release/libraries"
-    args[3] = "--library"
-    args[4] = "language-kit"
-    args[5] = "--library"
-    args[6] = "gui"
-    args[7] = "--library"
-    args[8] = "ide"
-    args[9] = "--serve"
-    args[10] = "--unix"
-    args[11] = self.socket_path
-    args[12] = "--no-stdio"
-    args[13] = cast(u8*, 0)
+    let library_path = IDE:resolve_library_directory(self.program)
+    var cache_directory = IDE:copy(self.cache_directory)
+    if !cache_directory { cache_directory = IDE:project_cache_directory(self.root) }
+    let args = cast(u8**, malloc(144))
+    if !args {
+        if library_path { free(library_path) }
+        if cache_directory { free(cache_directory) }
+        return 0
+    }
+    var at = 0
+    args[at] = self.program; at += 1
+    if library_path {
+        args[at] = "--library-path"; at += 1
+        args[at] = library_path; at += 1
+    }
+    // project.rli is the immutable shared baseline. No workspace source is
+    // parsed before the server socket is ready; the local overlay is published
+    // later as one transaction from the GTK event loop.
+    args[at] = "--library"; at += 1
+    args[at] = "project"; at += 1
+    if cache_directory {
+        args[at] = "--project-cache"; at += 1
+        args[at] = cache_directory; at += 1
+    }
+    args[at] = "--serve"; at += 1
+    args[at] = "--unix"; at += 1
+    args[at] = self.socket_path; at += 1
+    args[at] = "--no-stdio"; at += 1
+    args[at] = cast(u8*, 0)
     setenv("RECURLOOP_IDE_PROJECT_BUILD", "1", 1)
     let pid = fork()
-    if pid < 0 { unsetenv("RECURLOOP_IDE_PROJECT_BUILD"); free(cast(u8*, args)); return 0 }
+    if pid < 0 {
+        unsetenv("RECURLOOP_IDE_PROJECT_BUILD")
+        free(cast(u8*, args))
+        if library_path { free(library_path) }
+        if cache_directory { free(cache_directory) }
+        return 0
+    }
     if pid == 0 {
+        // Keep the launcher's working directory: replaying the same source must
+        // resolve explicit engine imports exactly as the foreground process did.
+        // Workspace-aware code uses RECURLOOP_PROJECT_ROOT instead.
+        setenv("RECURLOOP_PROJECT_ROOT", self.root, 1)
         execvp(self.program, args)
         _exit(127)
     }
     unsetenv("RECURLOOP_IDE_PROJECT_BUILD")
     free(cast(u8*, args))
+    if library_path { free(library_path) }
+    if cache_directory { free(cache_directory) }
     self.pid = pid
+    return 1
+}
+
+let IDE:Runner:server_ready = fn (self:IDE:Runner*) -> i64 {
+    if !self || self.pid <= 0 || !self.socket_path { return 0 }
+    let fd = IDE:connect_socket(self.socket_path)
+    if fd < 0 { return 0 }
+    close(fd)
+    return 1
+}
+
+let IDE:Runner:wait_server = fn (self:IDE:Runner*) -> i64 {
+    if !self { return 0 }
     var attempt = 0
     while attempt < 300 {
-        let fd = IDE:connect_socket(self.socket_path)
-        if fd >= 0 { close(fd); return 1 }
+        if self.server_ready() { return 1 }
         usleep(10000)
         attempt += 1
     }
+    return 0
+}
+
+let IDE:Runner:spawn_server = fn (self:IDE:Runner*) -> i64 {
+    if !self.start_server() { return 0 }
+    if self.wait_server() { return 1 }
     self.stop()
     return 0
 }
 
 let IDE:Runner:driver_source = fn (self:IDE:Runner*, driver:u8*) -> i64 {
-    if !self || !driver || !self.root || !self.object_path { return 0 }
+    if !self || !driver || !self.object_path { return 0 }
     let source = LanguageKit:Text:new()
     if !source { return 0 }
     defer source.destroy()
-    source.append("include ")
-    if !IDE:append_source_string(source, self.root) { return 0 }
-    source.append("\nemit object ")
+    source.append("emit object ")
     if !IDE:append_source_string(source, self.object_path) { return 0 }
     source.append(" recurloop_ide_lifecycle = fn (action:i64, host:u8*) -> void {\n")
     source.append("  if action == 1 { IDE_App:mount(cast(IDE:Host*, host)) }\n")
     source.append("  else if action == 2 { IDE_App:unmount(cast(IDE:Host*, host)) }\n")
     source.append("  else if action == 3 { IDE_App:reload_failed(cast(IDE:Host*, host)) }\n")
+    source.append("  else if action == 4 { IDE_App:runtime_ready(cast(IDE:Host*, host)) }\n")
     source.append("}\n")
     return IDE:write_file(driver, source.data)
 }
 
+let IDE:Runner:load_module = fn (self:IDE:Runner*, path:u8*) -> i64 {
+    if !self || !path { return 0 }
+    let handle = dlopen(path, 2)
+    if !handle { return 0 }
+    let symbol = dlsym(handle, "recurloop_ide_lifecycle")
+    if !symbol {
+        dlclose(handle)
+        return 0
+    }
+    self.module = handle
+    self.lifecycle = cast(IDE:Lifecycle, symbol)
+    return 1
+}
+
 let IDE:Runner:link_module = fn (self:IDE:Runner*) -> i64 {
     if !self || !self.object_path || !self.module_path { return 0 }
-    let args = cast(u8**, malloc(72))
+
+    // The generation is built in a short-lived worker process. Do not rely on
+    // GTK having already been touched (and therefore dlopen()ed) by that worker:
+    // make the module carry its own runtime dependencies. Use versioned SONAMEs
+    // so a normal GTK runtime installation is sufficient; development linker
+    // symlinks such as libgtk-3.so are intentionally not required.
+    let args = cast(u8**, malloc(80))
     if !args { return 0 }
     args[0] = "clang"
     args[1] = "-shared"
     args[2] = self.object_path
-    args[3] = "-o"
-    args[4] = self.module_path
-    args[5] = "-lgtk-3"
-    args[6] = "-lgdk-3"
-    args[7] = "-lc"
-    args[8] = cast(u8*, 0)
+    args[3] = "-l:libgtk-3.so.0"
+    args[4] = "-l:libgdk-3.so.0"
+    args[5] = "-l:libgobject-2.0.so.0"
+    args[6] = "-l:libglib-2.0.so.0"
+    args[7] = "-o"
+    args[8] = self.module_path
+    args[9] = cast(u8*, 0)
     let pid = fork()
     if pid < 0 { free(cast(u8*, args)); return 0 }
     if pid == 0 {
@@ -660,22 +935,27 @@ let IDE:Runner:link_module = fn (self:IDE:Runner*) -> i64 {
     self.module = dlopen(self.module_path, 2)
     if !self.module { return 0 }
     let symbol = dlsym(self.module, "recurloop_ide_lifecycle")
-    if !symbol { return 0 }
+    if !symbol {
+        dlclose(self.module)
+        self.module = cast(u8*, 0)
+        return 0
+    }
     self.lifecycle = cast(IDE:Lifecycle, symbol)
     return 1
 }
 
 let IDE:Runner:candidate = fn (self:IDE:Runner*) -> IDE:Runner* {
     if !self || self.pid <= 0 || !self.socket_path { return cast(IDE:Runner*, 0) }
-    let next = cast(IDE:Runner*, malloc(104))
+    let next = cast(IDE:Runner*, malloc(144))
     if !next { return cast(IDE:Runner*, 0) }
     next.program = IDE:copy(self.program)
     next.root = IDE:copy(self.root)
+    next.application = IDE:copy(self.application)
     next.revision = self.revision + 1
     next.generation = self.generation + 1
     next.socket_path = cast(u8*, 0)
-    next.object_path = IDE:artifact(next.revision, ".o")
-    next.module_path = IDE:artifact(next.revision, ".so")
+    next.object_path = self.cache_artifact(next.revision, ".o")
+    next.module_path = self.cache_artifact(next.revision, ".so")
     next.pid = -1
     next.last_status = 1
     next.last_output = cast(u8*, 0)
@@ -683,20 +963,22 @@ let IDE:Runner:candidate = fn (self:IDE:Runner*) -> IDE:Runner* {
     next.module = cast(u8*, 0)
     next.lifecycle = cast(IDE:Lifecycle, 0)
     next.retired = cast(IDE:RetiredGeneration*, 0)
-    if !next.program || !next.root || !next.object_path || !next.module_path {
+    next.cache_directory = IDE:copy(self.cache_directory)
+    if !next.program || !next.root || !next.application || !next.object_path || !next.module_path {
         next.last_error = IDE:copy("cannot allocate project generation")
         return next
     }
 
-    let driver = IDE:artifact(next.revision, ".rl")
+    let driver = self.cache_artifact(next.revision, ".driver.rl")
     if !driver || !next.driver_source(driver) {
         if !next.last_error { next.last_error = IDE:copy("cannot create project build driver") }
         if driver { unlink(driver); free(driver) }
         return next
     }
 
-    // Native compilation is transactional and intentionally not published.
-    // The generated lifecycle helper therefore never enters the shared lexicon.
+    // Rebuild from the immutable project.rli baseline, not from the previous
+    // publication.  Deleted syntax/IDE/build definitions therefore disappear
+    // deterministically instead of leaking across hot reload generations.
     let build = IDE:RuntimeSession:new(self)
     if !build {
         next.last_error = IDE:copy("cannot connect build session to project runtime")
@@ -704,31 +986,18 @@ let IDE:Runner:candidate = fn (self:IDE:Runner*) -> IDE:Runner* {
         return next
     }
 
-    var command = LanguageKit:Text:new()
-    if command {
-        command.append(":load ")
-        if !IDE:append_source_string(command, driver) { command.destroy(); command = cast(LanguageKit:Text*, 0) }
-    }
-    if !command || build.request(command.data) != 0 {
+    if build.load_view_environment(self) != 0 || build.load_file(driver) != 0 {
         next.last_error = IDE:copy(build.last_error)
     } else if !next.link_module() {
         let error = dlerror()
         next.last_error = IDE:copy(error)
         if !next.last_error { next.last_error = IDE:copy("native lifecycle link failed") }
     } else {
-        // Publish only the reloadable application source in a second session of
-        // the same Project. This keeps compiler-only phrases out of generations
-        // visible to terminals while retaining atomic failed-build behavior.
         let publish = IDE:RuntimeSession:new(self)
         if !publish {
             next.last_error = IDE:copy("cannot connect publication session to project runtime")
         } else {
-            var source = LanguageKit:Text:new()
-            if source {
-                source.append(":load ")
-                if !IDE:append_source_string(source, self.root) { source.destroy(); source = cast(LanguageKit:Text*, 0) }
-            }
-            if !source || publish.request(source.data) != 0 {
+            if publish.load_environment(self) != 0 {
                 next.last_error = IDE:copy(publish.last_error)
             } else if publish.request(":publish") != 0 || !publish.last_output || !IDE:text_contains(publish.last_output, "published project=") {
                 next.last_error = IDE:copy(publish.last_error)
@@ -737,15 +1006,42 @@ let IDE:Runner:candidate = fn (self:IDE:Runner*) -> IDE:Runner* {
                 next.last_status = 0
                 next.last_output = IDE:copy(publish.last_output)
             }
-            if source { source.destroy() }
             publish.destroy()
         }
     }
-    if command { command.destroy() }
     build.destroy()
     unlink(driver)
     free(driver)
     return next
+}
+
+// Publish the launcher/project environment without rebuilding the native view.
+// Startup uses this path after the server socket becomes ready.
+let IDE:Runner:publish_environment = fn (self:IDE:Runner*) -> i64 {
+    if !self || self.pid <= 0 { return 0 }
+    let publish = IDE:RuntimeSession:new(self)
+    if !publish {
+        if self.last_error { free(self.last_error) }
+        self.last_error = IDE:copy("cannot connect environment publication session")
+        self.last_status = 1
+        return 0
+    }
+    let loaded = publish.load_environment(self) == 0
+    let published = loaded && publish.request(":publish") == 0 && publish.last_output && IDE:text_contains(publish.last_output, "published project=")
+    if self.last_output { free(self.last_output); self.last_output = cast(u8*, 0) }
+    if self.last_error { free(self.last_error); self.last_error = cast(u8*, 0) }
+    self.revision += 1
+    if published {
+        self.generation += 1
+        self.last_status = 0
+        self.last_output = IDE:copy(publish.last_output)
+    } else {
+        self.last_status = 1
+        self.last_error = IDE:copy(publish.last_error)
+        if !self.last_error { self.last_error = IDE:copy("project environment publication failed") }
+    }
+    publish.destroy()
+    return published
 }
 
 let IDE:Runner:destroy = fn (self:IDE:Runner*) -> void {
@@ -769,6 +1065,8 @@ let IDE:Runner:destroy = fn (self:IDE:Runner*) -> void {
     }
     if self.program { free(self.program) }
     if self.root { free(self.root) }
+    if self.application { free(self.application) }
+    if self.cache_directory { free(self.cache_directory) }
     if self.socket_path { free(self.socket_path) }
     if self.object_path { unlink(self.object_path); free(self.object_path) }
     if self.module_path { unlink(self.module_path); free(self.module_path) }
@@ -824,16 +1122,17 @@ let IDE:Runner:remember_failure = fn (self:IDE:Runner*, failed:IDE:Runner*) -> v
     failed.destroy()
 }
 
-let IDE:Runner:new = fn (program:u8*, root:u8*) -> IDE:Runner* {
-    let self = cast(IDE:Runner*, malloc(104))
+let IDE:Runner:allocate = fn (program:u8*, root:u8*, application:u8*) -> IDE:Runner* {
+    let self = cast(IDE:Runner*, malloc(160))
     if !self { return cast(IDE:Runner*, 0) }
     self.program = IDE:copy(program)
     self.root = IDE:copy(root)
+    self.application = IDE:copy(application)
     self.socket_path = IDE:artifact(0, ".sock")
     self.object_path = cast(u8*, 0)
     self.module_path = cast(u8*, 0)
     self.pid = -1
-    self.last_status = 1
+    self.last_status = 0
     self.generation = 0
     self.revision = 0
     self.last_output = cast(u8*, 0)
@@ -841,7 +1140,225 @@ let IDE:Runner:new = fn (program:u8*, root:u8*) -> IDE:Runner* {
     self.module = cast(u8*, 0)
     self.lifecycle = cast(IDE:Lifecycle, 0)
     self.retired = cast(IDE:RetiredGeneration*, 0)
-    if !self.program || !self.root || !self.socket_path { self.destroy(); return cast(IDE:Runner*, 0) }
+    self.cache_directory = cast(u8*, 0)
+    if !self.program || !self.root || !self.application || !self.socket_path {
+        self.destroy()
+        return cast(IDE:Runner*, 0)
+    }
+    return self
+}
+
+let IDE:Runner:set_cache = fn (self:IDE:Runner*, path:u8*) -> i64 {
+    if !self { return 0 }
+    if self.cache_directory { free(self.cache_directory); self.cache_directory = cast(u8*, 0) }
+    if path { self.cache_directory = IDE:copy(path) }
+    return !path || self.cache_directory
+}
+
+let IDE:Runner:attach = fn (program:u8*, root:u8*, application:u8*, socket_path:u8*, cache:u8*, revision:u64) -> IDE:Runner* {
+    if !program || !root || !application || !socket_path { return cast(IDE:Runner*, 0) }
+    let self = IDE:Runner:allocate(program, root, application)
+    if !self { return cast(IDE:Runner*, 0) }
+    if self.socket_path { free(self.socket_path) }
+    self.socket_path = IDE:copy(socket_path)
+    if !self.socket_path || !self.set_cache(cache) { self.pid = -1; self.destroy(); return cast(IDE:Runner*, 0) }
+    // RuntimeSession only needs a positive marker plus the inherited socket.
+    // The worker must never stop/kill the real project-server PID.
+    self.pid = 1
+    if revision > 0 { self.revision = revision - 1 }
+    return self
+}
+
+// Entry used by the short-lived helper process generated below.  Keeping the
+// expensive :load-file/:publish/native-module work outside the GTK process
+// keeps the UI event loop responsive while the cache warms or a reload builds.
+let IDE:worker_main = fn (kind:i64, root:u8*, application:u8*, socket_path:u8*, revision:u64, result_path:u8*) -> i64 {
+    // Keep the generated worker entry at six scalar arguments: native runtime
+    // calls currently use the SysV register-only fast path and reject a
+    // seventh scalar argument.  The executable and cache directory are both
+    // recoverable in the worker, so passing them would be redundant anyway.
+    let program = IDE:resolve_host()
+    if !program {
+        if result_path { IDE:write_file(result_path, "cannot resolve RecurLoop executable in IDE build worker") }
+        _exit(1)
+        return 1
+    }
+    defer free(program)
+
+    let artifact_directory = IDE:parent_path(result_path)
+    if !artifact_directory {
+        if result_path { IDE:write_file(result_path, "cannot resolve IDE worker cache directory") }
+        _exit(1)
+        return 1
+    }
+    defer free(artifact_directory)
+    let cache = IDE:parent_path(artifact_directory)
+    if !cache {
+        if result_path { IDE:write_file(result_path, "cannot resolve IDE worker cache root") }
+        _exit(1)
+        return 1
+    }
+    defer free(cache)
+
+    let runner = IDE:Runner:attach(program, root, application, socket_path, cache, revision)
+    if !runner {
+        if result_path { IDE:write_file(result_path, "cannot attach IDE build worker to project runtime") }
+        _exit(1)
+        return 1
+    }
+
+    // Startup already executes the launcher in the foreground process, so the
+    // visible IDE does not need to be compiled into a .so again.  The first
+    // worker only warms/restores the step cache and publishes the launcher into
+    // the shared Project used by terminals.  This is substantially cheaper than
+    // building an identical native view before the user can interact with it.
+    if kind == 1 {
+        let publish = IDE:RuntimeSession:new(runner)
+        if !publish {
+            if result_path { IDE:write_file(result_path, "cannot connect initial IDE publication session") }
+            _exit(1)
+            return 1
+        }
+        if publish.load_environment(runner) == 0 && publish.request(":publish") == 0 && publish.last_output && IDE:text_contains(publish.last_output, "published project=") && result_path && IDE:write_file(result_path, publish.last_output) {
+            _exit(0)
+            return 0
+        }
+        if result_path {
+            if publish.last_error { IDE:write_file(result_path, publish.last_error) }
+            else { IDE:write_file(result_path, "initial IDE project publication failed") }
+        }
+        _exit(1)
+        return 1
+    }
+
+    // Reloads compile a replacement lifecycle module and publish the same
+    // source generation into the persistent Project before the foreground
+    // process adopts it.
+    if kind == 2 {
+        let candidate = runner.candidate()
+        if candidate && candidate.last_status == 0 && candidate.module_path && result_path && IDE:write_file(result_path, candidate.module_path) {
+            if candidate.object_path { unlink(candidate.object_path) }
+            // Do not destroy a successful candidate: its destroy path unlinks
+            // the .so that the GTK process is about to dlopen. Process exit
+            // releases the worker-only allocations and dlopen handle.
+            _exit(0)
+            return 0
+        }
+        if result_path {
+            if candidate && candidate.last_error { IDE:write_file(result_path, candidate.last_error) }
+            else { IDE:write_file(result_path, "IDE generation build failed") }
+        }
+        // A failed candidate owns no generation that the foreground process
+        // needs. Clean its temporary .o/.so instead of leaking failed builds
+        // into the configured cache.
+        if candidate { candidate.destroy() }
+        _exit(1)
+        return 1
+    }
+
+    if result_path { IDE:write_file(result_path, "unknown IDE worker job") }
+    _exit(1)
+    return 1
+}
+
+let IDE:job_destroy = fn (job:IDE:Job*) -> void {
+    if !job { return }
+    if job.source_path { unlink(job.source_path); free(job.source_path) }
+    if job.result_path { unlink(job.result_path); free(job.result_path) }
+    free(cast(u8*, job))
+}
+
+let IDE:write_worker_source = fn (host:IDE:Host*, kind:i64, revision:u64, source_path:u8*, result_path:u8*) -> i64 {
+    if !host || !host.runner || !source_path || !result_path { return 0 }
+    let library_directory = IDE:resolve_library_directory(host.runner.program)
+    if !library_directory { return 0 }
+    defer free(library_directory)
+    let ide_image = IDE:join(library_directory, "ide.rli")
+    if !ide_image { return 0 }
+    defer free(ide_image)
+
+    let source = LanguageKit:Text:new()
+    if !source { return 0 }
+    defer source.destroy()
+    source.append("engine import ")
+    if !IDE:append_source_string(source, ide_image) { return 0 }
+    source.append("\nvar IDE_Worker_status = IDE:worker_main(")
+    IDE:append_u64(source, cast(u64, kind))
+    source.append(", ")
+    if !IDE:append_source_string(source, host.runner.root) { return 0 }
+    source.append(", ")
+    if !IDE:append_source_string(source, host.runner.application) { return 0 }
+    source.append(", ")
+    if !IDE:append_source_string(source, host.runner.socket_path) { return 0 }
+    source.append(", ")
+    IDE:append_u64(source, revision)
+    source.append(", ")
+    if !IDE:append_source_string(source, result_path) { return 0 }
+    source.append(")\n")
+    return IDE:write_file(source_path, source.data)
+}
+
+let IDE:spawn_job = fn (host:IDE:Host*, kind:i64) -> i64 {
+    if !host || !host.runner || host.job || !host.runner.cache_directory { return 0 }
+    let revision = host.runner.revision + 1
+    let source_path = host.runner.cache_artifact(revision, ".worker.rl")
+    let result_path = host.runner.cache_artifact(revision, ".worker.result")
+    if !source_path || !result_path {
+        if source_path { free(source_path) }
+        if result_path { free(result_path) }
+        return 0
+    }
+    unlink(result_path)
+    if !IDE:write_worker_source(host, kind, revision, source_path, result_path) {
+        unlink(source_path); free(source_path); free(result_path)
+        return 0
+    }
+
+    let args = cast(u8**, malloc(32))
+    if !args { unlink(source_path); free(source_path); free(result_path); return 0 }
+    args[0] = host.runner.program
+    args[1] = "--file"
+    args[2] = source_path
+    args[3] = cast(u8*, 0)
+    let pid = fork()
+    if pid < 0 {
+        free(cast(u8*, args)); unlink(source_path); free(source_path); free(result_path)
+        return 0
+    }
+    if pid == 0 {
+        setenv("RECURLOOP_IDE_PROJECT_BUILD", "1", 1)
+        execvp(host.runner.program, args)
+        _exit(127)
+    }
+    free(cast(u8*, args))
+
+    let job = cast(IDE:Job*, malloc(32))
+    if !job {
+        kill(pid, 15)
+        let raw = cast(i32*, malloc(4))
+        if raw { waitpid(pid, raw, 0); free(cast(u8*, raw)) }
+        unlink(source_path); free(source_path); free(result_path)
+        return 0
+    }
+    job.pid = pid
+    job.kind = cast(i32, kind)
+    job.revision = revision
+    job.source_path = source_path
+    job.result_path = result_path
+    host.job = job
+    return 1
+}
+
+let IDE:Runner:new_async = fn (program:u8*, root:u8*, application:u8*) -> IDE:Runner* {
+    let self = IDE:Runner:allocate(program, root, application)
+    if !self { return cast(IDE:Runner*, 0) }
+    if !self.start_server() { self.destroy(); return cast(IDE:Runner*, 0) }
+    return self
+}
+
+let IDE:Runner:new = fn (program:u8*, root:u8*, application:u8*) -> IDE:Runner* {
+    let self = IDE:Runner:allocate(program, root, application)
+    if !self { return cast(IDE:Runner*, 0) }
     if !self.spawn_server() { self.destroy(); return cast(IDE:Runner*, 0) }
     return self
 }
@@ -899,6 +1416,17 @@ let IDE:Watcher:find = fn (self:IDE:Watcher*, wd:i32) -> IDE:WatchDir* {
 
 let IDE:Watcher:remember = fn (self:IDE:Watcher*, wd:i32, path:u8*) -> void {
     if !self || wd < 0 || !path { return }
+    let existing = self.find(wd)
+    if existing {
+        if !existing.path || strcmp(existing.path, path) != 0 {
+            let replacement = IDE:copy(path)
+            if replacement {
+                if existing.path { free(existing.path) }
+                existing.path = replacement
+            }
+        }
+        return
+    }
     let item = cast(IDE:WatchDir*, malloc(24))
     if !item { return }
     item.wd = wd
@@ -908,27 +1436,51 @@ let IDE:Watcher:remember = fn (self:IDE:Watcher*, wd:i32, path:u8*) -> void {
     self.directories = item
 }
 
-let IDE:Watcher:add_tree = fn (self:IDE:Watcher*, path:u8*) -> void {
-    if !self || !path { return }
+let IDE:Watcher:forget = fn (self:IDE:Watcher*, wd:i32) -> void {
+    if !self || wd < 0 { return }
+    var previous = cast(IDE:WatchDir*, 0)
+    var item = self.directories
+    while item {
+        if item.wd == wd {
+            if previous { previous.next = item.next }
+            else { self.directories = item.next }
+            if item.path { free(item.path) }
+            free(cast(u8*, item))
+            return
+        }
+        previous = item
+        item = item.next
+    }
+}
+
+// inotify watches the configured source tree. Heavy/generated directories are
+// skipped and newly created directories are attached incrementally.
+let IDE:Watcher:add_directory = fn (self:IDE:Watcher*, path:u8*) -> void {
+    if !self || !path || !IDE:is_directory(path) { return }
     // CLOSE_WRITE | MOVED_FROM | MOVED_TO | CREATE | DELETE | DELETE_SELF | MOVE_SELF
     let wd = inotify_add_watch(self.fd, path, cast(u32, 8 + 64 + 128 + 256 + 512 + 1024 + 2048))
     if wd >= 0 { self.remember(wd, path) }
+}
+
+let IDE:Watcher:add_tree = fn (self:IDE:Watcher*, path:u8*) -> void {
+    if !self || !path || !IDE:is_directory(path) { return }
+    self.add_directory(path)
     let directory = opendir(path)
     if !directory { return }
-    defer closedir(directory)
-    while 1 {
-        let entry = readdir(directory)
-        if !entry { return }
-        let kind = entry[18]
+    var entry = readdir(directory)
+    while entry {
         let name = &entry[19]
         if !IDE:skip_directory(name) {
             let child = IDE:join(path, name)
             if child {
+                let kind = entry[18]
                 if kind == 4 || (kind == 0 && IDE:is_directory(child)) { self.add_tree(child) }
                 free(child)
             }
         }
+        entry = readdir(directory)
     }
+    closedir(directory)
 }
 
 let IDE:Watcher:new = fn (root:u8*) -> IDE:Watcher* {
@@ -940,7 +1492,7 @@ let IDE:Watcher:new = fn (root:u8*) -> IDE:Watcher* {
     self.root = IDE:copy(root)
     self.directories = cast(IDE:WatchDir*, 0)
     if !self.root { close(fd); free(cast(u8*, self)); return cast(IDE:Watcher*, 0) }
-    self.add_tree(root)
+    self.add_directory(root)
     return self
 }
 
@@ -966,25 +1518,212 @@ let IDE:mount_current = fn (host:IDE:Host*) -> i32 {
     return 0
 }
 
-let IDE:reload = fn (host:IDE:Host*, path:u8*) -> void {
-    if !host || !host.runner || !path { return }
-    let candidate = host.runner.candidate()
-    if !candidate || candidate.last_status != 0 {
-        if candidate { host.runner.remember_failure(candidate) }
-        if host.runner.lifecycle { let lifecycle = host.runner.lifecycle; lifecycle(3, cast(u8*, host)) }
-        return
+let IDE:is_reloadable_path = fn (host:IDE:Host*, path:u8*) -> i64 {
+    if !host || !path || !IDE:has_suffix(path, ".rl") { return 0 }
+    if host.config_source && strcmp(host.config_source, path) == 0 { return 1 }
+    return host.watch_root && IDE:path_is_inside(path, host.watch_root)
+}
+
+let IDE:notify_reload_failure = fn (host:IDE:Host*) -> void {
+    if !host { return }
+    if host.runner && host.runner.lifecycle {
+        let lifecycle = host.runner.lifecycle
+        lifecycle(3, cast(u8*, host))
+    } else if host.shell_lifecycle {
+        let lifecycle = host.shell_lifecycle
+        lifecycle(3, cast(u8*, host))
+    }
+}
+
+let IDE:notify_runtime_ready = fn (host:IDE:Host*) -> void {
+    if !host { return }
+    if host.runner && host.runner.lifecycle {
+        let lifecycle = host.runner.lifecycle
+        lifecycle(4, cast(u8*, host))
+    } else if host.shell_lifecycle {
+        let lifecycle = host.shell_lifecycle
+        lifecycle(4, cast(u8*, host))
+    }
+}
+
+let IDE:finish_reload = fn (host:IDE:Host*, module_path:u8*, revision:u64) -> i64 {
+    if !host || !host.runner || !module_path { return 0 }
+    let handle = dlopen(module_path, 2)
+    if !handle {
+        let error = dlerror()
+        if host.runner.last_error { free(host.runner.last_error) }
+        host.runner.last_error = IDE:copy(error)
+        if !host.runner.last_error { host.runner.last_error = IDE:copy("cannot load IDE generation module") }
+        unlink(module_path)
+        return 0
+    }
+    let symbol = dlsym(handle, "recurloop_ide_lifecycle")
+    if !symbol {
+        let error = dlerror()
+        if host.runner.last_error { free(host.runner.last_error) }
+        host.runner.last_error = IDE:copy(error)
+        if !host.runner.last_error { host.runner.last_error = IDE:copy("IDE generation has no lifecycle symbol") }
+        dlclose(handle)
+        unlink(module_path)
+        return 0
+    }
+    let next_lifecycle = cast(IDE:Lifecycle, symbol)
+    let owned_module_path = IDE:copy(module_path)
+    if !owned_module_path {
+        if host.runner.last_error { free(host.runner.last_error) }
+        host.runner.last_error = IDE:copy("cannot retain IDE generation module path")
+        dlclose(handle)
+        unlink(module_path)
+        return 0
     }
 
-    // The old native module stays mapped until shutdown, so queued foreign
-    // callbacks can never jump into unmapped code after the view is destroyed.
-    if host.runner.lifecycle { let lifecycle = host.runner.lifecycle; lifecycle(2, cast(u8*, host)) }
-    if host.content {
-        Gui:destroy(host.content)
-        host.content = cast(u8*, 0)
+    // Only tear down the visible generation after the replacement .so has
+    // been loaded successfully. A failed build therefore never blanks the IDE.
+    if host.runner.lifecycle {
+        let previous = host.runner.lifecycle
+        previous(2, cast(u8*, host))
+    } else if host.shell_lifecycle {
+        let previous = host.shell_lifecycle
+        previous(2, cast(u8*, host))
     }
+    if host.content { Gui:destroy(host.content); host.content = cast(u8*, 0) }
     host.user_data = cast(u8*, 0)
-    if !host.runner.adopt(candidate) { candidate.destroy(); return }
+
+    if host.runner.module || host.runner.object_path || host.runner.module_path {
+        let retired = cast(IDE:RetiredGeneration*, malloc(48))
+        if retired {
+            retired.pid = -1
+            retired.handle = host.runner.module
+            retired.socket_path = cast(u8*, 0)
+            retired.object_path = host.runner.object_path
+            retired.module_path = host.runner.module_path
+            retired.next = host.runner.retired
+            host.runner.retired = retired
+        } else {
+            if host.runner.module { dlclose(host.runner.module) }
+            if host.runner.object_path { unlink(host.runner.object_path); free(host.runner.object_path) }
+            if host.runner.module_path { unlink(host.runner.module_path); free(host.runner.module_path) }
+        }
+    }
+
+    host.runner.module = handle
+    host.runner.lifecycle = next_lifecycle
+    host.runner.object_path = cast(u8*, 0)
+    host.runner.module_path = owned_module_path
+    host.runner.revision = revision
+    host.runner.generation += 1
+    host.runner.last_status = 0
+    if host.runner.last_output { free(host.runner.last_output); host.runner.last_output = cast(u8*, 0) }
+    if host.runner.last_error { free(host.runner.last_error); host.runner.last_error = cast(u8*, 0) }
+
+    // Existing terminal sessions intentionally remain attached to their
+    // current generation. Users opt into the newly published project state
+    // with the terminal's explicit `:refresh` command.
     IDE:mount_current(host)
+    IDE:notify_runtime_ready(host)
+    return 1
+}
+
+let IDE:job_tick = fn (data:u8*) -> i32 {
+    let host = cast(IDE:Host*, data)
+    if !host || !host.job { return 0 }
+    let job = host.job
+    let status = cast(i32*, malloc(4))
+    if !status { return 1 }
+    status[0] = 0
+    let waited = waitpid(job.pid, status, 1)
+    if waited == 0 { free(cast(u8*, status)); return 1 }
+    let success = waited == job.pid && status[0] == 0
+    free(cast(u8*, status))
+
+    let kind = job.kind
+    let revision = job.revision
+    let result = IDE:read_file(job.result_path)
+    host.job = cast(IDE:Job*, 0)
+    IDE:job_destroy(job)
+
+    if kind == 1 {
+        host.runner.revision = revision
+        if success && result {
+            host.runner.generation += 1
+            host.runner.last_status = 0
+            if host.runner.last_output { free(host.runner.last_output) }
+            if host.runner.last_error { free(host.runner.last_error); host.runner.last_error = cast(u8*, 0) }
+            host.runner.last_output = IDE:copy(result)
+            // Project publication must not mutate existing terminal sessions.
+            // Their local variables and execution context remain intact until
+            // the user explicitly evaluates `:refresh`.
+            IDE:notify_runtime_ready(host)
+        } else {
+            host.runner.last_status = 1
+            if host.runner.last_error { free(host.runner.last_error) }
+            if result { host.runner.last_error = IDE:copy(result) }
+            else { host.runner.last_error = IDE:copy("initial IDE project publication failed") }
+            IDE:notify_runtime_ready(host)
+            IDE:notify_reload_failure(host)
+        }
+        host.startup_phase = 2
+        if result { free(result) }
+        return 0
+    }
+
+    if kind == 2 {
+        if success && result && IDE:finish_reload(host, result, revision) {
+            // If another edit arrived while the worker was compiling, the
+            // watcher left pending_path/reload_pending set and will enqueue the
+            // next generation instead of losing that save event.
+        } else {
+            host.runner.revision = revision
+            host.runner.last_status = 1
+            // Worker failures return diagnostic text in result. A successful
+            // worker followed by dlopen/dlsym failure has already installed a
+            // more precise loader error in finish_reload().
+            if !success {
+                if host.runner.last_error { free(host.runner.last_error) }
+                if result { host.runner.last_error = IDE:copy(result) }
+                else { host.runner.last_error = IDE:copy("IDE reload build failed") }
+            } else if !host.runner.last_error {
+                host.runner.last_error = IDE:copy("IDE reload module could not be activated")
+            }
+            IDE:notify_reload_failure(host)
+        }
+        if result { free(result) }
+        return 0
+    }
+
+    if result { free(result) }
+    return 0
+}
+
+let IDE:reload = fn (host:IDE:Host*, path:u8*) -> void {
+    if !host || !host.runner || !path { return }
+    if host.job {
+        if host.reload_mode == IDE:Reload:Hot() {
+            if host.pending_path { free(host.pending_path) }
+            host.pending_path = IDE:copy(path)
+            host.pending_since = IDE:now_ms()
+        } else {
+            host.reload_pending = 1
+        }
+        return
+    }
+    if !IDE:spawn_job(host, 2) {
+        host.runner.last_status = 1
+        if host.runner.last_error { free(host.runner.last_error) }
+        host.runner.last_error = IDE:copy("cannot start IDE reload worker")
+        IDE:notify_reload_failure(host)
+        return
+    }
+    host.reload_pending = 0
+    Gui:timer(25, IDE:job_tick, cast(u8*, host))
+    IDE:notify_runtime_ready(host)
+}
+
+let IDE:manual_reload = fn (host:IDE:Host*) -> void {
+    if !host || host.reload_mode != IDE:Reload:Manual() { return }
+    var source = host.config_source
+    if !source { source = host.root }
+    IDE:reload(host, source)
 }
 
 let IDE:watch_tick = fn (data:u8*) -> i32 {
@@ -1003,33 +1742,48 @@ let IDE:watch_tick = fn (data:u8*) -> i32 {
             let wd = cast(i32*, &buffer[offset])[0]
             let mask = cast(u32*, &buffer[offset + 4])[0]
             let name_bytes = cast(u32*, &buffer[offset + 12])[0]
-            if wd < 0 && (mask / cast(u32, 16384)) % 2 != 0 {
-                if host.pending_path { free(host.pending_path) }
-                host.pending_path = IDE:copy(host.entry)
-                host.pending_since = IDE:now_ms()
-            } else {
-                let directory = watcher.find(wd)
-                if directory {
+            let directory = watcher.find(wd)
+            if directory {
+                let ignored = (mask / cast(u32, 32768)) % 2 != 0
+                let deleted_self = (mask / cast(u32, 1024)) % 2 != 0
+                let moved_self = (mask / cast(u32, 2048)) % 2 != 0
+                if !ignored {
                     var changed = IDE:copy(directory.path)
                     if name_bytes > 0 && buffer[offset + 16] != 0 {
                         if changed { free(changed) }
                         changed = IDE:join(directory.path, &buffer[offset + 16])
                     }
                     if changed {
-                        if host.pending_path { free(host.pending_path) }
-                        host.pending_path = changed
-                        host.pending_since = IDE:now_ms()
                         let directory_event = (mask / cast(u32, 1073741824)) % 2 != 0
                         let created = (mask / cast(u32, 256)) % 2 != 0 || (mask / cast(u32, 128)) % 2 != 0
-                        if directory_event && created { watcher.add_tree(changed) }
+                        if directory_event && created && !IDE:skip_directory(&buffer[offset + 16]) { watcher.add_tree(changed) }
+                        if IDE:is_reloadable_path(host, changed) {
+                            if host.reload_mode == IDE:Reload:Hot() {
+                                if host.pending_path { free(host.pending_path) }
+                                host.pending_path = changed
+                                changed = cast(u8*, 0)
+                                host.pending_since = IDE:now_ms()
+                            } else if host.reload_mode == IDE:Reload:Manual() {
+                                host.reload_pending = 1
+                                IDE:notify_runtime_ready(host)
+                            }
+                        }
+                        if changed { free(changed) }
                     }
+                }
+                if ignored || deleted_self {
+                    if deleted_self && !ignored { inotify_rm_watch(watcher.fd, wd) }
+                    watcher.forget(wd)
+                } else if moved_self && !IDE:is_directory(directory.path) {
+                    inotify_rm_watch(watcher.fd, wd)
+                    watcher.forget(wd)
                 }
             }
             offset += 16 + name_bytes
         }
     }
 
-    if host.pending_path && IDE:now_ms() - host.pending_since >= 100 {
+    if host.reload_mode == IDE:Reload:Hot() && host.pending_path && IDE:now_ms() - host.pending_since >= 100 {
         let changed = host.pending_path
         host.pending_path = cast(u8*, 0)
         IDE:reload(host, changed)
@@ -1042,31 +1796,218 @@ let IDE:on_destroy = fn (widget:u8*, data:u8*) -> void { Gui:quit() }
 
 let IDE:free_host = fn (host:IDE:Host*) -> void {
     if !host { return }
+    if host.job {
+        kill(host.job.pid, 15)
+        let raw = cast(i32*, malloc(4))
+        if raw { waitpid(host.job.pid, raw, 0); free(cast(u8*, raw)) }
+        let job = host.job
+        host.job = cast(IDE:Job*, 0)
+        IDE:job_destroy(job)
+    }
     IDE:free_terminals(host)
     if host.watcher { host.watcher.destroy() }
     if host.pending_path { free(host.pending_path) }
     if host.selected { free(host.selected) }
     if host.runner { host.runner.destroy() }
     if host.entry { free(host.entry) }
+    if host.initial_module { free(host.initial_module) }
+    if host.watch_root { free(host.watch_root) }
+    if host.config_source { free(host.config_source) }
     if host.root { free(host.root) }
     free(cast(u8*, host))
 }
 
-let IDE:run = fn (program:u8*, root:u8*) -> i64 {
-    if !program || !root { return 1 }
-    let resolved = realpath(root, cast(u8*, 0))
-    if !resolved { return 1 }
-    defer free(resolved)
+
+let IDE:activate_watcher = fn (host:IDE:Host*) -> void {
+    if !host || host.watcher || host.reload_mode == IDE:Reload:Off() { return }
+    var root = host.watch_root
+    if !root { root = host.root }
+    if !root { return }
+    host.watcher = IDE:Watcher:new(root)
+    if !host.watcher { return }
+    host.watcher.add_tree(root)
+    if host.config_source {
+        let source_directory = IDE:parent_path(host.config_source)
+        if source_directory { host.watcher.add_tree(source_directory); free(source_directory) }
+    }
+    Gui:timer(50, IDE:watch_tick, cast(u8*, host))
+}
+
+// Source-defined startup.  The current .rl process paints the default/overridden
+// view immediately; the persistent Project server starts on the GTK timer and
+// is then populated from the same configuration source through the step cache.
+let IDE:startup_tick = fn (data:u8*) -> i32 {
+    let host = cast(IDE:Host*, data)
+    if !host || !host.runner { return 0 }
+
+    if host.startup_phase == 2 && !host.job {
+        IDE:activate_watcher(host)
+        return 0
+    }
+    if host.job { return 1 }
+
+    if host.runner.pid <= 0 {
+        if !host.runner.start_server() {
+            host.runner.last_status = 1
+            if host.runner.last_error { free(host.runner.last_error) }
+            host.runner.last_error = IDE:copy("project runtime failed to start")
+            IDE:notify_reload_failure(host)
+            return 0
+        }
+        host.pending_since = IDE:now_ms()
+        return 1
+    }
+
+    if host.runner.server_ready() {
+        host.pending_since = 0
+        // Start watching as soon as the shared Project is reachable. Saves that
+        // happen while the first publication worker is warming the cache are
+        // then queued instead of being silently missed.
+        IDE:activate_watcher(host)
+        // :baseline/:cache/:load-file/:publish may compile many steps. Keep
+        // that work in a short-lived helper using the same Project socket/cache
+        // while GTK continues dispatching the already-mounted IDE.
+        if !IDE:spawn_job(host, 1) {
+            host.runner.last_status = 1
+            if host.runner.last_error { free(host.runner.last_error) }
+            host.runner.last_error = IDE:copy("cannot start initial IDE publication worker")
+            IDE:notify_runtime_ready(host)
+            IDE:notify_reload_failure(host)
+            return 0
+        }
+        Gui:timer(25, IDE:job_tick, cast(u8*, host))
+        return 1
+    }
+    if host.pending_since == 0 { host.pending_since = IDE:now_ms() }
+    if IDE:now_ms() - host.pending_since < 5000 { return 1 }
+    host.runner.last_status = 1
+    if host.runner.last_error { free(host.runner.last_error) }
+    host.runner.last_error = IDE:copy("project runtime failed to start")
+    IDE:notify_reload_failure(host)
+    return 0
+}
+
+// The default IDE is part of ide.rli.  Every handler/layout function is a
+// normal phrase and can be replaced by the launcher source before IDE:open().
+include "ide/state.rl"
+include "ide/editor.rl"
+include "ide/files.rl"
+include "ide/terminals.rl"
+include "ide/view.rl"
+
+let IDE:source_lifecycle = fn (action:i64, raw:u8*) -> void {
+    let host = cast(IDE:Host*, raw)
+    if action == 1 { IDE_App:mount(host) }
+    else if action == 2 { IDE_App:unmount(host) }
+    else if action == 3 { IDE_App:reload_failed(host) }
+    else if action == 4 { IDE_App:runtime_ready(host) }
+}
+
+let IDE:Config:new = fn () -> IDE:Config* {
+    let self = cast(IDE:Config*, malloc(40))
+    if !self { return cast(IDE:Config*, 0) }
+    self.workspace_path = cast(u8*, 0)
+    self.source_path = cast(u8*, 0)
+    self.cache_path = cast(u8*, 0)
+    self.watch_path = cast(u8*, 0)
+    self.reload_mode = IDE:Reload:Hot()
+    return self
+}
+
+let IDE:Config:workspace = fn (self:IDE:Config*, path:u8*) -> IDE:Config* {
+    if !self { return self }
+    if self.workspace_path { free(self.workspace_path); self.workspace_path = cast(u8*, 0) }
+    if path { self.workspace_path = IDE:copy(path) }
+    return self
+}
+
+let IDE:Config:source = fn (self:IDE:Config*, path:u8*) -> IDE:Config* {
+    if !self { return self }
+    if self.source_path { free(self.source_path); self.source_path = cast(u8*, 0) }
+    if path { self.source_path = IDE:copy(path) }
+    return self
+}
+
+let IDE:Config:cache = fn (self:IDE:Config*, path:u8*) -> IDE:Config* {
+    if !self { return self }
+    if self.cache_path { free(self.cache_path); self.cache_path = cast(u8*, 0) }
+    if path { self.cache_path = IDE:copy(path) }
+    return self
+}
+
+let IDE:Config:watch = fn (self:IDE:Config*, path:u8*) -> IDE:Config* {
+    if !self { return self }
+    if self.watch_path { free(self.watch_path); self.watch_path = cast(u8*, 0) }
+    if path { self.watch_path = IDE:copy(path) }
+    return self
+}
+
+let IDE:Config:reload = fn (self:IDE:Config*, mode:u8*) -> IDE:Config* {
+    if !self || !mode { return self }
+    if strcmp(mode, "hot") == 0 || strcmp(mode, "hot-reload") == 0 { self.reload_mode = IDE:Reload:Hot() }
+    else if strcmp(mode, "manual") == 0 || strcmp(mode, "manually") == 0 { self.reload_mode = IDE:Reload:Manual() }
+    else if strcmp(mode, "off") == 0 || strcmp(mode, "none") == 0 || strcmp(mode, "no-reload") == 0 { self.reload_mode = IDE:Reload:Off() }
+    return self
+}
+
+let IDE:Config:destroy = fn (self:IDE:Config*) -> void {
+    if !self { return }
+    if self.workspace_path { free(self.workspace_path) }
+    if self.source_path { free(self.source_path) }
+    if self.cache_path { free(self.cache_path) }
+    if self.watch_path { free(self.watch_path) }
+    free(cast(u8*, self))
+}
+
+let IDE:resolve_workspace_path = fn (root:u8*, path:u8*) -> u8* {
+    if !path || path[0] == 0 { return cast(u8*, 0) }
+    if path[0] == 47 { return IDE:copy(path) }
+    return IDE:join(root, path)
+}
+
+let IDE:Config:open = fn (self:IDE:Config*) -> i64 {
+    if !self { return 1 }
+    // The same launcher is replayed inside the project build server.  Its
+    // declarations/configuration must compile there, but it must never open a
+    // second GTK loop.
+    if getenv("RECURLOOP_IDE_PROJECT_BUILD") { return 0 }
+    if !self.workspace_path || !self.source_path { return 1 }
+
+    let root = realpath(self.workspace_path, cast(u8*, 0))
+    if !root { return 1 }
+    defer free(root)
+    let source = realpath(self.source_path, cast(u8*, 0))
+    if !source { return 1 }
+    defer free(source)
+
+    var cache = cast(u8*, 0)
+    if self.cache_path { cache = IDE:resolve_workspace_path(root, self.cache_path) }
+    else { cache = IDE:join(root, ".cache/recurloop") }
+    if !cache { return 1 }
+    defer free(cache)
+    if !IDE:ensure_directory_tree(cache) { return 1 }
+
+    var watch_candidate = cast(u8*, 0)
+    if self.watch_path { watch_candidate = IDE:resolve_workspace_path(root, self.watch_path) }
+    else { watch_candidate = IDE:copy(root) }
+    if !watch_candidate { return 1 }
+    let watch = realpath(watch_candidate, cast(u8*, 0))
+    free(watch_candidate)
+    if !watch || !IDE:is_directory(watch) {
+        if watch { free(watch) }
+        return 1
+    }
+    defer free(watch)
+
+    let program = IDE:resolve_host()
+    if !program { return 1 }
+    defer free(program)
     if !Gui:initialize() { return 1 }
 
-    let host = cast(IDE:Host*, malloc(96))
+    let host = cast(IDE:Host*, malloc(176))
     if !host { return 1 }
-    host.root = IDE:copy(resolved)
-    host.entry = IDE:join(resolved, "application.rl")
-    if !IDE:file_exists(host.entry) {
-        if host.entry { free(host.entry) }
-        host.entry = realpath("examples/07-workflows/ide/application.rl", cast(u8*, 0))
-    }
+    host.root = IDE:copy(root)
+    host.entry = IDE:copy(source)
     host.runner = cast(IDE:Runner*, 0)
     host.window = cast(u8*, 0)
     host.content = cast(u8*, 0)
@@ -1077,51 +2018,39 @@ let IDE:run = fn (program:u8*, root:u8*) -> i64 {
     host.selected = cast(u8*, 0)
     host.pending_since = 0
     host.terminal_number = 0
-    if !host.root || !host.entry { IDE:free_host(host); return 1 }
+    host.shell_lifecycle = IDE:source_lifecycle
+    host.initial_module = cast(u8*, 0)
+    host.startup_phase = 0
+    host.watch_root = IDE:copy(watch)
+    host.config_source = IDE:copy(source)
+    host.reload_mode = self.reload_mode
+    host.reload_pending = 0
+    host.job = cast(IDE:Job*, 0)
+    if !host.root || !host.entry || !host.watch_root || !host.config_source { IDE:free_host(host); return 1 }
 
-    host.window = Gui:window("RecurLoop application", 1280, 820)
+    host.window = Gui:window("RecurLoop IDE", 1360, 860)
     if !host.window { IDE:free_host(host); return 1 }
     Gui:on_destroy(host.window, IDE:on_destroy, cast(u8*, host))
 
-    host.runner = IDE:Runner:new(program, host.entry)
-    if !host.runner { IDE:free_host(host); return 1 }
-    let candidate = host.runner.candidate()
-    if candidate && candidate.last_status == 0 { host.runner.adopt(candidate); IDE:mount_current(host) }
-    else if candidate { host.runner.remember_failure(candidate) }
+    host.runner = IDE:Runner:allocate(program, host.root, host.config_source)
+    if !host.runner || !host.runner.set_cache(cache) { IDE:free_host(host); return 1 }
 
-    host.watcher = IDE:Watcher:new(host.root)
-    if host.watcher { Gui:timer(50, IDE:watch_tick, cast(u8*, host)) }
+    // Paint immediately from the current source context.  The server and cache
+    // warm-up happen after the first frame.
+    IDE:source_lifecycle(1, cast(u8*, host))
     Gui:show(host.window)
+    host.pending_since = IDE:now_ms()
+    Gui:timer(20, IDE:startup_tick, cast(u8*, host))
     Gui:run()
 
     if host.runner && host.runner.lifecycle {
         let lifecycle = host.runner.lifecycle
         lifecycle(2, cast(u8*, host))
+    } else {
+        IDE:source_lifecycle(2, cast(u8*, host))
     }
     IDE:free_host(host)
     return 0
-}
-
-// Source-level launch marker. Candidate runtimes receive an explicit build
-// argument, so project-server source replay never starts another GTK event loop.
-let ide = phrase {
-    type = <phrase-types:elaborate>
-    action = fn (state:Context*, called:Phrase*) -> void {
-        if getenv("RECURLOOP_IDE_PROJECT_BUILD") { return }
-        var index = state.exec.args.index
-        if index >= state.exec.args.count || !state.exec.args.values[index] || strcmp(state.exec.args.values[index], "--") != 0 {
-            context:diagnostic:error(state, "ide requires: -- <workspace-directory>")
-            return
-        }
-        index += 1
-        if index >= state.exec.args.count || index + 1 != state.exec.args.count {
-            context:diagnostic:error(state, "ide accepts exactly one workspace directory after --")
-            return
-        }
-        let root = state.exec.args.values[index]
-        state.exec.args.index = state.exec.args.count
-        if IDE:run(state.exec.args.values[0], root) != 0 { context:diagnostic:error(state, "IDE failed to start") }
-    }
 }
 
 languagekit_native_end

@@ -1,81 +1,84 @@
-# Native IDE workflow with one shared project runtime
+# Source-defined RecurLoop IDE
 
-The current `gui.rli` backend requires GTK 3 with the `libgtk-3.so` and
-`libgdk-3.so` linker names, and the hot-reload module linker requires `clang`
-in `PATH` (on Debian/Ubuntu, install `libgtk-3-dev` and `clang`). IDE source
-itself does not call GTK.
+The IDE is a normal `.rli` library. There is no `recurloop-ide` executable and
+no separately staged `application.so`.
 
-Build RecurLoop and libraries:
+Build the normal libraries:
 
 ```bash
-make build
 make libraries
 ```
 
-Run the IDE with the repository as the workspace:
+Then run the launcher source directly:
 
 ```bash
-./build/Release/bin/recurloop \
-  --file examples/07-workflows/ide/main.rl \
-  -- "$(pwd)"
+./build/Release/bin/recurloop --file examples/07-workflows/ide/demo.rl
 ```
 
-The workspace argument controls the explorer root. The reloadable IDE source is resolved from `examples/07-workflows/ide/application.rl` when the workspace itself does not contain `application.rl`.
+`demo.rl` imports `ide.rli`, defines a small launcher function that creates
+`IDE:Config`, chooses the workspace, cache, watch root and reload mode, and then
+starts it from a top-level `var` initializer. Any `IDE_App:*` function can be
+replaced before that final initializer.
 
-The application is split into normal RecurLoop source modules:
+## Configuration
 
-- `main.rl` - imports `ide.rli` and starts the application,
-- `application.rl` - reloadable composition root,
-- `state.rl` - reloadable view behavior/state access,
-- `editor.rl` - editor interaction,
-- `files.rl` - hierarchical explorer,
-- `terminals.rl` - integrated terminal widgets and callbacks,
-- `view.rl` - layout plus mount/unmount lifecycle.
+```recurloop
+let IDE_App:launch = fn () -> i64 {
+    let app = IDE:Config:new()
+    if !app { return 1 }
 
-## Hot reload model
+    app.workspace("examples/07-workflows/ide")
+    app.source("examples/07-workflows/ide/demo.rl")
+    app.cache(".cache/recurloop")
+    app.watch(".")
+    app.reload("hot")
 
-The IDE owns exactly one persistent `recurloop --serve` project process. A
-reload uses short-lived sessions of that same project rather than launching a
-new server generation:
+    let status = app.open()
+    app.destroy()
+    return status
+}
 
-1. one session loads `application.rl`, emits and links the native lifecycle
-   module, but is never published;
-2. after linking succeeds, a second session loads only `application.rl` and
-   publishes that source state;
-3. the GTK view is remounted from the new lifecycle module;
-4. existing terminal sessions stay private until the user enters `:refresh`,
-   which now attaches to the newly published generation of the same project.
-
-Compiler-only `recurloop_ide_lifecycle` phrases therefore never enter the
-published lexicon, and a failed compile/link leaves the previous project/view
-untouched.
-
-For a direct test, change this line in `state.rl`:
-
-```rl
-IDE_App:hot_reload_probe = 1
+var IDE_App:launch_status = IDE_App:launch()
 ```
 
-to `2`, save, then in an already-open terminal run:
+Reload modes are `"hot"` / `"hot-reload"`, `"manual"` / `"manually"`, and
+`"off"` / `"no-reload"`. Manual mode shows a compact reload button in the
+editor toolbar. Hot mode watches `.rl` files with inotify and debounces saves.
+Heavy directories (`.git`, `build`, `.cache`, `node_modules`) are skipped.
 
-```text
-> print IDE_App:hot_reload_probe
-1
-> :refresh
-refreshed project=... lexicon=... context=... session=... request=0
-> print IDE_App:hot_reload_probe
-2
-```
+The cache location is configured in source and defaults to
+`<workspace>/.cache/recurloop`. Direct launcher loads are cumulative `.rli` step
+checkpoints. Files reached through `include` are dependency-stamped into that
+step, so editing an included file invalidates the cached step automatically;
+imported `.rli` libraries are already compiled images.
 
-## UI
+## Hot reload and terminal generations
 
-The GTK backend installs a dark theme by default through `gui.rli`. The IDE
-uses semantic `Gui:*` style classes and a compact VS Code-like terminal panel
-with an inline `>` input row. The explorer now uses `Gui:tree`, backed by GTK `TreeView`/`TreeStore`.
-It is lazy: startup reads only the project root, and each directory is populated
-when it is opened. The application no longer creates one button/label widget
-per path or recursively walks the repository before the window can appear.
+One persistent Project server is used for the whole IDE lifetime. A reload
+starts from the immutable `project.rli` baseline, restores the longest valid
+cache prefix, evaluates the launcher and optional `project.rl`, emits a new
+lifecycle object, links it, publishes the Project generation, and only then
+swaps the view.
 
-The runner, watcher, process management and module loading are implemented in
-`libraries/ide.rl`. All widgets/layout/events go through `Gui:*` from
-`libraries/gui/library.rl`; no IDE-specific code is added to the C++ host.
+After successful publication existing terminal sessions stay on their current
+generation and retain local variables and execution context. Run `:refresh` in a
+terminal when you deliberately want that session to attach to the latest Project
+generation. New terminals attach to the current published generation.
+
+Native hot-reload generations are linked against the GTK 3 runtime SONAMEs
+(`libgtk-3.so.0`, `libgdk-3.so.0`, `libgobject-2.0.so.0`, and
+`libglib-2.0.so.0`). This keeps worker-side validation deterministic without
+requiring GTK development linker symlinks.
+
+## Customizing the IDE
+
+The default implementation is shipped as source under `libraries/ide/` and is
+compiled into `ide.rli`. Its behavior is deliberately split into replaceable
+functions. For example, a launcher may replace `IDE_App:create_editor`,
+`IDE_App:create_explorer`, `IDE_App:create_terminal_panel`, `IDE_App:create_status`,
+`IDE_App:mount`, save/file handlers, terminal handlers, or any lower-level
+`IDE:*` function before the final `IDE_App:launch_status` initializer.
+
+That keeps the standard IDE usable out of the box while allowing a project to
+replace a single control, a panel, or the complete composition without adding a
+C++ IDE mode.

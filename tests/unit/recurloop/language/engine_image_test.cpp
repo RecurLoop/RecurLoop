@@ -424,6 +424,26 @@ TEST_F(EngineImageTesting, RebuildsTheSameLanguageFromGeneratedRlSource) {
   EXPECT_EQ(output.str(), "pong\n");
 }
 
+TEST_F(EngineImageTesting, DuplicateSourceImportReturnsToRootDictionary) {
+  initializeWith("");
+  const std::filesystem::path image =
+      std::filesystem::path("/tmp") / ("recurloop-engine-duplicate-import-" + std::to_string(getpid()) + ".rli");
+  std::filesystem::remove(image);
+
+  recurloop::EngineImage::save(context, image.string());
+  recurloop::EngineImage::load(context, image.string());
+
+  ASSERT_NO_THROW(recurloop::executeSource(context,
+                                           "engine import \"" + image.string() +
+                                               "\"\nvar duplicate_import_probe = 23\n",
+                                           "<duplicate-engine-import>", 1));
+  ASSERT_NO_THROW(recurloop::executeSource(context, "print duplicate_import_probe\n",
+                                           "<duplicate-engine-import-check>", 1));
+  EXPECT_EQ(output.str(), "23\n");
+
+  std::filesystem::remove(image);
+}
+
 TEST_F(EngineImageTesting, ImportsAnEngineFromRecurloopSourceWithoutUsingTheReplacedPhrase) {
   initializeWith("");
   const std::filesystem::path image =

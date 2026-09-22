@@ -1695,6 +1695,15 @@ namespace recurloop {
     write(bytes, path);
   }
 
+  void EngineImage::saveFull(context::Context &context, const std::string &path) {
+    std::vector<Record> records = capture(context);
+    // A project checkpoint must be self-contained. In particular it must carry
+    // in-place updates to phrases that came from the baseline image; an
+    // incremental export can only describe newly appended phrases.
+    removeDependencyMetadata(records);
+    write(encodeRecords(records), path);
+  }
+
   void EngineImage::load(context::Context &context, const std::string &path) {
     std::unordered_set<std::string> loading;
     loadImage(context, path, loading);

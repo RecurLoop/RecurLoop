@@ -9,3 +9,5 @@ program.rl
 __pycache__/
 *.pyc
 /.cache/
+
+**/.cache/recurloop/

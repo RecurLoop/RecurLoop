@@ -77,8 +77,16 @@ namespace recurloop {
 
   Server::CommandResult Server::handle(Session &session, std::string_view line) {
     try {
+      constexpr std::string_view loadFilePrefix = ":load-file\t";
       const bool exits = languageExit(line);
-      SessionResponse response = session.evaluate(line);
+      SessionResponse response;
+      if (line.starts_with(loadFilePrefix)) {
+        const std::string_view path = line.substr(loadFilePrefix.size());
+        if (path.empty()) return {"load-file requires a path\nstatus=1\n", false, 1};
+        response = session.executeFile(std::string(path));
+      } else {
+        response = session.evaluate(line);
+      }
       std::string text = std::move(response.output);
       text += response.error;
       const bool successfulExit = exits && response.error.empty();

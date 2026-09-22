@@ -66,6 +66,10 @@ namespace recurloop {
     static std::vector<std::uint8_t> read(const std::string &path);
     static void write(std::span<const std::uint8_t> bytes, const std::string &path);
     static void save(context::Context &context, const std::string &path);
+    // Save a self-contained semantic snapshot, ignoring the incremental export
+    // base. Project source checkpoints use this form because source execution
+    // may update mutable values that predate the current export boundary.
+    static void saveFull(context::Context &context, const std::string &path);
     static void load(context::Context &context, const std::string &path);
     // After startup imports, later exports may use the loaded images as their
     // deterministic dependency base instead of duplicating the complete graph.

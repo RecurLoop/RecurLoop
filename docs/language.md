@@ -276,6 +276,14 @@ RecurLoop does not advertise a misleading fortify flag for native `fn` code.
 explicitly. `link object`, `link archive`, `link path`,
 `link library`, and `link shared` configure external inputs.
 
+On Linux, `link shared "name"` first uses the normal `libname.so` lookup. If
+only a runtime SONAME such as `libname.so.1` is installed, RecurLoop also
+searches the configured runtime-loader directories (`link path`,
+`LD_LIBRARY_PATH`, and `ld.so.conf`) for versioned `.so` files. JIT execution
+loads that file directly; native executable emission passes its directory and
+exact basename to the platform linker (`-L... -l:libname.so.1`). Neither path
+therefore depends on a development-package `libname.so` linker symlink.
+
 ## Next steps
 
 Run `make examples` for the complete executable tour and use

@@ -2,6 +2,21 @@ cmake_minimum_required(VERSION 3.25)
 project(RecurLoop VERSION 0.2.0 DESCRIPTION "An extensible programming language and runtime for source-defined language extensions"
         LANGUAGES C CXX)
 
+set(RECURLOOP_BUILD_REVISION "unknown")
+find_package(Git QUIET)
+if(GIT_FOUND)
+    execute_process(
+        COMMAND "${GIT_EXECUTABLE}" rev-parse --short=12 HEAD
+        WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+        RESULT_VARIABLE _recurloop_git_result
+        OUTPUT_VARIABLE _recurloop_git_revision
+        OUTPUT_STRIP_TRAILING_WHITESPACE
+        ERROR_QUIET)
+    if(_recurloop_git_result EQUAL 0 AND _recurloop_git_revision MATCHES "^[0-9a-fA-F]+$")
+        set(RECURLOOP_BUILD_REVISION "${_recurloop_git_revision}")
+    endif()
+endif()
+
 set(CMAKE_C_STANDARD 17)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_STANDARD 23)
@@ -394,6 +409,7 @@ set(RECURLOOP_INFERRED_IMAGE "${RECURLOOP_LIBRARY_OUTPUT_DIR}/inferred.rli")
 set(RECURLOOP_HTTP_IMAGE "${RECURLOOP_LIBRARY_OUTPUT_DIR}/http.rli")
 set(RECURLOOP_GUI_IMAGE "${RECURLOOP_LIBRARY_OUTPUT_DIR}/gui.rli")
 set(RECURLOOP_IDE_IMAGE "${RECURLOOP_LIBRARY_OUTPUT_DIR}/ide.rli")
+set(RECURLOOP_PROJECT_IMAGE "${RECURLOOP_LIBRARY_OUTPUT_DIR}/project.rli")
 set(RECURLOOP_EMBED_IMAGE "${RECURLOOP_LIBRARY_OUTPUT_DIR}/embed.rli")
 set(RECURLOOP_SHADERS_IMAGE "${RECURLOOP_LIBRARY_OUTPUT_DIR}/shaders.rli")
 set(RECURLOOP_WINDOW_IMAGE "${RECURLOOP_LIBRARY_OUTPUT_DIR}/window.rli")
@@ -415,6 +431,11 @@ function(recurloop_add_language_library name source output)
     get_filename_component(source_directory "${source}" DIRECTORY)
     if(source_directory STREQUAL "${CMAKE_CURRENT_SOURCE_DIR}/libraries")
         set(library_sources "${source}")
+        if(IS_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/libraries/${name}")
+            file(GLOB_RECURSE nested_library_sources CONFIGURE_DEPENDS
+                "${CMAKE_CURRENT_SOURCE_DIR}/libraries/${name}/*.rl")
+            list(APPEND library_sources ${nested_library_sources})
+        endif()
     else()
         file(GLOB_RECURSE library_sources CONFIGURE_DEPENDS "${source_directory}/*.rl")
     endif()
@@ -457,6 +478,28 @@ recurloop_add_language_library(ide
     "${CMAKE_CURRENT_SOURCE_DIR}/libraries/ide.rl"
     "${RECURLOOP_IDE_IMAGE}"
     gui)
+
+# project.rli is the shared standard environment opened by the IDE.  It is
+# intentionally one image for every ordinary workspace: per-project files are
+# applied later as a tiny Project generation overlay.
+file(GLOB_RECURSE RECURLOOP_PROJECT_LIBRARY_SOURCES CONFIGURE_DEPENDS
+    "${CMAKE_CURRENT_SOURCE_DIR}/libraries/project/*.rl")
+add_custom_command(
+    OUTPUT "${RECURLOOP_PROJECT_IMAGE}"
+    COMMAND "${CMAKE_COMMAND}" -E rm -f "${RECURLOOP_PROJECT_IMAGE}"
+    COMMAND "$<TARGET_FILE:Recurloop>"
+            --library-path "${RECURLOOP_LIBRARY_OUTPUT_DIR}"
+            --library language-kit
+            --library gui
+            --library ide
+            --file "${CMAKE_CURRENT_SOURCE_DIR}/libraries/project/library.rl"
+            -- "${RECURLOOP_PROJECT_IMAGE}"
+    DEPENDS Recurloop "${RECURLOOP_IDE_IMAGE}"
+            ${RECURLOOP_PROJECT_LIBRARY_SOURCES}
+            ${RECURLOOP_LIBRARY_BUILD_SOURCES}
+    WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+    COMMENT "[libraries] build project.rli"
+    VERBATIM)
 recurloop_add_language_library(embed
     "${CMAKE_CURRENT_SOURCE_DIR}/libraries/embed/library.rl"
     "${RECURLOOP_EMBED_IMAGE}")
@@ -490,8 +533,10 @@ add_custom_target(RecurloopLibraries
         "${RECURLOOP_HTTP_IMAGE}"
         "${RECURLOOP_GUI_IMAGE}"
         "${RECURLOOP_IDE_IMAGE}"
+        "${RECURLOOP_PROJECT_IMAGE}"
         "${RECURLOOP_EMBED_IMAGE}")
 set_target_properties(RecurloopLibraries PROPERTIES FOLDER "Libraries")
+
 
 install(FILES
     "${RECURLOOP_LANGUAGE_KIT_IMAGE}"
@@ -500,6 +545,7 @@ install(FILES
     "${RECURLOOP_HTTP_IMAGE}"
     "${RECURLOOP_GUI_IMAGE}"
     "${RECURLOOP_IDE_IMAGE}"
+    "${RECURLOOP_PROJECT_IMAGE}"
     "${RECURLOOP_EMBED_IMAGE}"
     DESTINATION "${RECURLOOP_INSTALL_LIBRARY_DIR}"
     COMPONENT Libraries)

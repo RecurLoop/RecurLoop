@@ -14,6 +14,9 @@ namespace recurloop {
     Generations,
     Publish,
     Refresh,
+    Baseline,
+    Cache,
+    CacheStatus,
     Help,
     Quit,
   };

@@ -196,6 +196,21 @@ phrase session_refresh = ":refresh" in root {
   action host "session.refresh"
 }
 
+phrase session_baseline = ":baseline" in root {
+  type phrase_types_elaborate
+  action host "session.baseline"
+}
+
+phrase session_cache = ":cache" in root {
+  type phrase_types_elaborate
+  action host "session.cache"
+}
+
+phrase session_cache_status = ":cache-status" in root {
+  type phrase_types_elaborate
+  action host "session.cache-status"
+}
+
 phrase semicolon = ";" in root {
   type phrase_types_data
 }

@@ -78,6 +78,17 @@ namespace recurloop {
     // The restore replaces the lexicon that owns the currently invoked phrase.
     context.exec.invoked = nullptr;
     EngineImage::load(context, imagePath);
+
+    // Loading a new image resets lookup to the restored root. Loading an image
+    // that is already present is intentionally a no-op, however, and therefore
+    // used to leave source execution inside the `engine` dictionary entered by
+    // the `engine import` phrase. Make duplicate imports observationally match
+    // real imports: the next top-level form always resumes from root.
+    lexicon::Phrase root = context.lexicon.phrase();
+    if (context::Lookup::current(context).getAddress() != root.getAddress()) {
+      context.lookup = {};
+      context::Lookup::in(context, root);
+    }
   }
 
   void Engine::define(context::Context &context, lexicon::Phrase &) {

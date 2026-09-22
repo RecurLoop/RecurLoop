@@ -1,6 +1,7 @@
 #pragma once
 
 #include <recurloop/Generation.hpp>
+#include <recurloop/Project.hpp>
 
 #include <functional>
 #include <iosfwd>
@@ -11,8 +12,6 @@
 #include <vector>
 
 namespace recurloop {
-  class Project;
-  struct ProjectGeneration;
 
   struct SessionResponse {
     int status = 0;
@@ -54,5 +53,7 @@ namespace recurloop {
     std::shared_ptr<const ProjectGeneration> projectGeneration_;
     std::unique_ptr<ContextGeneration> contextGeneration_;
     std::vector<std::uint8_t> rollbackBuffer_;
+    bool cacheEnabled_ = false;
+    ProjectCacheState cacheState_;
   };
 } // namespace recurloop

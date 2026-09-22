@@ -123,8 +123,26 @@ namespace recurloop {
           attach(project_->current());
           *requestOut << "refreshed " << generationText(contextGeneration_->generations()) << '\n';
           break;
+        case SessionCommand::Baseline:
+          attach(project_->baseline());
+          *requestOut << "baseline " << generationText(contextGeneration_->generations()) << '\n';
+          break;
+        case SessionCommand::Cache:
+          cacheEnabled_ = project_->cacheEnabled();
+          if (cacheEnabled_) project_->beginCache(cacheState_);
+          *requestOut << "cache=" << (cacheEnabled_ ? "enabled" : "disabled") << '\n';
+          break;
+        case SessionCommand::CacheStatus:
+          *requestOut << "cache=" << (project_->cacheEnabled() ? "enabled" : "disabled")
+                      << " active=" << (cacheEnabled_ ? "yes" : "no")
+                      << " step=" << cacheState_.step
+                      << " hits=" << project_->cacheHits() << " misses=" << project_->cacheMisses()
+                      << " writes=" << project_->cacheWrites();
+          if (project_->cacheEnabled()) *requestOut << " directory=" << project_->cacheStepsDirectory();
+          *requestOut << '\n';
+          break;
         case SessionCommand::Help:
-          *requestOut << "phrases: :generations, :publish, :refresh, :load \"<path>\", :quit, :exit\n";
+          *requestOut << "phrases: :generations, :publish, :refresh, :baseline, :cache, :cache-status, :load \"<path>\", :quit, :exit\n";
           break;
         case SessionCommand::Quit: response.quit = true; break;
         }
@@ -161,11 +179,38 @@ namespace recurloop {
 
   SessionResponse Session::executeFile(const std::string &path) {
     const std::string absolute = std::filesystem::absolute(path).lexically_normal().string();
-    return runRequest([&](context::Context &context) {
+    bool restored = false;
+    bool started = false;
+    SessionResponse response = runRequest([&](context::Context &context) {
+      if (cacheEnabled_ && project_->restoreCacheStep(cacheState_, context, absolute)) {
+        restored = true;
+        return;
+      }
+
       std::ifstream input(absolute, std::ios::binary);
       if (!input.is_open()) THROW(, "cannot open file '" << absolute << "'")
+      if (!cacheEnabled_) {
+        executeStream(context, input, absolute, 1, 1);
+        return;
+      }
+
+      project_->beginCacheStep(cacheState_, absolute);
+      started = cacheState_.active;
+      struct CacheObserverBridge {
+        Session *session;
+      } bridge{this};
+      SourceObserverScope observer(&bridge, [](void *user, context::Context &, std::string_view source) {
+        auto *bridge = static_cast<CacheObserverBridge *>(user);
+        bridge->session->project_->observeCacheSource(bridge->session->cacheState_, source);
+      });
       executeStream(context, input, absolute, 1, 1);
     });
+
+    if (restored) return response;
+    if (!started) return response;
+    if (response.status == 0) project_->commitCacheStep(cacheState_, contextGeneration_->context());
+    else project_->abortCacheStep(cacheState_);
+    return response;
   }
 
   SessionResponse Session::executeArguments(int startIndex, std::ostream *out, std::ostream *err) {

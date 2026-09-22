@@ -1,7 +1,6 @@
 .DEFAULT_GOAL := build
 
 RECURLOOP := build/Release/bin/recurloop
-
 EXAMPLE ?=
 ARGS ?= --file program.rl.example
 BUNDLE ?= recurloop-work.zip

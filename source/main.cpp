@@ -27,6 +27,7 @@ static void printHelp(const char *program) {
                "  --unix <path>         Also serve independent sessions on a Unix socket\n"
                "  --connect <path>      Attach an interactive console to a Unix socket\n"
                "  --no-stdio            Do not open a stdio session (requires --unix)\n"
+               "  --project-cache <dir> Cache project .rl loads as reusable .rli checkpoints\n"
                "  -                     Use standard input (REPL on a terminal, source when piped)\n";
 }
 
@@ -65,6 +66,7 @@ namespace {
   struct CommandLine {
     bool serve = false;
     std::string connectPath;
+    std::string projectCacheDirectory;
     recurloop::ServerOptions options;
     std::vector<std::string> runtimeArguments;
     std::vector<char *> runtimeArgv;
@@ -101,6 +103,11 @@ namespace {
       if (!runtimeOnly && argument == "--no-stdio") {
         result.serve = true;
         result.options.stdio = false;
+        continue;
+      }
+      if (!runtimeOnly && argument == "--project-cache") {
+        if (++i >= argc) THROW(, "--project-cache requires a directory")
+        result.projectCacheDirectory = argv[i];
         continue;
       }
 
@@ -165,6 +172,7 @@ int main(int argc, char *argv[]) {
     const bool interactiveInput = interactiveStdinOnly(command, inputIndex);
 
     auto project = recurloop::Project::create(base.getContext(), command.runtimeArguments);
+    if (!command.projectCacheDirectory.empty()) project->configureCache(command.projectCacheDirectory);
 
     if (command.serve) {
       // Files/strings supplied together with --serve initialize the published

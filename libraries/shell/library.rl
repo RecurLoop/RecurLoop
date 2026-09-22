@@ -713,9 +713,9 @@ let Shell:run_builtin = fn (pipeline:Shell:Pipeline*) -> i64 {
 }
 
 let Shell:Invocation:start = fn (
-    pipeline:Shell:Pipeline*, capture:i64
+    pipeline:Shell:Pipeline*, want_output:i64
 ) -> Shell:Invocation* {
-    if !pipeline || pipeline.count <= 0 || (capture && pipeline.output_path) {
+    if !pipeline || pipeline.count <= 0 || (want_output && pipeline.output_path) {
         return cast(Shell:Invocation*, 0)
     }
 
@@ -734,7 +734,7 @@ let Shell:Invocation:start = fn (
     if builtin >= 0 {
         invocation.result = builtin
         invocation.completed = 1
-        if capture { invocation.output = Shell:copy_text("") }
+        if want_output { invocation.output = Shell:copy_text("") }
         return invocation
     }
 
@@ -746,7 +746,7 @@ let Shell:Invocation:start = fn (
     }
 
     var capture_fds = cast(i32*, 0)
-    if capture {
+    if want_output {
         capture_fds = cast(i32*, malloc(8))
         if !capture_fds || pipe(capture_fds) != 0 {
             if capture_fds { free(cast(u8*, capture_fds)) }
@@ -781,7 +781,7 @@ let Shell:Invocation:start = fn (
                 if previous_read >= 0 { dup2(cast(i32, previous_read), cast(i32, 0)) }
                 if next_fds {
                     dup2(next_fds[1], cast(i32, 1))
-                } else if capture {
+                } else if want_output {
                     dup2(capture_fds[1], cast(i32, 1))
                 } else if pipeline.output_path {
                     let output_fd = Shell:open_output(pipeline)
@@ -1689,14 +1689,14 @@ let Shell:Internal:token_finish = phrase {
     }
 }
 
-let Shell:begin_top_command = fn (state:Context*, capture:i64) -> void {
+let Shell:begin_top_command = fn (state:Context*, want_output:i64) -> void {
     if Shell:active_build(state) {
         Shell:top_command_error(state, "a shell command is already being assembled")
         return
     }
     let build = Shell:Build:new()
     if !build { context:diagnostic:error(state, "shell could not allocate a command builder"); return }
-    build.capture = capture
+    build.capture = want_output
     if !LanguageKit:state_pointer_set(state, "__shell_phrase_build", cast(i64, build)) {
         Shell:Build:destroy(build)
         return

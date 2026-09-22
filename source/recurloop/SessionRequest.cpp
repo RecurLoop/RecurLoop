@@ -24,6 +24,18 @@ namespace recurloop {
       request(SessionCommand::Refresh);
     }
 
+    void baseline(context::Context &, lexicon::Phrase &) {
+      request(SessionCommand::Baseline);
+    }
+
+    void cache(context::Context &, lexicon::Phrase &) {
+      request(SessionCommand::Cache);
+    }
+
+    void cacheStatus(context::Context &, lexicon::Phrase &) {
+      request(SessionCommand::CacheStatus);
+    }
+
     void help(context::Context &, lexicon::Phrase &) {
       request(SessionCommand::Help);
     }
@@ -45,6 +57,9 @@ namespace recurloop {
     context.actions().define("session.generations", generations);
     context.actions().define("session.publish", publish);
     context.actions().define("session.refresh", refresh);
+    context.actions().define("session.baseline", baseline);
+    context.actions().define("session.cache", cache);
+    context.actions().define("session.cache-status", cacheStatus);
     context.actions().define("session.help", help);
     context.actions().define("session.quit", quit);
   }

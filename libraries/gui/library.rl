@@ -12,6 +12,11 @@ languagekit_native_begin
 link shared "c"
 link shared "gtk-3"
 link shared "gdk-3"
+// Gui:* calls GLib/GObject APIs directly. JIT can accidentally resolve these
+// through GTK's already-loaded dependencies, but native executables must link
+// their direct dependencies explicitly.
+link shared "gobject-2.0"
+link shared "glib-2.0"
 
 let Gui = phrase { dictionary = true permanent = true }
 let Gui:Backend = phrase { dictionary = true permanent = true }
