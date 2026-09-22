@@ -5,6 +5,7 @@
 #include <recurloop/SessionRequest.hpp>
 #include <utilities/Exception.hpp>
 
+#include <algorithm>
 #include <filesystem>
 #include <fstream>
 #include <sstream>
@@ -134,15 +135,26 @@ namespace recurloop {
           break;
         case SessionCommand::CacheStatus:
           *requestOut << "cache=" << (project_->cacheEnabled() ? "enabled" : "disabled")
-                      << " active=" << (cacheEnabled_ ? "yes" : "no")
-                      << " step=" << cacheState_.step
+                      << " active=" << (cacheEnabled_ ? "yes" : "no") << " step=" << cacheState_.step
                       << " hits=" << project_->cacheHits() << " misses=" << project_->cacheMisses()
                       << " writes=" << project_->cacheWrites();
           if (project_->cacheEnabled()) *requestOut << " directory=" << project_->cacheStepsDirectory();
           *requestOut << '\n';
           break;
+        case SessionCommand::CacheDependencies: {
+          std::vector<std::string> dependencies;
+          dependencies.reserve(cacheState_.observed.size());
+          for (const auto &[path, stamp] : cacheState_.observed) {
+            (void)stamp;
+            dependencies.push_back(path);
+          }
+          std::sort(dependencies.begin(), dependencies.end());
+          for (const std::string &path : dependencies) *requestOut << path << '\n';
+          break;
+        }
         case SessionCommand::Help:
-          *requestOut << "phrases: :generations, :publish, :refresh, :baseline, :cache, :cache-status, :load \"<path>\", :quit, :exit\n";
+          *requestOut << "phrases: :generations, :publish, :refresh, :baseline, :cache, :cache-status, "
+                         ":cache-dependencies, :load \"<path>\", :quit, :exit\n";
           break;
         case SessionCommand::Quit: response.quit = true; break;
         }
@@ -199,17 +211,29 @@ namespace recurloop {
       struct CacheObserverBridge {
         Session *session;
       } bridge{this};
-      SourceObserverScope observer(&bridge, [](void *user, context::Context &, std::string_view source) {
-        auto *bridge = static_cast<CacheObserverBridge *>(user);
-        bridge->session->project_->observeCacheSource(bridge->session->cacheState_, source);
-      });
+      SourceObserverScope observer(
+          &bridge,
+          [](void *user, context::Context &context, std::string_view source) {
+            auto *bridge = static_cast<CacheObserverBridge *>(user);
+            if (!bridge->session->project_->commitCacheFragment(bridge->session->cacheState_, context, source))
+              bridge->session->project_->observeCacheSource(bridge->session->cacheState_, source);
+          },
+          [](void *user, context::Context &context, std::string_view source) {
+            auto *bridge = static_cast<CacheObserverBridge *>(user);
+            if (bridge->session->project_->restoreCacheFragment(bridge->session->cacheState_, context, source))
+              return true;
+            bridge->session->project_->beginCacheFragment(bridge->session->cacheState_, source);
+            return false;
+          });
       executeStream(context, input, absolute, 1, 1);
     });
 
     if (restored) return response;
     if (!started) return response;
-    if (response.status == 0) project_->commitCacheStep(cacheState_, contextGeneration_->context());
-    else project_->abortCacheStep(cacheState_);
+    if (response.status == 0)
+      project_->commitCacheStep(cacheState_, contextGeneration_->context());
+    else
+      project_->abortCacheStep(cacheState_);
     return response;
   }
 

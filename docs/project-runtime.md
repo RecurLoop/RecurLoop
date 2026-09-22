@@ -32,9 +32,18 @@ Each direct `.rl` load is a cumulative cache step:
 4. otherwise evaluate the source and write a new cumulative `.rli` checkpoint;
 5. continue until all direct source steps are complete.
 
-Nested `include` files are observed as dependencies of the containing direct
-step. Imported `.rli` images are already compiled engine images and use their
-normal dependency metadata.
+Nested `include` files are also cached as graph fragments. A fragment key
+contains its input semantic chain and canonical source path; its manifest
+contains the complete transitive source set observed below that include. When
+one included file changes, the direct checkpoint is rejected, but unchanged
+earlier fragments are restored and execution resumes at the first affected
+part of the graph. The rebuilt direct checkpoint then becomes the next fast
+path.
+
+`:cache-dependencies` prints the canonical files observed by the active cache
+walk. The IDE uses that list as its reload filter, so unrelated `.rl` files in
+the workspace do not schedule a view rebuild. Imported `.rli` images remain
+compiled engine images and use their normal dependency metadata.
 
 The cache contains only generated data under the configured cache directory;
 IDE configuration itself is ordinary `.rl` source.

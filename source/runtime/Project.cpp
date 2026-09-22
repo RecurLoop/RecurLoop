@@ -64,9 +64,8 @@ namespace recurloop {
       std::uint64_t hash = input == 0 ? FnvOffset : input;
       hashText(hash, source);
       std::vector<std::pair<std::string, ProjectCacheStamp>> ordered(dependencies.begin(), dependencies.end());
-      std::sort(ordered.begin(), ordered.end(), [](const auto &left, const auto &right) {
-        return left.first < right.first;
-      });
+      std::sort(ordered.begin(), ordered.end(),
+                [](const auto &left, const auto &right) { return left.first < right.first; });
       for (const auto &[path, stamp] : ordered) {
         hashText(hash, path);
         hashValue(hash, stamp.size);
@@ -109,22 +108,29 @@ namespace recurloop {
       return input.eof();
     }
 
-    bool writeManifest(const std::filesystem::path &path, std::uint64_t baseline, const ProjectCacheState &state,
-                       std::uint64_t output) {
-      std::vector<std::pair<std::string, ProjectCacheStamp>> ordered(state.dependencies.begin(),
-                                                                    state.dependencies.end());
-      std::sort(ordered.begin(), ordered.end(), [](const auto &left, const auto &right) {
-        return left.first < right.first;
-      });
+    bool writeManifest(const std::filesystem::path &path, std::uint64_t baseline, std::uint64_t input,
+                       std::uint64_t output, const std::string &source, const ProjectCacheStamp &sourceStamp,
+                       const std::unordered_map<std::string, ProjectCacheStamp> &dependencies) {
+      std::vector<std::pair<std::string, ProjectCacheStamp>> ordered(dependencies.begin(), dependencies.end());
+      std::sort(ordered.begin(), ordered.end(),
+                [](const auto &left, const auto &right) { return left.first < right.first; });
       std::ofstream file(path, std::ios::trunc);
       if (!file.is_open()) return false;
-      file << CacheMagic << ' ' << std::hex << baseline << ' ' << state.inputChain << ' ' << output << std::dec
-           << ' ' << state.sourceStamp.size << ' ' << state.sourceStamp.mtime << ' ' << std::quoted(state.source)
-           << ' ' << ordered.size() << '\n';
+      file << CacheMagic << ' ' << std::hex << baseline << ' ' << input << ' ' << output << std::dec << ' '
+           << sourceStamp.size << ' ' << sourceStamp.mtime << ' ' << std::quoted(source) << ' ' << ordered.size()
+           << '\n';
       for (const auto &[dependency, stamp] : ordered)
         file << stamp.size << ' ' << stamp.mtime << ' ' << std::quoted(dependency) << '\n';
       file.close();
       return static_cast<bool>(file);
+    }
+
+    std::string fragmentName(std::uint64_t input, std::string_view source) {
+      std::uint64_t hash = input == 0 ? FnvOffset : input;
+      hashText(hash, source);
+      std::ostringstream stream;
+      stream << std::hex << std::setfill('0') << std::setw(16) << hash;
+      return stream.str();
     }
   } // namespace
 
@@ -134,7 +140,8 @@ namespace recurloop {
       for (int i = 0; i < source.exec.args.count; ++i)
         arguments.emplace_back(source.exec.args.ptr[i] != nullptr ? source.exec.args.ptr[i] : "");
     }
-    auto project = std::shared_ptr<Project>(new Project(source.config, source.actions().snapshot(), std::move(arguments)));
+    auto project =
+        std::shared_ptr<Project>(new Project(source.config, source.actions().snapshot(), std::move(arguments)));
     const GenerationId projectId = project->nextId();
     const GenerationId lexiconId = project->nextId();
     auto lexicon = project->portableLexicon(source, lexiconId);
@@ -157,8 +164,7 @@ namespace recurloop {
     return std::make_shared<Session>(shared_from_this(), current(), nextId());
   }
 
-  std::shared_ptr<const LexiconGeneration> Project::portableLexicon(context::Context &source,
-                                                                    GenerationId lexiconId) {
+  std::shared_ptr<const LexiconGeneration> Project::portableLexicon(context::Context &source, GenerationId lexiconId) {
     const std::vector<std::uint8_t> image = EngineImage::encode(source);
 
     char program[] = "recurloop-generation";
@@ -211,14 +217,17 @@ namespace recurloop {
     namespace fs = std::filesystem;
     cacheDirectory_ = fs::absolute(std::move(directory)).lexically_normal().string();
     cacheStepsDirectory_ = (fs::path(cacheDirectory_) / "steps").string();
+    cacheFragmentsDirectory_ = (fs::path(cacheDirectory_) / "fragments").string();
     std::error_code error;
     fs::create_directories(cacheStepsDirectory_, error);
+    error.clear();
+    fs::create_directories(cacheFragmentsDirectory_, error);
 
     // Remove obsolete cache formats. The only persistent state now is a chain
     // of real .rli checkpoints plus tiny manifests under steps/.
     const fs::path root(cacheDirectory_);
-    for (const char *legacy : {"project.rli", "project.manifest", "checkpoint.rli", "checkpoint.manifest",
-                               "project-bootstrap.rl"}) {
+    for (const char *legacy :
+         {"project.rli", "project.manifest", "checkpoint.rli", "checkpoint.manifest", "project-bootstrap.rl"}) {
       error.clear();
       fs::remove(root / legacy, error);
     }
@@ -232,6 +241,9 @@ namespace recurloop {
     state.inputChain = 0;
     state.source.clear();
     state.dependencies.clear();
+    state.observed.clear();
+    state.fragmentChain = state.chain;
+    state.fragments.clear();
   }
 
   bool Project::restoreCacheStep(ProjectCacheState &state, context::Context &context,
@@ -250,8 +262,8 @@ namespace recurloop {
       const fs::path manifestPath = base.string() + ".manifest";
       Manifest manifest;
       if (!readManifest(manifestPath, manifest) || manifest.baseline != baselineHash() ||
-          manifest.input != state.chain || manifest.source != absolute ||
-          manifest.sourceStamp.size != stamp.size || manifest.sourceStamp.mtime != stamp.mtime) {
+          manifest.input != state.chain || manifest.source != absolute || manifest.sourceStamp.size != stamp.size ||
+          manifest.sourceStamp.mtime != stamp.mtime) {
         cacheMisses_.fetch_add(1, std::memory_order_relaxed);
         return false;
       }
@@ -274,6 +286,9 @@ namespace recurloop {
       EngineImage::markExportBase(context);
       transaction.commit();
       state.chain = manifest.output;
+      state.fragmentChain = manifest.output;
+      state.observed.insert(manifest.dependencies.begin(), manifest.dependencies.end());
+      if (state.active) state.dependencies.insert(manifest.dependencies.begin(), manifest.dependencies.end());
       ++state.step;
       cacheHits_.fetch_add(1, std::memory_order_relaxed);
       return true;
@@ -299,6 +314,8 @@ namespace recurloop {
       state.sourceStamp = stamp;
       state.dependencies.clear();
       state.dependencies.emplace(absolute, stamp);
+      state.observed.emplace(absolute, stamp);
+      state.fragmentChain = nextChain(state.fragmentChain, absolute, {{absolute, stamp}});
     } catch (...) {
     }
   }
@@ -311,8 +328,119 @@ namespace recurloop {
       const std::string absolute = fs::absolute(fs::path(source), error).lexically_normal().string();
       if (error) return;
       ProjectCacheStamp stamp;
-      if (sourceStamp(absolute, stamp)) state.dependencies[absolute] = stamp;
+      if (sourceStamp(absolute, stamp)) {
+        state.dependencies[absolute] = stamp;
+        state.observed[absolute] = stamp;
+        for (auto &fragment : state.fragments) fragment.dependencies[absolute] = stamp;
+      }
     } catch (...) {
+    }
+  }
+
+  bool Project::restoreCacheFragment(ProjectCacheState &state, context::Context &context,
+                                     std::string_view source) noexcept {
+    namespace fs = std::filesystem;
+    if (!state.enabled || cacheFragmentsDirectory_.empty() || !endsWith(source, ".rl")) return false;
+    try {
+      std::error_code error;
+      const std::string absolute = fs::absolute(fs::path(source), error).lexically_normal().string();
+      if (error) return false;
+      ProjectCacheStamp stamp;
+      if (!sourceStamp(absolute, stamp)) return false;
+      const std::uint64_t input = state.fragmentChain;
+      const fs::path base = fs::path(cacheFragmentsDirectory_) / fragmentName(input, absolute);
+      const fs::path imagePath = base.string() + ".rli";
+      Manifest manifest;
+      if (!readManifest(base.string() + ".manifest", manifest) || manifest.baseline != baselineHash() ||
+          manifest.input != input || manifest.source != absolute || manifest.sourceStamp.size != stamp.size ||
+          manifest.sourceStamp.mtime != stamp.mtime)
+        return false;
+      for (const auto &[dependency, dependencyStamp] : manifest.dependencies)
+        if (!sameStamp(dependency, dependencyStamp)) return false;
+      if (!fs::is_regular_file(imagePath, error) || error || fs::file_size(imagePath, error) == 0 || error)
+        return false;
+
+      LexiconTransaction transaction(context.lexicon);
+      EngineImage::load(context, imagePath.string());
+      EngineImage::markExportBase(context);
+      transaction.commit();
+      state.fragmentChain = manifest.output;
+      state.observed.insert(manifest.dependencies.begin(), manifest.dependencies.end());
+      if (!state.fragments.empty())
+        state.fragments.back().dependencies.insert(manifest.dependencies.begin(), manifest.dependencies.end());
+      cacheHits_.fetch_add(1, std::memory_order_relaxed);
+      return true;
+    } catch (...) {
+      return false;
+    }
+  }
+
+  void Project::beginCacheFragment(ProjectCacheState &state, std::string_view source) noexcept {
+    namespace fs = std::filesystem;
+    if (!state.enabled || cacheFragmentsDirectory_.empty() || !endsWith(source, ".rl")) return;
+    try {
+      std::error_code error;
+      const std::string absolute = fs::absolute(fs::path(source), error).lexically_normal().string();
+      if (error) return;
+      ProjectCacheStamp stamp;
+      if (!sourceStamp(absolute, stamp)) return;
+      ProjectCacheState::Fragment fragment;
+      fragment.inputChain = state.fragmentChain;
+      fragment.source = absolute;
+      fragment.sourceStamp = stamp;
+      fragment.dependencies.emplace(absolute, stamp);
+      state.observed[absolute] = stamp;
+      if (state.active) state.dependencies[absolute] = stamp;
+      state.fragmentChain = nextChain(fragment.inputChain, absolute, fragment.dependencies);
+      state.fragments.push_back(std::move(fragment));
+    } catch (...) {
+    }
+  }
+
+  bool Project::commitCacheFragment(ProjectCacheState &state, context::Context &context,
+                                    std::string_view source) noexcept {
+    namespace fs = std::filesystem;
+    if (!state.enabled || state.fragments.empty()) return false;
+    try {
+      std::error_code error;
+      const std::string absolute = fs::absolute(fs::path(source), error).lexically_normal().string();
+      if (error || state.fragments.back().source != absolute) return false;
+      ProjectCacheState::Fragment fragment = std::move(state.fragments.back());
+      state.fragments.pop_back();
+      const std::uint64_t output = nextChain(fragment.inputChain, fragment.source, fragment.dependencies);
+      const fs::path base = fs::path(cacheFragmentsDirectory_) / fragmentName(fragment.inputChain, fragment.source);
+      const fs::path imagePath = base.string() + ".rli";
+      const fs::path manifestPath = base.string() + ".manifest";
+      const std::uint64_t temporaryId = cacheTemporaryId_.fetch_add(1, std::memory_order_relaxed);
+      const fs::path imageTemporary = imagePath.string() + "." + std::to_string(temporaryId) + ".tmp";
+      const fs::path manifestTemporary = manifestPath.string() + "." + std::to_string(temporaryId) + ".tmp";
+      EngineImage::saveFull(context, imageTemporary.string());
+      if (!writeManifest(manifestTemporary, baselineHash(), fragment.inputChain, output, fragment.source,
+                         fragment.sourceStamp, fragment.dependencies)) {
+        fs::remove(imageTemporary, error);
+        return false;
+      }
+      fs::rename(imageTemporary, imagePath, error);
+      if (error) {
+        fs::remove(imageTemporary, error);
+        fs::remove(manifestTemporary, error);
+        return false;
+      }
+      fs::rename(manifestTemporary, manifestPath, error);
+      if (error) {
+        fs::remove(manifestTemporary, error);
+        return false;
+      }
+      EngineImage::markExportBase(context);
+      state.fragmentChain = output;
+      state.observed.insert(fragment.dependencies.begin(), fragment.dependencies.end());
+      if (state.active) state.dependencies.insert(fragment.dependencies.begin(), fragment.dependencies.end());
+      if (!state.fragments.empty())
+        state.fragments.back().dependencies.insert(fragment.dependencies.begin(), fragment.dependencies.end());
+      cacheWrites_.fetch_add(1, std::memory_order_relaxed);
+      return true;
+    } catch (...) {
+      return false;
     }
   }
 
@@ -337,7 +465,8 @@ namespace recurloop {
       // appended definitions and those pre-existing mutable values while still
       // avoiding source parsing/compilation on a cache hit.
       EngineImage::saveFull(context, imageTemporary.string());
-      if (!writeManifest(manifestTemporary, baselineHash(), state, outputChain)) {
+      if (!writeManifest(manifestTemporary, baselineHash(), state.inputChain, outputChain, state.source,
+                         state.sourceStamp, state.dependencies)) {
         fs::remove(imageTemporary, error);
         state.enabled = false;
         state.active = false;
@@ -381,6 +510,7 @@ namespace recurloop {
     state.active = false;
     state.source.clear();
     state.dependencies.clear();
+    state.fragments.clear();
   }
 
 } // namespace recurloop

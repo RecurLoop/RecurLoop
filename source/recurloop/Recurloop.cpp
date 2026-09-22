@@ -81,8 +81,7 @@ namespace recurloop {
         THROW(, "cannot map writable JIT memory: " << std::strerror(error));
       }
 
-      void *executable =
-          mmap(nullptr, context.config.runtime.memory.size, PROT_READ | PROT_EXEC, MAP_SHARED, fd, 0);
+      void *executable = mmap(nullptr, context.config.runtime.memory.size, PROT_READ | PROT_EXEC, MAP_SHARED, fd, 0);
       if (executable == MAP_FAILED) {
         const int error = errno;
         munmap(memory, context.config.runtime.memory.size);
@@ -301,21 +300,30 @@ namespace recurloop {
   namespace {
     thread_local void *sourceObserverUser = nullptr;
     thread_local SourceCompletedCallback sourceObserverCallback = nullptr;
+    thread_local SourceEnterCallback sourceObserverEnter = nullptr;
 
     void notifySourceCompleted(context::Context &context, std::string_view path) {
       if (sourceObserverCallback != nullptr) sourceObserverCallback(sourceObserverUser, context, path);
     }
   } // namespace
 
-  SourceObserverScope::SourceObserverScope(void *user, SourceCompletedCallback callback) noexcept
-      : previousUser_(sourceObserverUser), previousCallback_(sourceObserverCallback) {
+  SourceObserverScope::SourceObserverScope(void *user, SourceCompletedCallback callback,
+                                           SourceEnterCallback enter) noexcept
+      : previousUser_(sourceObserverUser), previousCallback_(sourceObserverCallback),
+        previousEnter_(sourceObserverEnter) {
     sourceObserverUser = user;
     sourceObserverCallback = callback;
+    sourceObserverEnter = enter;
   }
 
   SourceObserverScope::~SourceObserverScope() {
     sourceObserverUser = previousUser_;
     sourceObserverCallback = previousCallback_;
+    sourceObserverEnter = previousEnter_;
+  }
+
+  bool restoreObservedSource(context::Context &context, std::string_view path) {
+    return sourceObserverEnter != nullptr && sourceObserverEnter(sourceObserverUser, context, path);
   }
 
   void executeCurrentBlock(context::Context &context, bool scoped) {
@@ -358,8 +366,7 @@ namespace recurloop {
     context.io.in = outerInput;
   }
 
-  void executeStream(context::Context &context, std::istream &source, std::string_view path, Size line,
-                     Size position) {
+  void executeStream(context::Context &context, std::istream &source, std::string_view path, Size line, Size position) {
     const context::Source outerSource = context.source;
     std::istream *const outerInput = context.io.in;
     const int outerArgumentIndex = context.exec.args.index;
@@ -434,16 +441,17 @@ namespace recurloop {
   namespace {
     void appendLibraryPathList(std::vector<std::filesystem::path> &paths, const char *value) {
       if (value == nullptr || *value == '\0') return;
-#if defined(_WIN32)
+  #if defined(_WIN32)
       constexpr char separator = ';';
-#else
+  #else
       constexpr char separator = ':';
-#endif
+  #endif
       std::string_view list(value);
       std::size_t begin = 0;
       while (begin <= list.size()) {
         const std::size_t end = list.find(separator, begin);
-        const std::string_view item = list.substr(begin, end == std::string_view::npos ? list.size() - begin : end - begin);
+        const std::string_view item =
+            list.substr(begin, end == std::string_view::npos ? list.size() - begin : end - begin);
         if (!item.empty()) paths.emplace_back(item);
         if (end == std::string_view::npos) break;
         begin = end + 1;
@@ -451,7 +459,7 @@ namespace recurloop {
     }
 
     std::filesystem::path resolveLibraryImage(context::Context &context, std::string_view requested,
-                                               const std::vector<std::filesystem::path> &explicitPaths) {
+                                              const std::vector<std::filesystem::path> &explicitPaths) {
       namespace fs = std::filesystem;
       fs::path name(requested);
       if (name.has_parent_path() || name.is_absolute()) {
@@ -476,9 +484,9 @@ namespace recurloop {
         }
       }
 
-#ifdef RECURLOOP_DEFAULT_LIBRARY_DIR
+  #ifdef RECURLOOP_DEFAULT_LIBRARY_DIR
       paths.emplace_back(RECURLOOP_DEFAULT_LIBRARY_DIR);
-#endif
+  #endif
       paths.push_back(fs::current_path() / "libraries");
 
       for (const fs::path &directory : paths) {

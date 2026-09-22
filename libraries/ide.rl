@@ -177,6 +177,7 @@ record IDE:Host {
     startup_phase:i64
     watch_root:u8*
     config_source:u8*
+    watch_sources:u8*
     reload_mode:i64
     candidate_reload_mode:i64
     reload_pending:i64
@@ -776,6 +777,20 @@ let IDE:RuntimeSession:load_file = fn (self:IDE:RuntimeSession*, path:u8*) -> i3
     return self.request(command.data)
 }
 
+// Generated build drivers are unique to one revision and are deleted as soon
+// as the native module has been linked. Evaluate them as ordinary included
+// source instead of advancing the persistent step cache and serializing a full
+// checkpoint that can never be reused.
+let IDE:RuntimeSession:load_transient_file = fn (self:IDE:RuntimeSession*, path:u8*) -> i32 {
+    if !self || !path { return 1 }
+    let command = LanguageKit:Text:new()
+    if !command { return 1 }
+    defer command.destroy()
+    command.append("include ")
+    if !IDE:append_source_string(command, path) { return 1 }
+    return self.request(command.data)
+}
+
 let IDE:RuntimeSession:load_optional_file = fn (self:IDE:RuntimeSession*, path:u8*) -> i32 {
     if !path || !IDE:file_exists(path) { return 0 }
     return self.load_file(path)
@@ -805,6 +820,11 @@ let IDE:RuntimeSession:load_environment = fn (self:IDE:RuntimeSession*, runner:I
 
 let IDE:RuntimeSession:load_view_environment = fn (self:IDE:RuntimeSession*, runner:IDE:Runner*) -> i32 {
     return self.load_entry(runner)
+}
+
+let IDE:RuntimeSession:cache_dependencies = fn (self:IDE:RuntimeSession*) -> u8* {
+    if !self || self.request(":cache-dependencies") != 0 || !self.last_output { return cast(u8*, 0) }
+    return IDE:copy(self.last_output)
 }
 
 let IDE:RuntimeSession:new = fn (runner:IDE:Runner*) -> IDE:RuntimeSession* {
@@ -1050,7 +1070,7 @@ let IDE:Runner:candidate = fn (self:IDE:Runner*) -> IDE:Runner* {
         return next
     }
 
-    if build.load_view_environment(self) != 0 || build.load_file(driver) != 0 {
+    if build.load_view_environment(self) != 0 || build.load_transient_file(driver) != 0 {
         next.last_error = IDE:copy(build.last_error)
     } else if !next.link_module() {
         let error = dlerror()
@@ -1063,12 +1083,16 @@ let IDE:Runner:candidate = fn (self:IDE:Runner*) -> IDE:Runner* {
         } else {
             if publish.load_environment(self) != 0 {
                 next.last_error = IDE:copy(publish.last_error)
-            } else if publish.request(":publish") != 0 || !publish.last_output || !IDE:text_contains(publish.last_output, "published project=") {
+            } else {
+                next.last_output = publish.cache_dependencies()
+            }
+            if !next.last_error && !next.last_output {
+                next.last_error = IDE:copy("project dependency graph is unavailable")
+            } else if !next.last_error && (publish.request(":publish") != 0 || !publish.last_output || !IDE:text_contains(publish.last_output, "published project=")) {
                 next.last_error = IDE:copy(publish.last_error)
                 if !next.last_error { next.last_error = IDE:copy("project publication failed") }
-            } else {
+            } else if !next.last_error {
                 next.last_status = 0
-                next.last_output = IDE:copy(publish.last_output)
             }
             publish.destroy()
         }
@@ -1256,10 +1280,14 @@ let IDE:worker_main = fn (kind:i64, program:u8*, root:u8*, application:u8*, sock
             _exit(1)
             return 1
         }
-        if publish.load_environment(runner) == 0 && publish.request(":publish") == 0 && publish.last_output && IDE:text_contains(publish.last_output, "published project=") && result_path && IDE:write_file(result_path, publish.last_output) {
+        var dependencies = cast(u8*, 0)
+        if publish.load_environment(runner) == 0 { dependencies = publish.cache_dependencies() }
+        if dependencies && publish.request(":publish") == 0 && publish.last_output && IDE:text_contains(publish.last_output, "published project=") && result_path && IDE:write_file(result_path, dependencies) {
+            free(dependencies)
             _exit(0)
             return 0
         }
+        if dependencies { free(dependencies) }
         if result_path {
             if publish.last_error { IDE:write_file(result_path, publish.last_error) }
             else { IDE:write_file(result_path, "initial IDE project publication failed") }
@@ -1273,7 +1301,11 @@ let IDE:worker_main = fn (kind:i64, program:u8*, root:u8*, application:u8*, sock
     // process adopts it.
     if kind == 2 {
         let candidate = runner.candidate()
-        if candidate && candidate.last_status == 0 && candidate.module_path && result_path && IDE:write_file(result_path, candidate.module_path) {
+        let response = LanguageKit:Text:new()
+        if candidate && candidate.last_status == 0 && candidate.module_path && candidate.last_output && response &&
+           response.append(candidate.module_path) && response.append("\n") && response.append(candidate.last_output) &&
+           result_path && IDE:write_file(result_path, response.data) {
+            response.destroy()
             if candidate.object_path { unlink(candidate.object_path) }
             // Do not destroy a successful candidate: its destroy path unlinks
             // the .so that the GTK process is about to dlopen. Process exit
@@ -1281,6 +1313,7 @@ let IDE:worker_main = fn (kind:i64, program:u8*, root:u8*, application:u8*, sock
             _exit(0)
             return 0
         }
+        if response { response.destroy() }
         if result_path {
             if candidate && candidate.last_error { IDE:write_file(result_path, candidate.last_error) }
             else { IDE:write_file(result_path, "IDE generation build failed") }
@@ -1675,8 +1708,32 @@ let IDE:commit_staged_view = fn (host:IDE:Host*, lifecycle:IDE:Lifecycle, previo
 
 let IDE:is_reloadable_path = fn (host:IDE:Host*, path:u8*) -> i64 {
     if !host || !path || !IDE:has_suffix(path, ".rl") { return 0 }
-    if host.config_source && strcmp(host.config_source, path) == 0 { return 1 }
-    return host.watch_root && IDE:path_is_inside(path, host.watch_root)
+    if !host.watch_sources { return host.config_source && strcmp(host.config_source, path) == 0 }
+    let bytes = cast(i64, strlen(path))
+    var offset = 0
+    while host.watch_sources[offset] != 0 {
+        var line = 0
+        while host.watch_sources[offset + line] != 0 && host.watch_sources[offset + line] != 10 { line += 1 }
+        var equal = line == bytes
+        var index = 0
+        while equal && index < bytes {
+            if host.watch_sources[offset + index] != path[index] { equal = 0 }
+            index += 1
+        }
+        if equal { return 1 }
+        offset += line
+        if host.watch_sources[offset] == 10 { offset += 1 }
+    }
+    return 0
+}
+
+let IDE:set_watch_sources = fn (host:IDE:Host*, sources:u8*) -> i64 {
+    if !host || !sources { return 0 }
+    let next = IDE:copy(sources)
+    if !next { return 0 }
+    if host.watch_sources { free(host.watch_sources) }
+    host.watch_sources = next
+    return 1
 }
 
 let IDE:notify_reload_failure = fn (host:IDE:Host*) -> void {
@@ -1886,9 +1943,6 @@ let IDE:finish_reload = fn (host:IDE:Host*, module_path:u8*, revision:u64, epoch
     if host.runner.last_output { free(host.runner.last_output); host.runner.last_output = cast(u8*, 0) }
     if host.runner.last_error { free(host.runner.last_error); host.runner.last_error = cast(u8*, 0) }
 
-    // Existing terminal sessions intentionally remain attached to their
-    // current Project generation until their explicit `:refresh` command.
-    IDE:notify_runtime_ready(host)
     return 1
 }
 
@@ -1935,27 +1989,31 @@ let IDE:job_done = fn (pid:i32, status:i32, data:u8*) -> void {
             if host.runner.last_output { free(host.runner.last_output) }
             if host.runner.last_error { free(host.runner.last_error); host.runner.last_error = cast(u8*, 0) }
             host.runner.last_output = IDE:copy(result)
-            IDE:notify_runtime_ready(host)
+            IDE:set_watch_sources(host, result)
         } else if !success {
             host.runner.last_status = 1
             if host.runner.last_error { free(host.runner.last_error) }
             if result { host.runner.last_error = IDE:copy(result) }
             else { host.runner.last_error = IDE:copy("initial IDE project publication failed") }
-            IDE:notify_runtime_ready(host)
             IDE:notify_reload_failure(host)
         }
         host.startup_phase = 2
         host.job = cast(IDE:Job*, 0)
         IDE:job_destroy(job)
         if result { free(result) }
+        IDE:notify_runtime_ready(host)
         IDE:continue_pending_reload(host)
         return
     }
 
     if kind == 2 {
         var outcome = 0
+        var dependencies = cast(u8*, 0)
         if success && result {
-            if epoch == host.source_epoch { outcome = IDE:finish_reload(host, result, revision, epoch) }
+            var line = 0
+            while result[line] != 0 && result[line] != 10 { line += 1 }
+            if result[line] == 10 { result[line] = 0; dependencies = &result[line + 1] }
+            if epoch == host.source_epoch && dependencies { outcome = IDE:finish_reload(host, result, revision, epoch) }
             else { unlink(result); outcome = 2 }
         }
 
@@ -1975,6 +2033,14 @@ let IDE:job_done = fn (pid:i32, status:i32, data:u8*) -> void {
         host.job = cast(IDE:Job*, 0)
         IDE:job_destroy(job)
         if result { free(result) }
+        // The replacement view was mounted while Host.job still identified the
+        // in-flight worker, so its first status render said "reloading". Notify
+        // it after clearing the job to render the committed ready state. This
+        // also remounts persistent terminal models into generic project views.
+        if outcome == 1 {
+            IDE:set_watch_sources(host, dependencies)
+            IDE:notify_runtime_ready(host)
+        }
         IDE:continue_pending_reload(host)
         return
     }
@@ -2031,6 +2097,7 @@ let IDE:free_host = fn (host:IDE:Host*) -> void {
     if host.initial_module { free(host.initial_module) }
     if host.watch_root { free(host.watch_root) }
     if host.config_source { free(host.config_source) }
+    if host.watch_sources { free(host.watch_sources) }
     if host.window_title { free(host.window_title) }
     if host.root { free(host.root) }
     free(cast(u8*, host))
@@ -2315,6 +2382,7 @@ let IDE:Config:open = fn (self:IDE:Config*) -> i64 {
     host.startup_phase = 0
     host.watch_root = IDE:copy(watch)
     host.config_source = IDE:copy(source)
+    host.watch_sources = cast(u8*, 0)
     host.reload_mode = self.reload_mode
     host.candidate_reload_mode = self.reload_mode
     host.reload_pending = 0

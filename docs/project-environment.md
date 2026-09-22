@@ -35,12 +35,19 @@ through `include` are dependency-stamped into its manifest, so an included file
 change invalidates that step. `engine import` loads an already compiled `.rli`
 image and its image dependencies normally.
 
+Included files also have graph-fragment checkpoints under `<cache>/fragments`.
+After a dependency change, the cache restores the unchanged prefix of the
+include graph and rebuilds from the first affected fragment. The Project reports
+the canonical dependency set to the IDE watcher; files outside that set do not
+trigger hot reload.
+
 ## Reload
 
 `app.reload("hot")` recursively watches the configured watch tree with inotify,
-skipping `.git`, `build`, `.cache`, and `node_modules`. `.rl` saves are debounced
-and rebuilt from the immutable `project.rli` baseline plus the longest valid
-cache prefix.
+skipping `.git`, `build`, `.cache`, and `node_modules`. Stable write, rename and
+delete events schedule a rebuild only when their canonical path belongs to the
+active source dependency graph. Rebuilds start from the immutable `project.rli`
+baseline plus the longest valid cache path.
 
 `app.reload("manual")` records source changes but does not rebuild automatically;
 a compact reload button is shown in the editor toolbar. `app.reload("off")`

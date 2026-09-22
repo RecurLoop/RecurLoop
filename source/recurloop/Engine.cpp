@@ -107,6 +107,8 @@ namespace recurloop {
     includePath = std::filesystem::absolute(includePath, error).lexically_normal();
     if (error) THROW(, "include: cannot resolve path: " << error.message())
 
+    if (restoreObservedSource(context, includePath.string())) return;
+
     std::ifstream input(includePath, std::ios::binary);
     if (!input.is_open()) THROW(, "include: cannot open file '" << includePath.string() << "'")
     executeStream(context, input, includePath.string(), 1);

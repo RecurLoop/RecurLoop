@@ -17,6 +17,7 @@ namespace recurloop {
     Baseline,
     Cache,
     CacheStatus,
+    CacheDependencies,
     Help,
     Quit,
   };

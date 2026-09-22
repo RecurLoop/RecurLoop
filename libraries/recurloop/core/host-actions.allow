@@ -184,6 +184,7 @@ reference.whitespace
 scope.enter
 session.baseline
 session.cache-status
+session.cache-dependencies
 session.cache
 session.generations
 session.help

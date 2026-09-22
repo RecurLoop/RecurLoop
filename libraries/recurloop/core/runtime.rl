@@ -211,6 +211,11 @@ phrase session_cache_status = ":cache-status" in root {
   action host "session.cache-status"
 }
 
+phrase session_cache_dependencies = ":cache-dependencies" in root {
+  type phrase_types_elaborate
+  action host "session.cache-dependencies"
+}
+
 phrase semicolon = ";" in root {
   type phrase_types_data
 }

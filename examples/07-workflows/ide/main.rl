@@ -25,6 +25,4 @@ let IDE:App:main = fn () -> i64 {
     return IDE:run(IDE:App:configure)
 }
 
-var i = 81
-
 var IDE:App:status = IDE:App:main()

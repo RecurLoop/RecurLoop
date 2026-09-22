@@ -36,6 +36,10 @@ namespace recurloop {
       request(SessionCommand::CacheStatus);
     }
 
+    void cacheDependencies(context::Context &, lexicon::Phrase &) {
+      request(SessionCommand::CacheDependencies);
+    }
+
     void help(context::Context &, lexicon::Phrase &) {
       request(SessionCommand::Help);
     }
@@ -60,6 +64,7 @@ namespace recurloop {
     context.actions().define("session.baseline", baseline);
     context.actions().define("session.cache", cache);
     context.actions().define("session.cache-status", cacheStatus);
+    context.actions().define("session.cache-dependencies", cacheDependencies);
     context.actions().define("session.help", help);
     context.actions().define("session.quit", quit);
   }

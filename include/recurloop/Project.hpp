@@ -25,11 +25,17 @@ namespace recurloop {
     std::int64_t mtime = 0;
   };
 
-  // One deterministic cache walk belongs to one build session. Each direct
-  // project .rl load is a safe resume boundary. Nested includes are tracked as
-  // dependencies of that boundary so changing any included file invalidates
-  // the checkpoint that contains it.
+  // One deterministic cache walk belongs to one build session. Direct project
+  // loads are full fast-path checkpoints; nested includes add graph-fragment
+  // resume boundaries and contribute their transitive dependency stamps.
   struct ProjectCacheState {
+    struct Fragment {
+      std::uint64_t inputChain = 0;
+      std::string source;
+      ProjectCacheStamp sourceStamp;
+      std::unordered_map<std::string, ProjectCacheStamp> dependencies;
+    };
+
     bool enabled = false;
     bool active = false;
     std::size_t step = 0;
@@ -38,6 +44,9 @@ namespace recurloop {
     std::string source;
     ProjectCacheStamp sourceStamp;
     std::unordered_map<std::string, ProjectCacheStamp> dependencies;
+    std::unordered_map<std::string, ProjectCacheStamp> observed;
+    std::uint64_t fragmentChain = 0;
+    std::vector<Fragment> fragments;
   };
 
   // Long-lived project state shared by every transport and session. Published
@@ -64,24 +73,47 @@ namespace recurloop {
     // build restores the longest still-valid prefix and only evaluates files
     // from the first invalid step.
     void configureCache(std::string directory);
-    bool cacheEnabled() const { return !cacheStepsDirectory_.empty(); }
-    const std::string &cacheDirectory() const { return cacheDirectory_; }
-    const std::string &cacheStepsDirectory() const { return cacheStepsDirectory_; }
+    bool cacheEnabled() const {
+      return !cacheStepsDirectory_.empty();
+    }
+    const std::string &cacheDirectory() const {
+      return cacheDirectory_;
+    }
+    const std::string &cacheStepsDirectory() const {
+      return cacheStepsDirectory_;
+    }
     void beginCache(ProjectCacheState &state) const;
     bool restoreCacheStep(ProjectCacheState &state, context::Context &context, std::string_view source) noexcept;
     void beginCacheStep(ProjectCacheState &state, std::string_view source) noexcept;
     void observeCacheSource(ProjectCacheState &state, std::string_view source) noexcept;
+    bool restoreCacheFragment(ProjectCacheState &state, context::Context &context, std::string_view source) noexcept;
+    void beginCacheFragment(ProjectCacheState &state, std::string_view source) noexcept;
+    bool commitCacheFragment(ProjectCacheState &state, context::Context &context, std::string_view source) noexcept;
     void commitCacheStep(ProjectCacheState &state, context::Context &context) noexcept;
     void abortCacheStep(ProjectCacheState &state) noexcept;
 
-    std::uint64_t cacheHits() const { return cacheHits_.load(std::memory_order_relaxed); }
-    std::uint64_t cacheMisses() const { return cacheMisses_.load(std::memory_order_relaxed); }
-    std::uint64_t cacheWrites() const { return cacheWrites_.load(std::memory_order_relaxed); }
+    std::uint64_t cacheHits() const {
+      return cacheHits_.load(std::memory_order_relaxed);
+    }
+    std::uint64_t cacheMisses() const {
+      return cacheMisses_.load(std::memory_order_relaxed);
+    }
+    std::uint64_t cacheWrites() const {
+      return cacheWrites_.load(std::memory_order_relaxed);
+    }
 
-    GenerationId nextId() { return nextId_.fetch_add(1, std::memory_order_relaxed); }
-    const context::Config &config() const { return config_; }
-    const ActionEntries &actions() const { return actions_; }
-    const std::vector<std::string> &arguments() const { return arguments_; }
+    GenerationId nextId() {
+      return nextId_.fetch_add(1, std::memory_order_relaxed);
+    }
+    const context::Config &config() const {
+      return config_;
+    }
+    const ActionEntries &actions() const {
+      return actions_;
+    }
+    const std::vector<std::string> &arguments() const {
+      return arguments_;
+    }
 
   private:
     Project(context::Config config, ActionEntries actions, std::vector<std::string> arguments)
@@ -101,6 +133,7 @@ namespace recurloop {
     std::atomic<GenerationId> nextId_{1};
     std::string cacheDirectory_;
     std::string cacheStepsDirectory_;
+    std::string cacheFragmentsDirectory_;
     mutable std::uint64_t cacheBaselineHash_ = 0;
     mutable std::mutex cacheBaselineMutex_;
     std::atomic<std::uint64_t> cacheHits_{0};

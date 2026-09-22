@@ -41,7 +41,6 @@ TEST(RecurloopGeneration, SessionsSharePublishedBaseButKeepPrivateState) {
   EXPECT_EQ(shared.output, "42\n");
 }
 
-
 TEST(RecurloopGeneration, BaselineDiscardsPublishedEnvironmentState) {
   auto state = project();
   auto publisher = state->openSession();
@@ -151,7 +150,6 @@ TEST(RecurloopGeneration, ResetKernelStaysEmptyInsideProjectSession) {
   EXPECT_EQ(errors.str().find("Phrase has no type"), std::string::npos);
 }
 
-
 TEST(RecurloopGeneration, ProjectFileCacheWritesAndRestoresRliSteps) {
   namespace fs = std::filesystem;
   const fs::path root = fs::temp_directory_path() / "recurloop-project-cache-generation-test";
@@ -201,8 +199,7 @@ TEST(RecurloopGeneration, ProjectFileCachePreservesAssignmentsToBaselineValues) 
   char *argv[] = {program};
   auto runtime = std::make_unique<recurloop::Recurloop>();
   runtime->initialize(1, argv);
-  ASSERT_NO_THROW(recurloop::executeSource(runtime->getContext(), "var cached_probe = 1\n",
-                                           "<cache-baseline>", 1));
+  ASSERT_NO_THROW(recurloop::executeSource(runtime->getContext(), "var cached_probe = 1\n", "<cache-baseline>", 1));
   auto state = recurloop::Project::create(runtime->getContext(), {program});
   state->configureCache((root / "cache").string());
 
@@ -232,6 +229,81 @@ TEST(RecurloopGeneration, ProjectFileCachePreservesAssignmentsToBaselineValues) 
   fs::remove_all(root, error);
 }
 
+TEST(RecurloopGeneration, ProjectFileCacheRestoresUnchangedIncludeFragmentsAndReportsDependencies) {
+  namespace fs = std::filesystem;
+  const fs::path root = fs::temp_directory_path() / "recurloop-project-fragment-cache-generation-test";
+  std::error_code error;
+  fs::remove_all(root, error);
+  ASSERT_TRUE(fs::create_directories(root / "cache"));
+
+  const fs::path main = root / "main.rl";
+  const fs::path firstSource = root / "first.rl";
+  const fs::path secondSource = root / "second.rl";
+  const fs::path unrelated = root / "unrelated.rl";
+  {
+    std::ofstream out(main);
+    out << "include \"first.rl\"\ninclude \"second.rl\"\n";
+  }
+  {
+    std::ofstream out(firstSource);
+    out << "var fragment_first = 11\n";
+  }
+  {
+    std::ofstream out(secondSource);
+    out << "var fragment_second = 22\n";
+  }
+  {
+    std::ofstream out(unrelated);
+    out << "var unrelated_value = 99\n";
+  }
+
+  auto state = project();
+  state->configureCache((root / "cache").string());
+  auto first = state->openSession();
+  ASSERT_EQ(first->evaluate(":baseline").status, 0);
+  ASSERT_EQ(first->evaluate(":cache").status, 0);
+  ASSERT_EQ(first->executeFile(main.string()).status, 0);
+  EXPECT_EQ(first->evaluate("print fragment_first + fragment_second").output, "33\n");
+  EXPECT_GE(state->cacheWrites(), 3u);
+  std::size_t fragmentImages = 0;
+  for (const auto &entry : fs::directory_iterator(root / "cache" / "fragments"))
+    if (entry.path().extension() == ".rli") ++fragmentImages;
+  EXPECT_EQ(fragmentImages, 2u);
+
+  const auto dependencies = first->evaluate(":cache-dependencies");
+  ASSERT_EQ(dependencies.status, 0) << dependencies.error;
+  EXPECT_NE(dependencies.output.find(main.string()), std::string::npos);
+  EXPECT_NE(dependencies.output.find(firstSource.string()), std::string::npos);
+  EXPECT_NE(dependencies.output.find(secondSource.string()), std::string::npos);
+  EXPECT_EQ(dependencies.output.find(unrelated.string()), std::string::npos);
+
+  {
+    std::ofstream out(secondSource);
+    out << "var fragment_second = 310\n";
+  }
+  auto second = state->openSession();
+  ASSERT_EQ(second->evaluate(":baseline").status, 0);
+  ASSERT_EQ(second->evaluate(":cache").status, 0);
+  const std::uint64_t hitsBefore = state->cacheHits();
+  ASSERT_EQ(second->executeFile(main.string()).status, 0);
+  EXPECT_EQ(second->evaluate("print fragment_first + fragment_second").output, "321\n");
+  EXPECT_GT(state->cacheHits(), hitsBefore);
+
+  {
+    std::ofstream out(unrelated);
+    out << "var unrelated_value = 1000\n";
+  }
+  auto third = state->openSession();
+  ASSERT_EQ(third->evaluate(":baseline").status, 0);
+  ASSERT_EQ(third->evaluate(":cache").status, 0);
+  const std::uint64_t unrelatedHitsBefore = state->cacheHits();
+  ASSERT_EQ(third->executeFile(main.string()).status, 0);
+  EXPECT_EQ(third->evaluate("print fragment_first + fragment_second").output, "321\n");
+  EXPECT_GT(state->cacheHits(), unrelatedHitsBefore);
+
+  fs::remove_all(root, error);
+}
+
 TEST(RecurloopGeneration, RuntimeNativeCallsPassScalarArgumentsBeyondRegisters) {
   auto state = project();
   auto session = state->openSession();
@@ -251,8 +323,7 @@ let runtime_sum16 = fn (a:i64, b:i64, c:i64, d:i64, e:i64, f:i64, g:i64, h:i64,
   ASSERT_EQ(seven.status, 0) << seven.error;
   EXPECT_EQ(seven.output, "28\n");
 
-  const auto sixteen = session->evaluate(
-      "print runtime_sum16(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16)");
+  const auto sixteen = session->evaluate("print runtime_sum16(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16)");
   ASSERT_EQ(sixteen.status, 0) << sixteen.error;
   EXPECT_EQ(sixteen.output, "136\n");
 }
