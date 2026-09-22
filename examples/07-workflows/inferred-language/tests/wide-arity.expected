@@ -1,0 +1,11 @@
+36
+36
+RecurLoop
+sum8 specializations=1
+  (integer,integer,integer,integer,integer,integer,integer,integer) -> integer compiled=1
+forward8 specializations=1
+  (integer,integer,integer,integer,integer,integer,integer,integer) -> integer compiled=1
+join8 specializations=1
+  (text,text,text,text,text,text,text,text) -> text compiled=1
+forward_join8 specializations=1
+  (text,text,text,text,text,text,text,text) -> text compiled=1

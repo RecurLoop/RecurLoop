@@ -2,6 +2,7 @@
 
 #include <recurloop/Assembler.hpp>
 #include <recurloop/LanguageGrammar.hpp>
+#include <recurloop/NativeCall.hpp>
 #include <recurloop/PhraseNames.hpp>
 
 #include <compiler/DynamicLinker.hpp>
@@ -10,29 +11,8 @@
 #include <algorithm>
 #include <charconv>
 #include <cmath>
+#include <cstddef>
 
-#if defined(__x86_64__)
-extern "C" std::uintptr_t recurloop_call_scalar_native_sysv(std::uintptr_t entry, const std::uintptr_t *args);
-asm(R"(
-  .text
-  .global recurloop_call_scalar_native_sysv
-  .type recurloop_call_scalar_native_sysv, @function
-recurloop_call_scalar_native_sysv:
-  mov %rdi, %rax
-  mov %rsi, %r10
-  mov 0(%r10), %rdi
-  mov 8(%r10), %rsi
-  mov 16(%r10), %rdx
-  mov 24(%r10), %rcx
-  mov 32(%r10), %r8
-  mov 40(%r10), %r9
-  sub $8, %rsp
-  call *%rax
-  add $8, %rsp
-  ret
-  .size recurloop_call_scalar_native_sysv, .-recurloop_call_scalar_native_sysv
-)");
-#endif
 
 namespace recurloop {
   namespace internal {
@@ -377,7 +357,7 @@ namespace recurloop {
           }
         }
         if (scalarResult && scalarParameters) {
-          std::uintptr_t raw[6] = {};
+          std::vector<std::uintptr_t> raw(values.size(), 0);
           for (std::size_t index = 0; index < values.size(); ++index) {
             const auto parameterType = context.language().types.get(function->parameterTypes[index]);
             if (parameterType.kind == compiler::TypeKind::Pointer ||
@@ -405,32 +385,16 @@ namespace recurloop {
             }
           }
 
-          if (values.size() > 6)
-            expressionFail(context, name.offset, "native runtime calls currently support six scalar arguments");
-#if defined(__x86_64__)
-          const std::uintptr_t result = recurloop_call_scalar_native_sysv(entry, raw);
-#else
-          expressionFail(context, name.offset, "scalar native runtime calls are only implemented on x86-64");
-#endif
+          if (!scalarNativeSysvAvailable())
+            expressionFail(context, name.offset, "scalar native runtime calls are only implemented on x86-64");
+          const std::uintptr_t result = callScalarNativeSysv(entry, raw.data(), raw.size());
 
           if (resultType.kind == compiler::TypeKind::Void) return context::Value();
           return context::Value(static_cast<std::int64_t>(result));
         }
-        if (function->parameterTypes.empty() && function->resultType == context.language().types.find("i64")) {
-          return context::Value(reinterpret_cast<std::int64_t (*)()>(entry)());
-        }
-        if (function->parameterTypes.size() == 1 && function->resultType == context.language().types.find("i64") &&
-            values[0].isInteger()) {
-          return context::Value(reinterpret_cast<std::int64_t (*)(std::int64_t)>(entry)(values[0].asInteger()));
-        }
         if (function->parameterTypes.size() == 1 && function->resultType == context.language().types.find("i64") &&
             values[0].isReal()) {
           return context::Value(reinterpret_cast<std::int64_t (*)(double)>(entry)(values[0].asReal()));
-        }
-        if (function->parameterTypes.size() == 2 && function->resultType == context.language().types.find("i64") &&
-            values[0].isInteger() && values[1].isInteger()) {
-          return context::Value(reinterpret_cast<std::int64_t (*)(std::int64_t, std::int64_t)>(entry)(
-              values[0].asInteger(), values[1].asInteger()));
         }
         expressionFail(context, name.offset, "native runtime calls currently support only scalar integer ABI calls");
       }

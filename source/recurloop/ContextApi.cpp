@@ -5,6 +5,7 @@
 #include <recurloop/EngineImage.hpp>
 #include <recurloop/Functions.hpp>
 #include <recurloop/LexiconTransaction.hpp>
+#include <recurloop/NativeCall.hpp>
 #include <recurloop/PhraseAction.hpp>
 #include <recurloop/SyntaxExtension.hpp>
 #include <recurloop/SyntaxPattern.hpp>
@@ -124,6 +125,7 @@ namespace recurloop {
     constexpr std::string_view TypeFunction{"context:type:function"};
     constexpr std::string_view FunctionCompile{"context:function:compile"};
     constexpr std::string_view FunctionAddress{"context:function:address"};
+    constexpr std::string_view FunctionInvokeScalar{"context:function:invoke:scalar"};
 
     template <typename Result, typename Operation>
     Result checked(context::Context *context, Result failure, Operation &&operation) noexcept {
@@ -1535,6 +1537,19 @@ namespace recurloop {
       });
     }
 
+    extern "C" std::uint64_t contextFunctionInvokeScalar(context::Context *context, std::uint64_t entry,
+                                                          const std::uint8_t *args, std::uint64_t count) noexcept {
+      return checked(context, std::uint64_t{0}, [&](context::Context &) {
+        if (entry == 0) THROW(, "context scalar function invocation received a null entry")
+        if (count > 0 && args == nullptr) THROW(, "context scalar function invocation received null arguments")
+        if (!scalarNativeSysvAvailable())
+          THROW(, "context scalar function invocation is only implemented for sysv-amd64")
+        return static_cast<std::uint64_t>(
+            callScalarNativeSysv(static_cast<std::uintptr_t>(entry), reinterpret_cast<const std::uintptr_t *>(args),
+                                 static_cast<std::size_t>(count)));
+      });
+    }
+
     extern "C" std::uint64_t contextFunctionAddress(context::Context *context,
                                                           const std::uint8_t *symbol) noexcept {
       if (symbol == nullptr) return 0;
@@ -2262,6 +2277,9 @@ namespace recurloop {
     declareHostFunction(context, FunctionAddress, "context:function:address",
                         {contextPointer, bytePointer}, u64,
                         reinterpret_cast<std::uintptr_t>(&contextFunctionAddress));
+    declareHostFunction(context, FunctionInvokeScalar, "context:function:invoke:scalar",
+                        {contextPointer, u64, bytePointer, u64}, u64,
+                        reinterpret_cast<std::uintptr_t>(&contextFunctionInvokeScalar));
     declareHostFunction(context, TypeFunction, "context:type:function", {contextPointer, u64, u64, bytePointer, u64},
                         u64, reinterpret_cast<std::uintptr_t>(&contextTypeFunction));
     declareHostFunction(context, "context:type:function:fixed", "context:type:function:fixed",

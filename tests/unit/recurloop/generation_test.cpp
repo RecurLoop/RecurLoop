@@ -231,3 +231,28 @@ TEST(RecurloopGeneration, ProjectFileCachePreservesAssignmentsToBaselineValues) 
 
   fs::remove_all(root, error);
 }
+
+TEST(RecurloopGeneration, RuntimeNativeCallsPassScalarArgumentsBeyondRegisters) {
+  auto state = project();
+  auto session = state->openSession();
+
+  const auto definitions = session->evaluate(R"(
+let runtime_sum7 = fn (a:i64, b:i64, c:i64, d:i64, e:i64, f:i64, g:i64) -> i64 {
+  return a + b + c + d + e + f + g
+}
+let runtime_sum16 = fn (a:i64, b:i64, c:i64, d:i64, e:i64, f:i64, g:i64, h:i64,
+                        i:i64, j:i64, k:i64, l:i64, m:i64, n:i64, o:i64, p:i64) -> i64 {
+  return a + b + c + d + e + f + g + h + i + j + k + l + m + n + o + p
+}
+)");
+  ASSERT_EQ(definitions.status, 0) << definitions.error;
+
+  const auto seven = session->evaluate("print runtime_sum7(1, 2, 3, 4, 5, 6, 7)");
+  ASSERT_EQ(seven.status, 0) << seven.error;
+  EXPECT_EQ(seven.output, "28\n");
+
+  const auto sixteen = session->evaluate(
+      "print runtime_sum16(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16)");
+  ASSERT_EQ(sixteen.status, 0) << sixteen.error;
+  EXPECT_EQ(sixteen.output, "136\n");
+}

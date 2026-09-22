@@ -14,6 +14,9 @@ The implementation is split deliberately:
   RecurLoop function signature/body, compiles it with RecurLoop's ordinary
   function compiler, materializes the module through the normal JIT linker and
   returns its native entry address;
+- `context:function:invoke:scalar` invokes integer/pointer scalar native entries
+  through the same SysV AMD64 argument bridge used by ordinary runtime calls,
+  so scalar specializations do not need arity-specific wrappers;
 - the C++ host contains no inferred-language parser, inference rules or
   specialization policy.
 
@@ -116,10 +119,13 @@ native RecurLoop code.
 - `infer <form>` explicit selection and `infer { ... }` preference blocks;
 - phrase-backed visibility through `inferred_assert`.
 
-The current generated-call helpers support up to six call arguments. The
-compatibility experiment still focuses on integer/text values; it does not yet
-implement unions, arbitrary structural records, specialization eviction,
-megamorphic fallback, closures, floating point or a whole-program static solver.
+Calls have no language-level fixed arity limit. Generated boxed calls build a
+dynamic argument array, while integer scalar specializations use the shared
+native scalar-call bridge; practical limits are therefore memory and the host
+ABI rather than a hand-written `0..N` helper family. The compatibility experiment
+still focuses on integer/text values; it does not yet implement unions, arbitrary
+structural records, specialization eviction, megamorphic fallback, closures,
+floating point or a whole-program static solver.
 Tracing GC is deliberately not part of this model: boxed LanguageKit values use
 deterministic scopes/ownership around the compiled specialization boundary.
 

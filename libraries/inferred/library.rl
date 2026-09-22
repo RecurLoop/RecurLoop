@@ -590,33 +590,20 @@ let Inferred:native_binary = fn (state:Context*, op:i64, left:LanguageKit:Value*
     return Inferred:native_integer_binary(state, op, left, right)
 }
 
-let Inferred:native_invoke0 = fn (state:Context*, name:u8*) -> LanguageKit:Value* {
-    return LanguageKit:invoke(state, name, cast(LanguageKit:Value**, 0), 0)
+let Inferred:native_args = fn (argc:i64) -> LanguageKit:Value** {
+    if argc <= 0 { return cast(LanguageKit:Value**, 0) }
+    return cast(LanguageKit:Value**, malloc(argc * 8))
 }
-let Inferred:native_invoke1 = fn (state:Context*, name:u8*, a0:LanguageKit:Value*) -> LanguageKit:Value* {
-    let args = cast(LanguageKit:Value**, malloc(8)); if !args { return cast(LanguageKit:Value*, 0) }
-    args[0] = a0; let result = LanguageKit:invoke(state, name, args, 1); free(cast(u8*, args)); return result
+
+let Inferred:native_arg = fn (args:LanguageKit:Value**, index:i64, value:LanguageKit:Value*) -> LanguageKit:Value** {
+    if args { args[index] = value }
+    return args
 }
-let Inferred:native_invoke2 = fn (state:Context*, name:u8*, a0:LanguageKit:Value*, a1:LanguageKit:Value*) -> LanguageKit:Value* {
-    let args = cast(LanguageKit:Value**, malloc(16)); if !args { return cast(LanguageKit:Value*, 0) }
-    args[0] = a0; args[1] = a1; let result = LanguageKit:invoke(state, name, args, 2); free(cast(u8*, args)); return result
-}
-let Inferred:native_invoke3 = fn (state:Context*, name:u8*, a0:LanguageKit:Value*, a1:LanguageKit:Value*, a2:LanguageKit:Value*) -> LanguageKit:Value* {
-    let args = cast(LanguageKit:Value**, malloc(24)); if !args { return cast(LanguageKit:Value*, 0) }
-    args[0] = a0; args[1] = a1; args[2] = a2; let result = LanguageKit:invoke(state, name, args, 3); free(cast(u8*, args)); return result
-}
-let Inferred:native_invoke4 = fn (state:Context*, name:u8*, a0:LanguageKit:Value*, a1:LanguageKit:Value*, a2:LanguageKit:Value*, a3:LanguageKit:Value*) -> LanguageKit:Value* {
-    let args = cast(LanguageKit:Value**, malloc(32)); if !args { return cast(LanguageKit:Value*, 0) }
-    args[0] = a0; args[1] = a1; args[2] = a2; args[3] = a3; let result = LanguageKit:invoke(state, name, args, 4); free(cast(u8*, args)); return result
-}
-let Inferred:native_invoke5 = fn (state:Context*, name:u8*, a0:LanguageKit:Value*, a1:LanguageKit:Value*, a2:LanguageKit:Value*, a3:LanguageKit:Value*, a4:LanguageKit:Value*) -> LanguageKit:Value* {
-    let args = cast(LanguageKit:Value**, malloc(40)); if !args { return cast(LanguageKit:Value*, 0) }
-    args[0] = a0; args[1] = a1; args[2] = a2; args[3] = a3; args[4] = a4; let result = LanguageKit:invoke(state, name, args, 5); free(cast(u8*, args)); return result
-}
-let Inferred:native_invoke6 = fn (state:Context*, name:u8*, a0:LanguageKit:Value*, a1:LanguageKit:Value*, a2:LanguageKit:Value*, a3:LanguageKit:Value*, a4:LanguageKit:Value*, a5:LanguageKit:Value*) -> LanguageKit:Value* {
-    let args = cast(LanguageKit:Value**, malloc(48)); if !args { return cast(LanguageKit:Value*, 0) }
-    args[0] = a0; args[1] = a1; args[2] = a2; args[3] = a3; args[4] = a4; args[5] = a5
-    let result = LanguageKit:invoke(state, name, args, 6); free(cast(u8*, args)); return result
+
+let Inferred:native_invoke = fn (state:Context*, name:u8*, args:LanguageKit:Value**, argc:i64) -> LanguageKit:Value* {
+    if argc < 0 || (argc > 0 && !args) { return cast(LanguageKit:Value*, 0) }
+    defer free(cast(u8*, args))
+    return LanguageKit:invoke(state, name, args, argc)
 }
 
 let Inferred:append_integer = fn (out:LanguageKit:Text*, value:i64) -> i64 {
@@ -665,17 +652,24 @@ let Inferred:codegen_expr = fn (state:Context*, out:LanguageKit:Text*, expr:Infe
         return out.append_byte(cast(u8, 41))
     }
     if expr.kind == 4 {
-        if expr.argc < 0 || expr.argc > 6 { context:diagnostic:error(state, "Inferred: native calls currently support at most six arguments"); return 0 }
-        if !out.append("Inferred:native_invoke") { return 0 }
-        if !Inferred:append_integer(out, expr.argc) { return 0 }
-        if !out.append("(__state, ") { return 0 }
+        if expr.argc < 0 { context:diagnostic:error(state, "Inferred: native call has a negative argument count"); return 0 }
+        if !out.append("Inferred:native_invoke(__state, ") { return 0 }
         if !Inferred:append_quoted(out, expr.text) { return 0 }
-        var i = 0
-        while i < expr.argc {
-            if !out.append(", ") { return 0 }
-            if !Inferred:codegen_expr(state, out, expr.args[i]) { return 0 }
-            i += 1
+        if !out.append(", ") { return 0 }
+        if expr.argc == 0 {
+            if !out.append("cast(LanguageKit:Value**, 0)") { return 0 }
+        } else {
+            var open = 0
+            while open < expr.argc { if !out.append("Inferred:native_arg(") { return 0 }; open += 1 }
+            if !out.append("Inferred:native_args(") || !Inferred:append_integer(out, expr.argc) || !out.append_byte(cast(u8, 41)) { return 0 }
+            var i = 0
+            while i < expr.argc {
+                if !out.append(", ") || !Inferred:append_integer(out, i) || !out.append(", ") { return 0 }
+                if !Inferred:codegen_expr(state, out, expr.args[i]) || !out.append_byte(cast(u8, 41)) { return 0 }
+                i += 1
+            }
         }
+        if !out.append(", ") || !Inferred:append_integer(out, expr.argc) { return 0 }
         return out.append_byte(cast(u8, 41))
     }
     if expr.kind == 6 {
@@ -871,7 +865,7 @@ let Inferred:native_scalar_block = fn (state:Context*, out:LanguageKit:Text*, st
 }
 
 let Inferred:compile_native_scalar = fn (state:Context*, f:Inferred:Function*) -> i64 {
-    if !f || !f.body || f.arity < 0 || f.arity > 6 { return 0 }
+    if !f || !f.body || f.arity < 0 { return 0 }
     let signature = LanguageKit:Text:new(); let body = LanguageKit:Text:new()
     if !signature || !body {
         if signature { signature.destroy() }; if body { body.destroy() }
@@ -897,24 +891,21 @@ let Inferred:compile_native_scalar = fn (state:Context*, f:Inferred:Function*) -
     return entry
 }
 
-let Inferred:Scalar0 = fn () -> i64
-let Inferred:Scalar1 = fn (a0:i64) -> i64
-let Inferred:Scalar2 = fn (a0:i64, a1:i64) -> i64
-let Inferred:Scalar3 = fn (a0:i64, a1:i64, a2:i64) -> i64
-let Inferred:Scalar4 = fn (a0:i64, a1:i64, a2:i64, a3:i64) -> i64
-let Inferred:Scalar5 = fn (a0:i64, a1:i64, a2:i64, a3:i64, a4:i64) -> i64
-let Inferred:Scalar6 = fn (a0:i64, a1:i64, a2:i64, a3:i64, a4:i64, a5:i64) -> i64
-
-let Inferred:invoke_native_scalar = fn (entry:i64, args:LanguageKit:Value**, argc:i64) -> i64 {
-    if entry == 0 { return 0 }
-    if argc == 0 { let call = cast(Inferred:Scalar0, entry); return call() }
-    if argc == 1 { let call = cast(Inferred:Scalar1, entry); return call(args[0].number) }
-    if argc == 2 { let call = cast(Inferred:Scalar2, entry); return call(args[0].number, args[1].number) }
-    if argc == 3 { let call = cast(Inferred:Scalar3, entry); return call(args[0].number, args[1].number, args[2].number) }
-    if argc == 4 { let call = cast(Inferred:Scalar4, entry); return call(args[0].number, args[1].number, args[2].number, args[3].number) }
-    if argc == 5 { let call = cast(Inferred:Scalar5, entry); return call(args[0].number, args[1].number, args[2].number, args[3].number, args[4].number) }
-    if argc == 6 { let call = cast(Inferred:Scalar6, entry); return call(args[0].number, args[1].number, args[2].number, args[3].number, args[4].number, args[5].number) }
-    return 0
+let Inferred:invoke_native_scalar = fn (state:Context*, entry:i64, args:LanguageKit:Value**, argc:i64) -> i64 {
+    if entry == 0 || argc < 0 { return 0 }
+    var raw = cast(u64*, 0)
+    if argc > 0 {
+        raw = cast(u64*, malloc(argc * 8))
+        if !raw { return 0 }
+    }
+    defer free(cast(u8*, raw))
+    var i = 0
+    while i < argc {
+        if !args[i] || args[i].kind != 1 { return 0 }
+        raw[i] = cast(u64, args[i].number)
+        i += 1
+    }
+    return cast(i64, context:function:invoke:scalar(state, cast(u64, entry), cast(u8*, raw), cast(u64, argc)))
 }
 
 let Inferred:create_specialization = fn (state:Context*, f:Inferred:Function*, args:LanguageKit:Value**, argc:i64) -> Inferred:Specialization* {
@@ -928,7 +919,7 @@ let Inferred:create_specialization = fn (state:Context*, f:Inferred:Function*, a
 
     var types = cast(Inferred:TypeEnv*, 0); var i = 0
     while i < argc { spec.kinds[i] = args[i].kind; types = Inferred:TypeEnv:set(types, f.param_symbols[i], args[i].kind); i += 1 }
-    var scalar = argc <= 6; var scalar_i = 0
+    var scalar = 1; var scalar_i = 0
     while scalar_i < argc { if !args[scalar_i] || args[scalar_i].kind != 1 { scalar = 0 }; scalar_i += 1 }
     if scalar {
         let scalar_entry = Inferred:compile_native_scalar(state, f)
@@ -959,7 +950,7 @@ let Inferred:interop_call = fn (state:Context*, userdata:i64, args:LanguageKit:V
     var spec = Inferred:find_specialization(f, args, argc)
     if !spec { spec = Inferred:create_specialization(state, f, args, argc) }
     if !spec || spec.native_entry == 0 || (spec.state != 2 && spec.state != 3) { context:diagnostic:error(state, "Inferred: native specialization could not be materialized"); return cast(LanguageKit:Value*, 0) }
-    if spec.state == 3 { return LanguageKit:Value:integer(state, Inferred:invoke_native_scalar(spec.native_entry, args, argc)) }
+    if spec.state == 3 { return LanguageKit:Value:integer(state, Inferred:invoke_native_scalar(state, spec.native_entry, args, argc)) }
     let call = cast(LanguageKit:Call, spec.native_entry)
     let result = call(state, userdata, args, argc)
     if !result { context:diagnostic:error(state, "Inferred: native specialization returned no value"); return cast(LanguageKit:Value*, 0) }

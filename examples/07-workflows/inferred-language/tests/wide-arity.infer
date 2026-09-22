@@ -1,0 +1,24 @@
+poly fn sum8(a, b, c, d, e, f, g, h) {
+    return a + b + c + d + e + f + g + h
+}
+
+poly fn forward8(a, b, c, d, e, f, g, h) {
+    return sum8(a, b, c, d, e, f, g, h)
+}
+
+poly fn join8(a, b, c, d, e, f, g, h) {
+    return a + b + c + d + e + f + g + h
+}
+
+poly fn forward_join8(a, b, c, d, e, f, g, h) {
+    return join8(a, b, c, d, e, f, g, h)
+}
+
+print sum8(1, 2, 3, 4, 5, 6, 7, 8)
+print forward8(8, 7, 6, 5, 4, 3, 2, 1)
+print forward_join8("R", "e", "c", "u", "r", "L", "o", "op")
+
+poly specializations sum8
+poly specializations forward8
+poly specializations join8
+poly specializations forward_join8

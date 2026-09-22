@@ -4,7 +4,7 @@
 // This library contains the stable project runner, inotify watching, hot-reload
 // lifecycle, one shared project runtime and persistent terminal models. UI
 // primitives come from gui.rli; the default composition lives in libraries/ide/
-// and launcher source may replace any IDE_App:* phrase. The C++ host remains
+// and launcher source may replace any IDE:App:* phrase. The C++ host remains
 // unaware of GUI/IDE policy.
 // =============================================================================
 
@@ -161,45 +161,51 @@ record IDE:Host {
     reload_mode:i64
     reload_pending:i64
     job:IDE:Job*
+    window_title:u8*
+    window_width:i64
+    window_height:i64
 }
 
 // Stable view data layout. Default UI behavior lives in libraries/ide/*.rl and
 // can be replaced on every project publication without redefining records.
-let IDE_App = phrase { dictionary = true permanent = true }
-var IDE_App:hot_reload_probe = 1
+let IDE:App = phrase { dictionary = true permanent = true }
 
-// Source-defined IDE configuration.  The launcher .rl owns this object; the
-// native host only receives resolved strings and a reload policy.
+// Per-instance application object. A fresh Config is built for startup and for
+// each accepted hot-reload generation; native window calls stay behind Gui:*.
 record IDE:Config {
     workspace_path:u8*
     source_path:u8*
     cache_path:u8*
     watch_path:u8*
     reload_mode:i64
+    title_text:u8*
+    window_width:i64
+    window_height:i64
 }
+
 
 let IDE:Reload = phrase { dictionary = true permanent = true }
 let IDE:Reload:Off = fn () -> i64 { return 0 }
 let IDE:Reload:Hot = fn () -> i64 { return 1 }
 let IDE:Reload:Manual = fn () -> i64 { return 2 }
 
-record IDE_App:FileItem {
+record IDE:App:FileItem {
     state:u8*
     path:u8*
     depth:i64
     directory:i64
-    next:IDE_App:FileItem*
+    next:IDE:App:FileItem*
 }
 
-record IDE_App:TerminalView {
+record IDE:App:TerminalView {
     state:u8*
     model:IDE:Terminal*
     output:u8*
     entry:u8*
-    next:IDE_App:TerminalView*
+    next:IDE:App:TerminalView*
 }
 
-record IDE_App:State {
+record IDE:App:State {
     host:IDE:Host*
     root_box:u8*
     file_box:u8*
@@ -207,8 +213,8 @@ record IDE_App:State {
     file_label:u8*
     status:u8*
     notebook:u8*
-    files:IDE_App:FileItem*
-    terminal_views:IDE_App:TerminalView*
+    files:IDE:App:FileItem*
+    terminal_views:IDE:App:TerminalView*
 }
 
 let IDE:copy = fn (text:u8*) -> u8* {
@@ -882,10 +888,14 @@ let IDE:Runner:driver_source = fn (self:IDE:Runner*, driver:u8*) -> i64 {
     source.append("emit object ")
     if !IDE:append_source_string(source, self.object_path) { return 0 }
     source.append(" recurloop_ide_lifecycle = fn (action:i64, host:u8*) -> void {\n")
-    source.append("  if action == 1 { IDE_App:mount(cast(IDE:Host*, host)) }\n")
-    source.append("  else if action == 2 { IDE_App:unmount(cast(IDE:Host*, host)) }\n")
-    source.append("  else if action == 3 { IDE_App:reload_failed(cast(IDE:Host*, host)) }\n")
-    source.append("  else if action == 4 { IDE_App:runtime_ready(cast(IDE:Host*, host)) }\n")
+    source.append("  if action == 1 { IDE:App:mount(cast(IDE:Host*, host)) }\n")
+    source.append("  else if action == 2 { IDE:App:unmount(cast(IDE:Host*, host)) }\n")
+    source.append("  else if action == 3 { IDE:App:reload_failed(cast(IDE:Host*, host)) }\n")
+    source.append("  else if action == 4 { IDE:App:runtime_ready(cast(IDE:Host*, host)) }\n")
+    source.append("  else if action == 5 {\n")
+    source.append("    let app = IDE:Config:new()\n")
+    source.append("    if app { IDE:App:configure(app); app.apply(cast(IDE:Host*, host)); app.destroy() }\n")
+    source.append("  }\n")
     source.append("}\n")
     return IDE:write_file(driver, source.data)
 }
@@ -1172,34 +1182,7 @@ let IDE:Runner:attach = fn (program:u8*, root:u8*, application:u8*, socket_path:
 // Entry used by the short-lived helper process generated below.  Keeping the
 // expensive :load-file/:publish/native-module work outside the GTK process
 // keeps the UI event loop responsive while the cache warms or a reload builds.
-let IDE:worker_main = fn (kind:i64, root:u8*, application:u8*, socket_path:u8*, revision:u64, result_path:u8*) -> i64 {
-    // Keep the generated worker entry at six scalar arguments: native runtime
-    // calls currently use the SysV register-only fast path and reject a
-    // seventh scalar argument.  The executable and cache directory are both
-    // recoverable in the worker, so passing them would be redundant anyway.
-    let program = IDE:resolve_host()
-    if !program {
-        if result_path { IDE:write_file(result_path, "cannot resolve RecurLoop executable in IDE build worker") }
-        _exit(1)
-        return 1
-    }
-    defer free(program)
-
-    let artifact_directory = IDE:parent_path(result_path)
-    if !artifact_directory {
-        if result_path { IDE:write_file(result_path, "cannot resolve IDE worker cache directory") }
-        _exit(1)
-        return 1
-    }
-    defer free(artifact_directory)
-    let cache = IDE:parent_path(artifact_directory)
-    if !cache {
-        if result_path { IDE:write_file(result_path, "cannot resolve IDE worker cache root") }
-        _exit(1)
-        return 1
-    }
-    defer free(cache)
-
+let IDE:worker_main = fn (kind:i64, program:u8*, root:u8*, application:u8*, socket_path:u8*, cache:u8*, revision:u64, result_path:u8*) -> i64 {
     let runner = IDE:Runner:attach(program, root, application, socket_path, cache, revision)
     if !runner {
         if result_path { IDE:write_file(result_path, "cannot attach IDE build worker to project runtime") }
@@ -1285,11 +1268,15 @@ let IDE:write_worker_source = fn (host:IDE:Host*, kind:i64, revision:u64, source
     source.append("\nvar IDE_Worker_status = IDE:worker_main(")
     IDE:append_u64(source, cast(u64, kind))
     source.append(", ")
+    if !IDE:append_source_string(source, host.runner.program) { return 0 }
+    source.append(", ")
     if !IDE:append_source_string(source, host.runner.root) { return 0 }
     source.append(", ")
     if !IDE:append_source_string(source, host.runner.application) { return 0 }
     source.append(", ")
     if !IDE:append_source_string(source, host.runner.socket_path) { return 0 }
+    source.append(", ")
+    if !IDE:append_source_string(source, host.runner.cache_directory) { return 0 }
     source.append(", ")
     IDE:append_u64(source, revision)
     source.append(", ")
@@ -1616,6 +1603,12 @@ let IDE:finish_reload = fn (host:IDE:Host*, module_path:u8*, revision:u64) -> i6
     if host.runner.last_output { free(host.runner.last_output); host.runner.last_output = cast(u8*, 0) }
     if host.runner.last_error { free(host.runner.last_error); host.runner.last_error = cast(u8*, 0) }
 
+    // Re-evaluate source-defined application configuration for this concrete
+    // host instance before mounting the replacement view. The generation gets
+    // a fresh IDE:Config object; no configuration state is shared through
+    // globals or singleton variables.
+    next_lifecycle(5, cast(u8*, host))
+
     // Existing terminal sessions intentionally remain attached to their
     // current generation. Users opt into the newly published project state
     // with the terminal's explicit `:refresh` command.
@@ -1813,6 +1806,7 @@ let IDE:free_host = fn (host:IDE:Host*) -> void {
     if host.initial_module { free(host.initial_module) }
     if host.watch_root { free(host.watch_root) }
     if host.config_source { free(host.config_source) }
+    if host.window_title { free(host.window_title) }
     if host.root { free(host.root) }
     free(cast(u8*, host))
 }
@@ -1897,20 +1891,44 @@ include "ide/view.rl"
 
 let IDE:source_lifecycle = fn (action:i64, raw:u8*) -> void {
     let host = cast(IDE:Host*, raw)
-    if action == 1 { IDE_App:mount(host) }
-    else if action == 2 { IDE_App:unmount(host) }
-    else if action == 3 { IDE_App:reload_failed(host) }
-    else if action == 4 { IDE_App:runtime_ready(host) }
+    if action == 1 { IDE:App:mount(host) }
+    else if action == 2 { IDE:App:unmount(host) }
+    else if action == 3 { IDE:App:reload_failed(host) }
+    else if action == 4 { IDE:App:runtime_ready(host) }
 }
 
 let IDE:Config:new = fn () -> IDE:Config* {
-    let self = cast(IDE:Config*, malloc(40))
+    let self = cast(IDE:Config*, malloc(64))
     if !self { return cast(IDE:Config*, 0) }
     self.workspace_path = cast(u8*, 0)
     self.source_path = cast(u8*, 0)
     self.cache_path = cast(u8*, 0)
     self.watch_path = cast(u8*, 0)
     self.reload_mode = IDE:Reload:Hot()
+    self.title_text = IDE:copy("RecurLoop IDE")
+    self.window_width = 1360
+    self.window_height = 860
+    if !self.title_text {
+        free(cast(u8*, self))
+        return cast(IDE:Config*, 0)
+    }
+    return self
+}
+
+let IDE:Config:title = fn (self:IDE:Config*, title:u8*) -> IDE:Config* {
+    if !self { return self }
+    let next = IDE:copy(title)
+    if !next { return self }
+    if self.title_text { free(self.title_text) }
+    self.title_text = next
+    return self
+}
+
+let IDE:Config:size = fn (self:IDE:Config*, width:i64, height:i64) -> IDE:Config* {
+    if !self { return self }
+    if width <= 0 || height <= 0 || width > 2147483647 || height > 2147483647 { return self }
+    self.window_width = width
+    self.window_height = height
     return self
 }
 
@@ -1956,6 +1974,7 @@ let IDE:Config:destroy = fn (self:IDE:Config*) -> void {
     if self.source_path { free(self.source_path) }
     if self.cache_path { free(self.cache_path) }
     if self.watch_path { free(self.watch_path) }
+    if self.title_text { free(self.title_text) }
     free(cast(u8*, self))
 }
 
@@ -1963,6 +1982,36 @@ let IDE:resolve_workspace_path = fn (root:u8*, path:u8*) -> u8* {
     if !path || path[0] == 0 { return cast(u8*, 0) }
     if path[0] == 47 { return IDE:copy(path) }
     return IDE:join(root, path)
+}
+
+let IDE:Config:apply = fn (self:IDE:Config*, host:IDE:Host*) -> i64 {
+    if !self || !host { return 0 }
+
+    // Apply only live application properties here. Workspace/source/cache/watch
+    // define the persistent project runtime and are established when the IDE
+    // instance starts; every watched source file still shares one reload path.
+    if self.title_text && (!host.window_title || strcmp(self.title_text, host.window_title) != 0) {
+        let title = IDE:copy(self.title_text)
+        if !title { return 0 }
+        if host.window_title { free(host.window_title) }
+        host.window_title = title
+        if host.window { Gui:window_title(host.window, host.window_title) }
+    }
+
+    // Do not reset a user-resized window on unrelated reloads. Only push the
+    // configured size when the source-defined value itself changed.
+    if self.window_width != host.window_width || self.window_height != host.window_height {
+        host.window_width = self.window_width
+        host.window_height = self.window_height
+        if host.window { Gui:window_size(host.window, cast(i32, host.window_width), cast(i32, host.window_height)) }
+    }
+
+    if host.reload_mode != self.reload_mode {
+        host.reload_mode = self.reload_mode
+        host.reload_pending = 0
+    }
+    if host.reload_mode != IDE:Reload:Off() && !host.watcher { IDE:activate_watcher(host) }
+    return 1
 }
 
 let IDE:Config:open = fn (self:IDE:Config*) -> i64 {
@@ -2004,7 +2053,7 @@ let IDE:Config:open = fn (self:IDE:Config*) -> i64 {
     defer free(program)
     if !Gui:initialize() { return 1 }
 
-    let host = cast(IDE:Host*, malloc(176))
+    let host = cast(IDE:Host*, malloc(200))
     if !host { return 1 }
     host.root = IDE:copy(root)
     host.entry = IDE:copy(source)
@@ -2026,9 +2075,12 @@ let IDE:Config:open = fn (self:IDE:Config*) -> i64 {
     host.reload_mode = self.reload_mode
     host.reload_pending = 0
     host.job = cast(IDE:Job*, 0)
-    if !host.root || !host.entry || !host.watch_root || !host.config_source { IDE:free_host(host); return 1 }
+    host.window_title = IDE:copy(self.title_text)
+    host.window_width = self.window_width
+    host.window_height = self.window_height
+    if !host.root || !host.entry || !host.watch_root || !host.config_source || !host.window_title { IDE:free_host(host); return 1 }
 
-    host.window = Gui:window("RecurLoop IDE", 1360, 860)
+    host.window = Gui:window(host.window_title, cast(i32, host.window_width), cast(i32, host.window_height))
     if !host.window { IDE:free_host(host); return 1 }
     Gui:on_destroy(host.window, IDE:on_destroy, cast(u8*, host))
 
@@ -2051,6 +2103,17 @@ let IDE:Config:open = fn (self:IDE:Config*) -> i64 {
     }
     IDE:free_host(host)
     return 0
+}
+
+// Small ownership wrapper for launcher code. The project provides the
+// configuration callback; each run owns a fresh Config object.
+let IDE:run = fn (configure:fn (IDE:Config*) -> void) -> i64 {
+    if !configure { return 1 }
+    let app = IDE:Config:new()
+    if !app { return 1 }
+    defer app.destroy()
+    configure(app)
+    return app.open()
 }
 
 languagekit_native_end

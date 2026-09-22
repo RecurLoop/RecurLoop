@@ -1,11 +1,11 @@
-let IDE_App:terminal_render = fn (view:IDE_App:TerminalView*) -> void {
+let IDE:App:terminal_render = fn (view:IDE:App:TerminalView*) -> void {
     if !view || !view.model || !view.output { return }
     Gui:text_set(view.output, view.model.transcript)
     Gui:text_scroll_end(view.output)
 }
 
-let IDE_App:on_terminal_activate = fn (widget:u8*, data:u8*) -> void {
-    let view = cast(IDE_App:TerminalView*, data)
+let IDE:App:on_terminal_activate = fn (widget:u8*, data:u8*) -> void {
+    let view = cast(IDE:App:TerminalView*, data)
     if !view || !view.model || !view.model.runtime { return }
     let source = Gui:input_text(view.entry)
     if !source || source[0] == 0 { return }
@@ -20,12 +20,12 @@ let IDE_App:on_terminal_activate = fn (widget:u8*, data:u8*) -> void {
     let error = view.model.runtime.last_error
     if output && output[0] != 0 { view.model.append(output) }
     if error && error[0] != 0 { view.model.append(error); view.model.append("\n") }
-    IDE_App:terminal_render(view)
+    IDE:App:terminal_render(view)
     Gui:input_set(view.entry, "")
     Gui:focus(view.entry)
 }
 
-let IDE_App:terminal_title = fn (model:IDE:Terminal*) -> u8* {
+let IDE:App:terminal_title = fn (model:IDE:Terminal*) -> u8* {
     let title = LanguageKit:Text:new()
     if !title { return cast(u8*, 0) }
     defer title.destroy()
@@ -34,9 +34,9 @@ let IDE_App:terminal_title = fn (model:IDE:Terminal*) -> u8* {
     return title.take()
 }
 
-let IDE_App:add_terminal_view = fn (state:IDE_App:State*, model:IDE:Terminal*) -> void {
+let IDE:App:add_terminal_view = fn (state:IDE:App:State*, model:IDE:Terminal*) -> void {
     if !state || !model { return }
-    let view = cast(IDE_App:TerminalView*, malloc(40))
+    let view = cast(IDE:App:TerminalView*, malloc(40))
     if !view { return }
     view.state = cast(u8*, state)
     view.model = model
@@ -61,38 +61,38 @@ let IDE_App:add_terminal_view = fn (state:IDE_App:State*, model:IDE:Terminal*) -
     Gui:append(command, prompt, 0, 0)
     Gui:append(command, view.entry, 1, 0)
 
-    Gui:on_activate(view.entry, IDE_App:on_terminal_activate, cast(u8*, view))
+    Gui:on_activate(view.entry, IDE:App:on_terminal_activate, cast(u8*, view))
     Gui:append(page_box, scroll, 1, 0)
     Gui:append_end(page_box, command, 0, 0)
 
-    IDE_App:terminal_render(view)
-    let title_text = IDE_App:terminal_title(model)
+    IDE:App:terminal_render(view)
+    let title_text = IDE:App:terminal_title(model)
     let page = Gui:tabs_append(state.notebook, page_box, title_text)
     if title_text { free(title_text) }
     Gui:tabs_select(state.notebook, page)
     Gui:focus(view.entry)
 }
 
-let IDE_App:on_add_terminal = fn (widget:u8*, data:u8*) -> void {
-    let state = cast(IDE_App:State*, data)
+let IDE:App:on_add_terminal = fn (widget:u8*, data:u8*) -> void {
+    let state = cast(IDE:App:State*, data)
     if !state || !state.host { return }
     let model = IDE:terminal_new(state.host)
-    if !model { IDE_App:set_status(state, "cannot create terminal session"); return }
-    IDE_App:add_terminal_view(state, model)
+    if !model { IDE:App:set_status(state, "cannot create terminal session"); return }
+    IDE:App:add_terminal_view(state, model)
     Gui:show(state.notebook)
 }
 
-let IDE_App:mount_terminals = fn (state:IDE_App:State*) -> void {
+let IDE:App:mount_terminals = fn (state:IDE:App:State*) -> void {
     if !state || !state.host { return }
     if !state.host.terminals { IDE:terminal_new(state.host) }
     var model = state.host.terminals
     while model {
-        IDE_App:add_terminal_view(state, model)
+        IDE:App:add_terminal_view(state, model)
         model = model.next
     }
 }
 
-let IDE_App:free_terminal_views = fn (state:IDE_App:State*) -> void {
+let IDE:App:free_terminal_views = fn (state:IDE:App:State*) -> void {
     if !state { return }
     var view = state.terminal_views
     while view {
@@ -100,5 +100,5 @@ let IDE_App:free_terminal_views = fn (state:IDE_App:State*) -> void {
         free(cast(u8*, view))
         view = next
     }
-    state.terminal_views = cast(IDE_App:TerminalView*, 0)
+    state.terminal_views = cast(IDE:App:TerminalView*, 0)
 }

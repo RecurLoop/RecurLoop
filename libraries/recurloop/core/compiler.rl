@@ -201,6 +201,7 @@ compiler {
   extern "context:expression:format:at" symbol "context:expression:format:at" params [ "Context*" "u8*" "u64" "u64" "u8*" "u64" "u64" ] result "u8*" abi "sysv-amd64" imported
   extern "context:function:address" symbol "context:function:address" params [ "Context*" "u8*" ] result "u64" abi "sysv-amd64" imported
   extern "context:function:compile" symbol "context:function:compile" params [ "Context*" "u8*" "u8*" "u8*" ] result "u64" abi "sysv-amd64" imported
+  extern "context:function:invoke:scalar" symbol "context:function:invoke:scalar" params [ "Context*" "u64" "u8*" "u64" ] result "u64" abi "sysv-amd64" imported
   extern "context:phrase:call" symbol "context:phrase:call" params [ "Context*" "u64" "u64" ] result "u64" abi "sysv-amd64" imported
   extern "context:phrase:child" symbol "context:phrase:child" params [ "Context*" "u64" "u64" ] result "u64" abi "sysv-amd64" imported
   extern "context:phrase:child:first" symbol "context:phrase:child:first" params [ "Context*" "u64" ] result "u64" abi "sysv-amd64" imported

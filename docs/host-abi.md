@@ -89,7 +89,10 @@ production source file.
 
 Assembler encoding, debugger/process control, executable memory, filesystem/IO,
 native calls and LLVM/toolchain integration remain intentional host/backend
-responsibilities.
+responsibilities. `context:function:invoke:scalar` is the generic source-facing
+entry to the host scalar-call bridge: it accepts an entry address plus a byte
+buffer containing a dynamic array of raw machine-word arguments, so source libraries do not need arity-specific
+native-call wrappers.
 
 ## Freeze rule
 

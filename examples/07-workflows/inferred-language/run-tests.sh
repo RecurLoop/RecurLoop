@@ -27,7 +27,7 @@ run_ok() {
     printf '[inferred] %-20s ok\n' "$name"
 }
 
-for name in lazy-specialization control-flow recursion shared-interop selectors phrase-visibility shared-reader; do
+for name in lazy-specialization control-flow recursion shared-interop selectors phrase-visibility shared-reader wide-arity; do
     run_ok "$name"
 done
 
