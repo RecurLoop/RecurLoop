@@ -1070,32 +1070,27 @@ let IDE:Runner:candidate = fn (self:IDE:Runner*) -> IDE:Runner* {
         return next
     }
 
-    if build.load_view_environment(self) != 0 || build.load_transient_file(driver) != 0 {
+    if build.load_view_environment(self) != 0 {
         next.last_error = IDE:copy(build.last_error)
-    } else if !next.link_module() {
+    } else {
+        next.last_output = build.cache_dependencies()
+    }
+    if !next.last_error && !next.last_output {
+        next.last_error = IDE:copy("project dependency graph is unavailable")
+    } else if !next.last_error && (build.request(":publish-prepare") != 0 || !build.last_output || !IDE:text_contains(build.last_output, "prepared project=")) {
+        next.last_error = IDE:copy(build.last_error)
+        if !next.last_error { next.last_error = IDE:copy("project publication could not be prepared") }
+    } else if !next.last_error && build.load_transient_file(driver) != 0 {
+        next.last_error = IDE:copy(build.last_error)
+    } else if !next.last_error && !next.link_module() {
         let error = dlerror()
         next.last_error = IDE:copy(error)
         if !next.last_error { next.last_error = IDE:copy("native lifecycle link failed") }
-    } else {
-        let publish = IDE:RuntimeSession:new(self)
-        if !publish {
-            next.last_error = IDE:copy("cannot connect publication session to project runtime")
-        } else {
-            if publish.load_environment(self) != 0 {
-                next.last_error = IDE:copy(publish.last_error)
-            } else {
-                next.last_output = publish.cache_dependencies()
-            }
-            if !next.last_error && !next.last_output {
-                next.last_error = IDE:copy("project dependency graph is unavailable")
-            } else if !next.last_error && (publish.request(":publish") != 0 || !publish.last_output || !IDE:text_contains(publish.last_output, "published project=")) {
-                next.last_error = IDE:copy(publish.last_error)
-                if !next.last_error { next.last_error = IDE:copy("project publication failed") }
-            } else if !next.last_error {
-                next.last_status = 0
-            }
-            publish.destroy()
-        }
+    } else if !next.last_error && (build.request(":publish-commit") != 0 || !build.last_output || !IDE:text_contains(build.last_output, "published project=")) {
+        next.last_error = IDE:copy(build.last_error)
+        if !next.last_error { next.last_error = IDE:copy("project publication failed") }
+    } else if !next.last_error {
+        next.last_status = 0
     }
     build.destroy()
     unlink(driver)

@@ -125,6 +125,48 @@ TEST(RecurloopGeneration, SessionControlsAreOrdinarySourcePhrases) {
   EXPECT_TRUE(quit.quit);
 }
 
+TEST(RecurloopGeneration, PreparedPublicationCommitsCleanSnapshotAfterLaterSessionWork) {
+  auto state = project();
+  auto publisher = state->openSession();
+  auto observer = state->openSession();
+
+  ASSERT_EQ(publisher->evaluate("var prepared_value = 41").status, 0);
+  const auto prepared = publisher->evaluate(":publish-prepare");
+  ASSERT_EQ(prepared.status, 0) << prepared.error;
+  EXPECT_NE(prepared.output.find("prepared project="), std::string::npos);
+
+  observer->refresh();
+  EXPECT_NE(observer->evaluate("print prepared_value").status, 0);
+  ASSERT_EQ(publisher->evaluate("prepared_value = 99").status, 0);
+
+  const auto committed = publisher->evaluate(":publish-commit");
+  ASSERT_EQ(committed.status, 0) << committed.error;
+  EXPECT_NE(committed.output.find("published project="), std::string::npos);
+  EXPECT_EQ(publisher->evaluate("print prepared_value").output, "41\n");
+
+  observer->refresh();
+  EXPECT_EQ(observer->evaluate("print prepared_value").output, "41\n");
+}
+
+TEST(RecurloopGeneration, PreparedPublicationCannotReplaceNewerGeneration) {
+  auto state = project();
+  auto stale = state->openSession();
+  auto newer = state->openSession();
+
+  ASSERT_EQ(stale->evaluate("var stale_prepared_value = 1").status, 0);
+  ASSERT_EQ(stale->evaluate(":publish-prepare").status, 0);
+  ASSERT_EQ(newer->evaluate("var newer_published_value = 2").status, 0);
+  ASSERT_EQ(newer->evaluate(":publish").status, 0);
+
+  const auto rejected = stale->evaluate(":publish-commit");
+  EXPECT_NE(rejected.status, 0);
+  EXPECT_NE(rejected.error.find("newer project generation"), std::string::npos);
+
+  auto observer = state->openSession();
+  EXPECT_EQ(observer->evaluate("print newer_published_value").output, "2\n");
+  EXPECT_NE(observer->evaluate("print stale_prepared_value").status, 0);
+}
+
 TEST(RecurloopGeneration, ResetKernelStaysEmptyInsideProjectSession) {
   char program[] = "recurloop-test";
   char reset[] = "--reset";

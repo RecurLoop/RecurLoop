@@ -37,6 +37,7 @@ namespace recurloop {
   void Session::attach(std::shared_ptr<const ProjectGeneration> generation) {
     if (!generation || !generation->lexicon) THROW(, "session requires a published project generation")
     projectGeneration_ = std::move(generation);
+    preparedPublication_.reset();
     const GenerationId contextId = project_->nextId();
     const GenerationId sessionGeneration = project_->nextId();
     contextGeneration_ = std::make_unique<ContextGeneration>(projectGeneration_->lexicon, project_->config(),
@@ -120,6 +121,23 @@ namespace recurloop {
           *requestOut << "published project=" << generation->id << " lexicon=" << generation->lexicon->id() << '\n';
           break;
         }
+        case SessionCommand::PreparePublish: {
+          preparedPublication_ = project_->preparePublication(contextGeneration_->context());
+          *requestOut << "prepared project=" << preparedPublication_->id
+                      << " lexicon=" << preparedPublication_->lexicon->id() << '\n';
+          break;
+        }
+        case SessionCommand::CommitPublish: {
+          auto generation = preparedPublication_;
+          if (!generation) THROW(, "no prepared project generation is available")
+          if (!project_->commitPublication(generation)) {
+            preparedPublication_.reset();
+            THROW(, "a newer project generation was published before the prepared generation")
+          }
+          attach(generation);
+          *requestOut << "published project=" << generation->id << " lexicon=" << generation->lexicon->id() << '\n';
+          break;
+        }
         case SessionCommand::Refresh:
           attach(project_->current());
           *requestOut << "refreshed " << generationText(contextGeneration_->generations()) << '\n';
@@ -153,7 +171,8 @@ namespace recurloop {
           break;
         }
         case SessionCommand::Help:
-          *requestOut << "phrases: :generations, :publish, :refresh, :baseline, :cache, :cache-status, "
+          *requestOut << "phrases: :generations, :publish, :publish-prepare, :publish-commit, :refresh, :baseline, "
+                         ":cache, :cache-status, "
                          ":cache-dependencies, :load \"<path>\", :quit, :exit\n";
           break;
         case SessionCommand::Quit: response.quit = true; break;

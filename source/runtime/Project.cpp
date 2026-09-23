@@ -183,6 +183,22 @@ namespace recurloop {
     return LexiconGeneration::capture(context, lexiconId);
   }
 
+  std::shared_ptr<const ProjectGeneration> Project::preparePublication(context::Context &source) {
+    const GenerationId projectId = nextId();
+    const GenerationId lexiconId = nextId();
+    auto lexicon = portableLexicon(source, lexiconId);
+    return std::make_shared<ProjectGeneration>(ProjectGeneration{projectId, std::move(lexicon)});
+  }
+
+  bool Project::commitPublication(const std::shared_ptr<const ProjectGeneration> &generation) {
+    if (!generation || !generation->lexicon) return false;
+    std::lock_guard publishLock(publishMutex_);
+    std::unique_lock lock(generationMutex_);
+    if (current_ && current_->id >= generation->id) return false;
+    current_ = generation;
+    return true;
+  }
+
   std::shared_ptr<const ProjectGeneration> Project::publish(context::Context &source) {
     std::lock_guard publishLock(publishMutex_);
     const GenerationId projectId = nextId();

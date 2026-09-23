@@ -51,6 +51,7 @@ namespace recurloop {
     GenerationId id_ = 0;
     mutable std::mutex mutex_;
     std::shared_ptr<const ProjectGeneration> projectGeneration_;
+    std::shared_ptr<const ProjectGeneration> preparedPublication_;
     std::unique_ptr<ContextGeneration> contextGeneration_;
     std::vector<std::uint8_t> rollbackBuffer_;
     bool cacheEnabled_ = false;

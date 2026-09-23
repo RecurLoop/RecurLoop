@@ -189,6 +189,8 @@ session.cache
 session.generations
 session.help
 session.publish
+session.publish-commit
+session.publish-prepare
 session.quit
 session.refresh
 source.include

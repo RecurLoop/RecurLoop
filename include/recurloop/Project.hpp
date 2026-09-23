@@ -116,10 +116,14 @@ namespace recurloop {
     }
 
   private:
+    friend class Session;
+
     Project(context::Config config, ActionEntries actions, std::vector<std::string> arguments)
         : config_(std::move(config)), actions_(std::move(actions)), arguments_(std::move(arguments)) {}
 
     std::shared_ptr<const LexiconGeneration> portableLexicon(context::Context &source, GenerationId lexiconId);
+    std::shared_ptr<const ProjectGeneration> preparePublication(context::Context &source);
+    bool commitPublication(const std::shared_ptr<const ProjectGeneration> &generation);
     std::uint64_t baselineHash() const;
 
     context::Config config_;

@@ -20,6 +20,14 @@ namespace recurloop {
       request(SessionCommand::Publish);
     }
 
+    void preparePublish(context::Context &, lexicon::Phrase &) {
+      request(SessionCommand::PreparePublish);
+    }
+
+    void commitPublish(context::Context &, lexicon::Phrase &) {
+      request(SessionCommand::CommitPublish);
+    }
+
     void refresh(context::Context &, lexicon::Phrase &) {
       request(SessionCommand::Refresh);
     }
@@ -60,6 +68,8 @@ namespace recurloop {
   void SessionRequestScope::registerActions(context::Context &context) {
     context.actions().define("session.generations", generations);
     context.actions().define("session.publish", publish);
+    context.actions().define("session.publish-prepare", preparePublish);
+    context.actions().define("session.publish-commit", commitPublish);
     context.actions().define("session.refresh", refresh);
     context.actions().define("session.baseline", baseline);
     context.actions().define("session.cache", cache);

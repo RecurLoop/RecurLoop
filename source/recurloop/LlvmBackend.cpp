@@ -1126,7 +1126,14 @@ namespace recurloop::function_internal {
     if (automatic)
       for (const std::string &symbol : result.imports) pending.push_back(symbol);
     for (const std::string &symbol : context.language().includedModules()) pending.push_back(symbol);
-    const bool hostTarget = result.triple == llvm::Triple::normalize(llvm::sys::getDefaultTargetTriple());
+    llvm::Triple outputTarget(result.triple);
+    llvm::Triple hostTargetTriple(llvm::Triple::normalize(llvm::sys::getDefaultTargetTriple()));
+    // The vendor component does not describe an ABI. CMake may discover
+    // x86_64-pc-linux-gnu while the linked LLVM reports
+    // x86_64-unknown-linux-gnu; both can reuse modules compiled for this host.
+    outputTarget.setVendor(llvm::Triple::UnknownVendor);
+    hostTargetTriple.setVendor(llvm::Triple::UnknownVendor);
+    const bool hostTarget = outputTarget.isCompatibleWith(hostTargetTriple);
 
     while (!pending.empty()) {
       std::string symbol = std::move(pending.front());

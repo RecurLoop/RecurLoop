@@ -13,6 +13,8 @@ namespace recurloop {
   enum class SessionCommand {
     Generations,
     Publish,
+    PreparePublish,
+    CommitPublish,
     Refresh,
     Baseline,
     Cache,

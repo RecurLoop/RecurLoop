@@ -19,6 +19,11 @@ already-open terminal sessions: each terminal keeps its local state and current
 generation until the user explicitly executes `:refresh`. New terminal sessions
 attach to the current published generation.
 
+A reload build prepares an unpublished semantic snapshot before compiling its
+transient lifecycle driver and commits that snapshot only after the native
+module links successfully. The same build session can therefore publish the
+clean pre-driver state without loading the complete project a second time.
+
 ## Step cache
 
 `--project-cache <dir>` enables persistent source checkpoints. `IDE:Config`

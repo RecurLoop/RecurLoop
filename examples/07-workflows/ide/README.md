@@ -51,6 +51,10 @@ the visible generation is unmounted. The old view is then destroyed and a new
 project-local view is mounted against the same `IDE:Host`. Failed rebuilds keep
 the current visible view alive.
 
+The worker prepares its Project publication before compiling the generated
+lifecycle driver, then commits it only after linking succeeds. This keeps the
+publication transactional without a second load of the project environment.
+
 ## Persistent runtime state
 
 The window, Project server, cache, watcher and `IDE:Terminal` models live in

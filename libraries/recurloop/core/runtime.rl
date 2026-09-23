@@ -181,6 +181,16 @@ phrase session_publish = ":publish" in root {
   action host "session.publish"
 }
 
+phrase session_publish_prepare = ":publish-prepare" in root {
+  type phrase_types_elaborate
+  action host "session.publish-prepare"
+}
+
+phrase session_publish_commit = ":publish-commit" in root {
+  type phrase_types_elaborate
+  action host "session.publish-commit"
+}
+
 phrase session_quit = ":quit" in root {
   type phrase_types_elaborate
   action host "session.quit"
