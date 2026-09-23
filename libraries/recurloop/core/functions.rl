@@ -6,6 +6,9 @@ phrase fn_grammar = "\0fn-grammar" in root {
 }
 
 phrase fn = "fn" in root {
+  kind "keyword"
+  color "#569CD6"
+  docs "Defines a typed function."
   type phrase_types_data
 }
 
@@ -17,18 +20,27 @@ phrase fn_cc83a0 = "fn" in root {
 }
 
 phrase forward = "forward" in root {
+  kind "keyword"
+  color "#569CD6"
+  docs "Declares a function before its implementation."
   type phrase_types_elaborate
   action host "fn.forward"
   language compiler
 }
 
 phrase function = "function" in root {
+  kind "keyword"
+  color "#569CD6"
+  docs "Declares a typed function value."
   type phrase_types_elaborate
   action host "typed.function"
   language compiler
 }
 
 phrase method = "method" in root {
+  kind "keyword"
+  color "#569CD6"
+  docs "Declares a method associated with a record type."
   type phrase_types_elaborate
   action host "typed.method"
   language compiler

@@ -5,6 +5,7 @@
 #include <recurloop/ContextApi.hpp>
 #include <recurloop/Expressions.hpp>
 #include <recurloop/HostAbi.hpp>
+#include <recurloop/Semantic.hpp>
 
 #include <compiler/Assembler.hpp>
 #include <compiler/LanguageState.hpp>
@@ -58,6 +59,9 @@ namespace recurloop::internal {
       std::string type;
       std::string action;
       std::string successor;
+      std::optional<std::string> kind;
+      std::optional<std::string> color;
+      std::optional<std::string> docs;
       Payload payload;
     };
 
@@ -292,6 +296,9 @@ namespace recurloop::internal {
           if (f[0] == "type" && f.size() == 2) { phrase->hasType = true; phrase->type = f[1]; continue; }
           if (f[0] == "successor" && f.size() == 2) { phrase->hasSuccessor = true; phrase->successor = f[1]; continue; }
           if (f[0] == "action" && f.size() == 3 && f[1] == "host") { phrase->hasAction = true; phrase->action = f[2]; continue; }
+          if (f[0] == "kind" && f.size() == 2) { phrase->kind = f[1]; continue; }
+          if (f[0] == "color" && f.size() == 2) { phrase->color = f[1]; continue; }
+          if (f[0] == "docs" && f.size() == 2) { phrase->docs = f[1]; continue; }
           static const std::unordered_set<std::string> payloads{
               "language", "phrase-type", "operator", "intrinsic-behavior", "assignment", "intrinsic",
               "variable", "character", "abi-cleanup", "abi-stack", "section", "byte-width", "operand-size",
@@ -815,6 +822,16 @@ namespace recurloop::internal {
       if (spec.rewritable) phrase.setRewritable(true);
       if (spec.permanent) phrase.setPermanent(true);
       phrase.save();
+    }
+
+    // Semantic metadata is stored after the physical phrase graph is stable so
+    // sidecar records never perturb the source-core phrase addresses while it
+    // is being materialized. References inside the sidecar are image-relocated.
+    for (const PhraseSpec &spec : definition.phrases) {
+      lexicon::Phrase phrase = phrases.at(spec.label);
+      if (spec.kind) Semantic::setKind(context, phrase, *spec.kind);
+      if (spec.color) Semantic::setColor(context, phrase, *spec.color);
+      if (spec.docs) Semantic::setDocs(context, phrase, *spec.docs);
     }
 
     verifyCompiler(context, definition.compiler);

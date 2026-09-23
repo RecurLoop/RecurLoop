@@ -341,6 +341,9 @@ namespace recurloop {
     }
 
     void invoke_native_action(context::Context &context, lexicon::Phrase &invoked) {
+      // Native entries may implement an elaboration action.  Semantic
+      // inspection must run that grammar behavior just like the interpreter;
+      // suppressing the dispatcher here can prevent source progress.
       lexicon::Phrase implementation = native_action_implementation(invoked, sizeof(NativeActionData));
       NativeActionData data;
       implementation.fetch(0, data);
@@ -354,6 +357,8 @@ namespace recurloop {
     }
 
     void invoke_deferred_native_action(context::Context &context, lexicon::Phrase &invoked) {
+      // See invoke_native_action(): deferred native actions can be grammar
+      // elaboration actions as well and must not be dropped during inspection.
       lexicon::Phrase implementation = native_action_implementation(invoked, sizeof(DeferredNativeActionData));
       DeferredNativeActionData data;
       implementation.fetch(0, data);

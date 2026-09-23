@@ -183,18 +183,21 @@ TEST_F(EngineImageTesting, LoadsImageDependenciesTransitivelyAndSkipsAnAlreadyLo
 }
 
 TEST_F(EngineImageTesting, FlattensShadowedPhrasesAndRelocatesAcrossARebuild) {
-  initializeWith("let print = <debug:ping>\n");
-  ASSERT_FALSE(rootPhrase("print").older().isNull());
+  // Use an ordinary phrase rather than a core phrase such as `print`. Core
+  // phrases can be referenced by serializable semantic-metadata relocations,
+  // and referenced shadowed phrases must deliberately survive an image rebuild.
+  initializeWith("let shadowed = <debug:stats>\nlet shadowed = <debug:ping>\n");
+  ASSERT_FALSE(rootPhrase("shadowed").older().isNull());
   const Size expanded = context.lexicon.memoryUsed();
 
   const std::vector<std::uint8_t> image = recurloop::EngineImage::encode(context);
   recurloop::EngineImage::decode(context, image);
 
-  lexicon::Phrase print = rootPhrase("print");
-  ASSERT_FALSE(print.isNull());
-  EXPECT_TRUE(print.older().isNull());
+  lexicon::Phrase shadowed = rootPhrase("shadowed");
+  ASSERT_FALSE(shadowed.isNull());
+  EXPECT_TRUE(shadowed.older().isNull());
   EXPECT_LT(context.lexicon.memoryUsed(), expanded);
-  recurloop::executeSource(context, "print\n", "<image-test>", 1);
+  recurloop::executeSource(context, "shadowed\n", "<image-test>", 1);
   EXPECT_EQ(output.str(), "pong\n");
 }
 

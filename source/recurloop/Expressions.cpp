@@ -4,6 +4,7 @@
 #include <recurloop/PhraseDefinition.hpp>
 #include <recurloop/LanguageGrammar.hpp>
 #include <recurloop/Blocks.hpp>
+#include <recurloop/Semantic.hpp>
 
 #include <compiler/LanguageState.hpp>
 #include <context/Values.hpp>
@@ -55,6 +56,10 @@ namespace recurloop {
       SourceLocation expressionOrigin;
       const std::string expression = Blocks::captureExpression(context, &expressionOrigin);
       if (expression.empty()) expressionFail(context, 0, "assignment requires an expression");
+      if (Semantic::active(context)) {
+        (void)Expressions::evaluate(context, expression, expressionOrigin);
+        return;
+      }
       context.values().assign(invoked.getKey(), compound(context, {invoked.getKey(), parsed.operation, expression,
                                                                    std::move(expressionOrigin)}));
     }
@@ -221,13 +226,15 @@ namespace recurloop {
 
   void Expressions::variable(context::Context &context, lexicon::Phrase &) {
     const internal::Assignment statement = internal::assignment(context, true);
-    context.values().define(statement.name, evaluate(context, statement.expression, statement.expressionOrigin), true);
+    const context::Value value = evaluate(context, statement.expression, statement.expressionOrigin);
+    if (!Semantic::active(context)) context.values().define(statement.name, value, true);
     bindAssignment(context, statement.name);
   }
 
   void Expressions::constant(context::Context &context, lexicon::Phrase &) {
     const internal::Assignment statement = internal::assignment(context, true);
-    context.values().define(statement.name, evaluate(context, statement.expression, statement.expressionOrigin), false);
+    const context::Value value = evaluate(context, statement.expression, statement.expressionOrigin);
+    if (!Semantic::active(context)) context.values().define(statement.name, value, false);
     bindAssignment(context, statement.name);
   }
 
@@ -254,6 +261,10 @@ namespace recurloop {
   void Expressions::assign(context::Context &context, lexicon::Phrase &) {
     if (PhraseDefinition::mutate(context)) return;
     const internal::Assignment statement = internal::assignment(context, false);
+    if (Semantic::active(context)) {
+      (void)evaluate(context, statement.expression, statement.expressionOrigin);
+      return;
+    }
     context.values().assign(statement.name, internal::compound(context, statement));
   }
 
@@ -261,7 +272,9 @@ namespace recurloop {
     SourceLocation origin;
     const std::string source = Blocks::captureExpression(context, &origin);
     if (source.empty()) internal::expressionFail(context, 0, "print requires an expression");
-    *context.io.out << evaluate(context, source, origin).format() << '\n';
+    const context::Value value = evaluate(context, source, origin);
+    if (Semantic::active(context)) return;
+    *context.io.out << value.format() << '\n';
     context.io.out->flush();
   }
 
@@ -269,7 +282,9 @@ namespace recurloop {
     SourceLocation origin;
     const std::string source = Blocks::captureExpression(context, &origin);
     if (source.empty()) internal::expressionFail(context, 0, "assert requires an expression");
-    if (!evaluate(context, source, origin).asBoolean()) {
+    const context::Value value = evaluate(context, source, origin);
+    if (Semantic::active(context)) return;
+    if (!value.asBoolean()) {
       const SourceLocation location = sourceLocationAt(origin, source, 0);
       THROW_AT(location, "assertion failed: " << source)
     }

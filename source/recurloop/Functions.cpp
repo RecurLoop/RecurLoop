@@ -12,6 +12,7 @@
 #include <lexicon/Lexicon.hpp>
 #include <recurloop/Blocks.hpp>
 #include <recurloop/LanguageGrammar.hpp>
+#include <recurloop/Semantic.hpp>
 #include <utilities/Exception.hpp>
 
 #include <algorithm>
@@ -253,6 +254,12 @@ namespace recurloop {
   }
 
   void Functions::invokeBoundAction(context::Context &context, lexicon::Phrase &invoked) {
+    // Bound actions are also the implementation mechanism for source grammar
+    // elaboration (for example comment progress/ignore phrases).  Inspection
+    // must therefore execute them; skipping every bound action can leave an
+    // empty phrase at the same source offset forever.  Runtime expression and
+    // function execution is suppressed at the parser/evaluator boundaries
+    // instead, while the inspection request itself is always rolled back.
     lexicon::Phrase binding = invoked;
     for (std::size_t depth = 0; !binding.containsAction() && depth < 64; ++depth) {
       lexicon::Phrase prototype = binding.getPrototype();
@@ -386,6 +393,22 @@ namespace recurloop {
     if (!Assembler::hasNativeOutput(context))
       signature.function.signature.symbol = context.language().functionSymbol(symbol, signature.function.parameterTypes,
                                                                               signature.function.signature.variadic);
+
+    // IntelliSense needs the real function grammar (signature + body) but must
+    // never JIT/link a function just because the editor asked for semantics.
+    // parseBody() drives SyntaxCursor and therefore emits phrase-backed spans;
+    // stop before declaring/code-generating runtime state.
+    if (Semantic::active(context)) {
+      (void)function_internal::parseBody(context, block.body, symbol, block.path, block.line, block.position);
+      if (stagedByLet) {
+        context::Lookup::leave(context, invoked);
+      } else {
+        context.staging.phrase = context.staging.dictionary.append("");
+        context.workspace.key.clear();
+      }
+      return;
+    }
+
     context.language().declareFunction(signature.function);
     const std::size_t separator = symbol.rfind(':');
     if (separator != std::string::npos && !signature.function.parameterTypes.empty()) {

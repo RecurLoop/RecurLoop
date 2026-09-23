@@ -1,5 +1,20 @@
 // Typed-language grammar and ABI-facing phrases. C++ owns physical host layout; this file owns language phrases.
 
+// Semantic metadata exposed to IDE/introspection clients. These are normal
+// phrase fields; libraries can attach them to their own phrases without any
+// editor-specific registration.
+phrase docs = "docs" in root {
+  type phrase_types_data
+}
+
+phrase kind = "kind" in root {
+  type phrase_types_data
+}
+
+phrase color = "color" in root {
+  type phrase_types_data
+}
+
 phrase phrase_fields = "\0phrase-fields" in root {
   dictionary
   type phrase_types_data
@@ -21,6 +36,9 @@ phrase typed_grammar = "\0typed-grammar" in root {
 }
 
 phrase abi = "abi" in root {
+  kind "keyword"
+  color "#C586C0"
+  docs "Defines or selects an ABI convention."
   dictionary
   type phrase_types_elaborate
   action host "typed.abi"
@@ -28,12 +46,18 @@ phrase abi = "abi" in root {
 }
 
 phrase extern = "extern" in root {
+  kind "keyword"
+  color "#C586C0"
+  docs "Declares an externally linked function."
   type phrase_types_elaborate
   action host "typed.extern"
   language compiler
 }
 
 phrase link = "link" in root {
+  kind "keyword"
+  color "#C586C0"
+  docs "Configures native linker inputs."
   dictionary
   type phrase_types_elaborate
   action host "typed.link"
@@ -41,6 +65,9 @@ phrase link = "link" in root {
 }
 
 phrase module = "module" in root {
+  kind "keyword"
+  color "#C586C0"
+  docs "Configures native module generation."
   dictionary
   type phrase_types_elaborate
   action host "typed.module"
@@ -48,12 +75,18 @@ phrase module = "module" in root {
 }
 
 phrase pointer = "pointer" in root {
+  kind "type"
+  color "#4EC9B0"
+  docs "Constructs a pointer type."
   type phrase_types_elaborate
   action host "typed.pointer"
   language compiler
 }
 
 phrase record = "record" in root {
+  kind "keyword"
+  color "#569CD6"
+  docs "Defines a record type."
   type phrase_types_elaborate
   action host "typed.record"
   language compiler
@@ -63,6 +96,24 @@ phrase phrase_fields_action = "action" in phrase_fields {
   prototype action
   type phrase_types_callable
   action host "phrase.field.action"
+}
+
+phrase phrase_fields_color = "color" in phrase_fields {
+  prototype color
+  type phrase_types_callable
+  action host "phrase.field.color"
+}
+
+phrase phrase_fields_docs = "docs" in phrase_fields {
+  prototype docs
+  type phrase_types_callable
+  action host "phrase.field.docs"
+}
+
+phrase phrase_fields_kind = "kind" in phrase_fields {
+  prototype kind
+  type phrase_types_callable
+  action host "phrase.field.kind"
 }
 
 phrase phrase_fields_dictionary = "dictionary" in phrase_fields {

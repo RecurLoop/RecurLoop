@@ -1,6 +1,7 @@
 #include <recurloop/SyntaxCursor.hpp>
 
 #include <recurloop/LanguageGrammar.hpp>
+#include <recurloop/Semantic.hpp>
 #include <recurloop/SyntaxExtension.hpp>
 #include <utilities/Exception.hpp>
 
@@ -22,13 +23,16 @@ namespace recurloop {
   SyntaxCursor::SyntaxCursor(context::Context &context, std::string_view source,
                              std::initializer_list<lexicon::Phrase> grammars, Error error, Options options,
                              SourceLocation origin)
-      : context(context), source(source), grammars(grammars), error(error), options(options) {
+      : context(context), source(source), grammars(grammars), error(error), options(options), origin(std::move(origin)) {
+    if (this->origin.path.empty())
+      this->origin = {context.source.path, context.source.line, context.source.position};
+    semanticOwner = Semantic::owner(context);
+    semanticGroup = Semantic::group(context);
     if (options.rewriteSyntax) {
-      if (origin.path.empty()) origin = {context.source.path, context.source.line, context.source.position};
       rewrite = std::make_shared<RewriteState>();
       rewrite->expanded.assign(source);
       rewrite->original = source;
-      rewrite->origin = std::move(origin);
+      rewrite->origin = this->origin;
       rewrite->originalOffsets.resize(source.size() + 1);
       std::iota(rewrite->originalOffsets.begin(), rewrite->originalOffsets.end(), std::size_t{0});
     }
@@ -41,12 +45,21 @@ namespace recurloop {
 
   SyntaxToken SyntaxCursor::lookahead(std::size_t distance) const {
     SyntaxCursor copy(*this);
+    copy.semanticTracing = false;
     while (distance-- != 0) copy.take();
     return copy.current();
   }
 
   SyntaxToken SyntaxCursor::take() {
     SyntaxToken result = token;
+    if (semanticTracing && result.semanticPhrase != 0 && Semantic::active(context)) {
+      lexicon::Phrase phrase(&context.lexicon, result.semanticPhrase);
+      phrase.load();
+      const std::string_view original = rewrite ? rewrite->original : source;
+      const SourceLocation &semanticOrigin = rewrite ? rewrite->origin : origin;
+      semanticOwner = Semantic::recordMapped(context, phrase, semanticOrigin, original, result.offset, result.semanticEnd,
+                                             semanticOwner, false, &semanticGroup);
+    }
     advance();
     return result;
   }
@@ -252,7 +265,7 @@ namespace recurloop {
       const std::string spelling = phrase.getKey();
       if (hasIdentifierBoundary(spelling, cursor)) {
         cursor += spelling.size();
-        token = {SyntaxTokenKind::Symbol, spelling, tokenOffset, begin};
+        token = {SyntaxTokenKind::Symbol, spelling, tokenOffset, begin, phrase.getAddress(), sourceOffset(cursor)};
         return;
       }
     }

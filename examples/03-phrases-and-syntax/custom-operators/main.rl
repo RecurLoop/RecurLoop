@@ -25,14 +25,14 @@ let gets = <=>
 let callable = <fn>
 let ptr = <*>
 let "%%" = <+>
-let kind = <type>
+let phrase_type = <type>
 let behavior = <action>
 let scope = <dictionary>
 
 
 // This callable phrase is written using aliases of the ordinary phrase fields.
 let assembled_phrase = phrase {
-    kind = <phrase-types:callable>
+    phrase_type = <phrase-types:callable>
     scope = true
     behavior = fn (state:Context*, called:Phrase*) -> void {
         puts("phrase assembled through field aliases")

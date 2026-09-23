@@ -6,30 +6,45 @@ phrase expressions = "\0expressions" in root {
 }
 
 phrase assert = "assert" in root {
+  kind "keyword"
+  color "#C586C0"
+  docs "Checks a condition and fails when it is false."
   type phrase_types_elaborate
   action host "expressions.assert"
   language compiler
 }
 
 phrase const = "const" in root {
+  kind "keyword"
+  color "#569CD6"
+  docs "Declares an immutable local value."
   type phrase_types_elaborate
   action host "expressions.constant"
   language compiler
 }
 
 phrase print = "print" in root {
+  kind "function"
+  color "#DCDCAA"
+  docs "Prints an expression value."
   type phrase_types_elaborate
   action host "expressions.print"
   language compiler
 }
 
 phrase set = "set" in root {
+  kind "keyword"
+  color "#C586C0"
+  docs "Assigns a new value to an existing target."
   type phrase_types_elaborate
   action host "expressions.assign"
   language compiler
 }
 
 phrase var = "var" in root {
+  kind "keyword"
+  color "#569CD6"
+  docs "Declares a mutable local value."
   type phrase_types_elaborate
   action host "expressions.variable"
   language compiler

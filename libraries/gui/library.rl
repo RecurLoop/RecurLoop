@@ -25,6 +25,7 @@ let Gui:Modifier = phrase { dictionary = true permanent = true }
 
 let Gui:Signal = fn (widget:u8*, data:u8*) -> void
 let Gui:Timer = fn (data:u8*) -> i32
+let Gui:TooltipQuery = fn (widget:u8*, x:i32, y:i32, keyboard:i32, tooltip:u8*, data:u8*) -> i32
 
 // -----------------------------------------------------------------------------
 // Native GTK3 backend.  Keep every backend symbol private to this library.
@@ -79,6 +80,15 @@ extern gtk_text_buffer_set_text(buffer:u8*, text:u8*, bytes:i32) -> void abi sys
 extern gtk_text_buffer_get_start_iter(buffer:u8*, iterator:u8*) -> void abi sysv-amd64
 extern gtk_text_buffer_get_end_iter(buffer:u8*, iterator:u8*) -> void abi sysv-amd64
 extern gtk_text_buffer_get_text(buffer:u8*, start:u8*, finish:u8*, include_hidden:i32) -> u8* abi sysv-amd64
+extern gtk_text_buffer_get_iter_at_offset(buffer:u8*, iterator:u8*, offset:i32) -> void abi sysv-amd64
+extern gtk_text_buffer_remove_all_tags(buffer:u8*, start:u8*, finish:u8*) -> void abi sysv-amd64
+extern gtk_text_buffer_create_tag(buffer:u8*, name:u8*, first_property:u8*, ...) -> u8* abi sysv-amd64
+extern gtk_text_buffer_apply_tag(buffer:u8*, tag:u8*, start:u8*, finish:u8*) -> void abi sysv-amd64
+extern gtk_text_view_window_to_buffer_coords(view:u8*, window_type:i32, window_x:i32, window_y:i32, buffer_x:i32*, buffer_y:i32*) -> void abi sysv-amd64
+extern gtk_text_view_get_iter_at_location(view:u8*, iterator:u8*, x:i32, y:i32) -> void abi sysv-amd64
+extern gtk_text_iter_get_offset(iterator:u8*) -> i32 abi sysv-amd64
+extern gtk_widget_set_has_tooltip(widget:u8*, enabled:i32) -> void abi sysv-amd64
+extern gtk_tooltip_set_text(tooltip:u8*, text:u8*) -> void abi sysv-amd64
 extern gtk_entry_new() -> u8* abi sysv-amd64
 extern gtk_entry_set_placeholder_text(entry:u8*, text:u8*) -> void abi sysv-amd64
 extern gtk_entry_get_text(entry:u8*) -> u8* abi sysv-amd64
@@ -132,6 +142,8 @@ extern gtk_main() -> void abi sysv-amd64
 extern gtk_main_quit() -> void abi sysv-amd64
 extern g_signal_connect_data(instance:u8*, signal:u8*, callback:Gui:Signal, data:u8*, destroy:u8*, flags:u32) -> u64 abi sysv-amd64
 extern g_timeout_add(interval:u32, callback:Gui:Timer, data:u8*) -> u32 abi sysv-amd64
+extern g_idle_add(callback:Gui:Timer, data:u8*) -> u32 abi sysv-amd64
+extern g_source_remove(source:u32) -> i32 abi sysv-amd64
 extern g_free(value:u8*) -> void abi sysv-amd64
 
 let Gui:Backend:name = fn () -> u8* { return "gtk3" }
@@ -373,6 +385,82 @@ let Gui:text_get = fn (view:u8*) -> u8* {
     free(last)
     return result
 }
+
+let Gui:text_clear_styles = fn (view:u8*) -> void {
+    if !view { return }
+    let buffer = gtk_text_view_get_buffer(view)
+    if !buffer { return }
+    let first = cast(u8*, malloc(128))
+    let last = cast(u8*, malloc(128))
+    if !first || !last { if first { free(first) }; if last { free(last) }; return }
+    gtk_text_buffer_get_start_iter(buffer, first)
+    gtk_text_buffer_get_end_iter(buffer, last)
+    gtk_text_buffer_remove_all_tags(buffer, first, last)
+    free(first)
+    free(last)
+}
+
+let Gui:text_style = fn (view:u8*, name:u8*, foreground:u8*) -> u8* {
+    if !view || !name || !foreground { return cast(u8*, 0) }
+    let buffer = gtk_text_view_get_buffer(view)
+    if !buffer { return cast(u8*, 0) }
+    return gtk_text_buffer_create_tag(buffer, name, "foreground", foreground, cast(u8*, 0))
+}
+
+let Gui:text_apply_style = fn (view:u8*, tag:u8*, start:i64, finish:i64) -> void {
+    if !view || !tag || start < 0 || finish <= start { return }
+    let buffer = gtk_text_view_get_buffer(view)
+    if !buffer { return }
+    let first = cast(u8*, malloc(128))
+    let last = cast(u8*, malloc(128))
+    if !first || !last { if first { free(first) }; if last { free(last) }; return }
+    gtk_text_buffer_get_iter_at_offset(buffer, first, cast(i32, start))
+    gtk_text_buffer_get_iter_at_offset(buffer, last, cast(i32, finish))
+    gtk_text_buffer_apply_tag(buffer, tag, first, last)
+    free(first)
+    free(last)
+}
+
+let Gui:text_position_at = fn (view:u8*, x:i32, y:i32) -> i64 {
+    if !view { return -1 }
+    let bx = alloc(i32)
+    let by = alloc(i32)
+    let iterator = cast(u8*, malloc(128))
+    if !bx || !by || !iterator {
+        if bx { free(cast(u8*, bx)) }
+        if by { free(cast(u8*, by)) }
+        if iterator { free(iterator) }
+        return -1
+    }
+    // GTK_TEXT_WINDOW_WIDGET = 1. Query-tooltip coordinates are widget-local.
+    gtk_text_view_window_to_buffer_coords(view, 1, x, y, bx, by)
+    gtk_text_view_get_iter_at_location(view, iterator, bx[0], by[0])
+    let offset = gtk_text_iter_get_offset(iterator)
+    free(cast(u8*, bx))
+    free(cast(u8*, by))
+    free(iterator)
+    return offset
+}
+
+let Gui:on_text_changed = fn (view:u8*, callback:Gui:Signal, data:u8*) -> u64 {
+    if !view { return 0 }
+    let buffer = gtk_text_view_get_buffer(view)
+    if !buffer { return 0 }
+    return g_signal_connect_data(buffer, "changed", callback, data, cast(u8*, 0), 0)
+}
+
+let Gui:on_text_tooltip = fn (view:u8*, callback:Gui:TooltipQuery, data:u8*) -> u64 {
+    if !view { return 0 }
+    gtk_widget_set_has_tooltip(view, 1)
+    return g_signal_connect_data(view, "query-tooltip", cast(Gui:Signal, callback), data, cast(u8*, 0), 0)
+}
+
+let Gui:tooltip_text = fn (tooltip:u8*, text:u8*) -> void {
+    if tooltip && text { gtk_tooltip_set_text(tooltip, text) }
+}
+
+let Gui:idle = fn (callback:Gui:Timer, data:u8*) -> u32 { return g_idle_add(callback, data) }
+let Gui:source_remove = fn (source:u32) -> void { if source != 0 { g_source_remove(source) } }
 
 let Gui:text_free = fn (text:u8*) -> void { if text { g_free(text) } }
 
@@ -725,6 +813,15 @@ set gtk_text_buffer_set_text.serializable = false
 set gtk_text_buffer_get_start_iter.serializable = false
 set gtk_text_buffer_get_end_iter.serializable = false
 set gtk_text_buffer_get_text.serializable = false
+set gtk_text_buffer_get_iter_at_offset.serializable = false
+set gtk_text_buffer_remove_all_tags.serializable = false
+set gtk_text_buffer_create_tag.serializable = false
+set gtk_text_buffer_apply_tag.serializable = false
+set gtk_text_view_window_to_buffer_coords.serializable = false
+set gtk_text_view_get_iter_at_location.serializable = false
+set gtk_text_iter_get_offset.serializable = false
+set gtk_widget_set_has_tooltip.serializable = false
+set gtk_tooltip_set_text.serializable = false
 set gtk_entry_new.serializable = false
 set gtk_entry_set_placeholder_text.serializable = false
 set gtk_entry_get_text.serializable = false
@@ -777,6 +874,8 @@ set gtk_main.serializable = false
 set gtk_main_quit.serializable = false
 set g_signal_connect_data.serializable = false
 set g_timeout_add.serializable = false
+set g_idle_add.serializable = false
+set g_source_remove.serializable = false
 set g_free.serializable = false
 
 languagekit_native_end

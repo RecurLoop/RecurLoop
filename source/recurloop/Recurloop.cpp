@@ -8,6 +8,7 @@
   #include <recurloop/EngineImage.hpp>
   #include <recurloop/HostAbi.hpp>
   #include <recurloop/ContextApi.hpp>
+  #include <recurloop/Semantic.hpp>
 
   #include <sys/mman.h>
   #include <sys/syscall.h>
@@ -51,6 +52,12 @@ namespace recurloop {
     context.exec.hasPendingPhraseSerializable = false;
     context.exec.hasPendingPhrasePermanent = false;
     context.exec.hasPendingPhraseRewritable = false;
+    context.exec.pendingPhraseKind.clear();
+    context.exec.pendingPhraseColor.clear();
+    context.exec.pendingPhraseDocs.clear();
+    context.exec.hasPendingPhraseKind = false;
+    context.exec.hasPendingPhraseColor = false;
+    context.exec.hasPendingPhraseDocs = false;
     context.exec.invoked = nullptr;
     Debugger::initialize(context);
     context.io = {nullptr, &std::cout, &std::cerr};
@@ -235,6 +242,7 @@ namespace recurloop {
   }
 
   static void processSourceStep(context::Context &context) {
+    Semantic::sourceStep(context);
     auto filter = [](lexicon::Dictionary *dictionary, lexicon::Match *candidate) -> bool {
       return candidate->getPhrase().isElaboratable();
     };
@@ -244,11 +252,17 @@ namespace recurloop {
       if (context.source.buffer.bits > 0) {
         const DebugLocation debugLocation{context.source.path, context.source.line, context.source.position};
         if (runSourceHook(context)) return;
+        const bool rootLookup = context::Lookup::current(context).getAddress() == context.lexicon.phrase().getAddress();
+        Semantic::beginSourceStep(context, rootLookup);
         lexicon::Dictionary dictionary = context::Lookup::current(context).getSubdictionary();
+        const SourceLocation matchStart{context.source.path, context.source.line, context.source.position};
         lexicon::Phrase matched = context::Source::matchLongest(context, dictionary, filter, true);
 
         if (matched.isNull()) handleUndefinedPhrase(context);
 
+        const SourceLocation matchEnd{context.source.path, context.source.line, context.source.position};
+        const std::uint64_t semanticOwner = Semantic::record(context, matched, matchStart, matchEnd, 0, true);
+        Semantic::OwnerScope semanticScope(context, semanticOwner);
         Debugger::beforeElaborate(context, matched, debugLocation);
         matched.elaborate(context);
       } else if (context.source.more) {
@@ -527,6 +541,12 @@ namespace recurloop {
     context.exec.hasPendingPhraseSerializable = false;
     context.exec.hasPendingPhrasePermanent = false;
     context.exec.hasPendingPhraseRewritable = false;
+    context.exec.pendingPhraseKind.clear();
+    context.exec.pendingPhraseColor.clear();
+    context.exec.pendingPhraseDocs.clear();
+    context.exec.hasPendingPhraseKind = false;
+    context.exec.hasPendingPhraseColor = false;
+    context.exec.hasPendingPhraseDocs = false;
     context.exec.invoked = nullptr;
     initializeRoot();
     context.actions().replace(hostActions);

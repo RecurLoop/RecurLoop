@@ -110,6 +110,8 @@ let IDE:App:create_editor = fn (state:IDE:App:State*) -> u8* {
     Gui:append_end(toolbar, save, 0, 4)
 
     state.editor = Gui:editor()
+    Gui:on_text_changed(state.editor, IDE:App:on_editor_changed, cast(u8*, state))
+    Gui:on_text_tooltip(state.editor, IDE:App:on_editor_tooltip, cast(u8*, state))
     Gui:append(box, toolbar, 0, 0)
     Gui:append(box, Gui:scroll(state.editor), 1, 0)
     return box
@@ -163,6 +165,11 @@ let IDE:App:mount = fn (host:IDE:Host*) -> void {
     state.notebook = cast(u8*, 0)
     state.files = cast(IDE:App:FileItem*, 0)
     state.terminal_views = cast(IDE:App:TerminalView*, 0)
+    state.semantic_spans = cast(IDE:App:SemanticSpan*, 0)
+    state.semantic_hovers = cast(IDE:App:SemanticHover*, 0)
+    state.semantic_hover_tail = cast(IDE:App:SemanticHover*, 0)
+    state.semantic_styles = cast(IDE:App:SemanticStyle*, 0)
+    state.semantic_idle_source = 0
 
     let main = Gui:split_horizontal()
     let right = Gui:split_vertical()
@@ -191,6 +198,8 @@ let IDE:App:mount = fn (host:IDE:Host*) -> void {
         Gui:destroy(state.root_box)
         IDE:App:free_files(state)
         IDE:App:free_terminal_views(state)
+        IDE:App:free_semantic_spans(state)
+        IDE:App:free_semantic_styles(state)
         free(cast(u8*, state))
     }
 }
@@ -198,8 +207,11 @@ let IDE:App:mount = fn (host:IDE:Host*) -> void {
 let IDE:App:unmount = fn (host:IDE:Host*) -> void {
     let state = IDE:App:state(host)
     if !state { return }
+    if state.semantic_idle_source != 0 { Gui:source_remove(state.semantic_idle_source); state.semantic_idle_source = 0 }
     IDE:App:free_files(state)
     IDE:App:free_terminal_views(state)
+    IDE:App:free_semantic_spans(state)
+    IDE:App:free_semantic_styles(state)
     free(cast(u8*, state))
 }
 
@@ -218,6 +230,7 @@ let IDE:App:runtime_ready = fn (host:IDE:Host*) -> void {
         IDE:App:mount_terminals(state)
         Gui:show(state.notebook)
     }
+    IDE:App:schedule_semantics(state)
     IDE:App:update_status(state)
 }
 

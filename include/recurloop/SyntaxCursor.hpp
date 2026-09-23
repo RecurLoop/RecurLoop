@@ -35,6 +35,10 @@ namespace recurloop {
     // syntax can map many bytes back to one original source position, so this
     // must remain distinct from the diagnostic offset.
     std::size_t expandedOffset = 0;
+    // Semantic phrase matched for this token (if any) and the end offset in
+    // original source. Recording is deferred until take() so lookahead is pure.
+    std::uint64_t semanticPhrase = 0;
+    std::size_t semanticEnd = 0;
   };
 
   class SyntaxCursor {
@@ -79,5 +83,9 @@ namespace recurloop {
     Options options;
     std::size_t cursor = 0;
     SyntaxToken token;
+    SourceLocation origin;
+    std::uint64_t semanticOwner = 0;
+    std::uint64_t semanticGroup = 0;
+    bool semanticTracing = true;
   };
 } // namespace recurloop

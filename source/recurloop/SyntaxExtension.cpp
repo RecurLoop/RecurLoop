@@ -3,6 +3,7 @@
 #include <context/Context.hpp>
 #include <lexicon/Lexicon.hpp>
 #include <recurloop/ContextApi.hpp>
+#include <recurloop/Semantic.hpp>
 #include <utilities/Byte.hpp>
 #include <utilities/Exception.hpp>
 
@@ -26,6 +27,8 @@ namespace recurloop {
       std::string output;
       std::vector<std::size_t> outputOffsets;
       std::size_t rewriteOffset = 0;
+      std::uint64_t semanticOwner = 0;
+      std::uint64_t semanticGroup = 0;
       bool handled = false;
     };
 
@@ -132,8 +135,13 @@ namespace recurloop {
         local.origin = origin;
         local.cursor = cursor + key.size();
         local.rewriteOffset = originalOffsets[cursor];
+        local.semanticGroup = Semantic::group(context);
+        local.semanticOwner = Semantic::recordMapped(context, rewrite, origin, originalSource, originalOffsets[cursor],
+                                                     originalOffsets[cursor + key.size()], Semantic::owner(context), false,
+                                                     &local.semanticGroup);
         ExpansionFrame *previous = currentExpansion;
         currentExpansion = &local;
+        Semantic::OwnerScope semanticScope(context, local.semanticOwner, local.semanticGroup);
         try {
           rewrite.elaborate(context);
         } catch (...) {
@@ -211,9 +219,14 @@ namespace recurloop {
       local.origin = origin;
       local.cursor = offset + key.size();
       local.rewriteOffset = originalOffsets[offset];
+      local.semanticGroup = Semantic::group(context);
+      local.semanticOwner = Semantic::recordMapped(context, rewrite, origin, originalSource, originalOffsets[offset],
+                                                   originalOffsets[offset + key.size()], Semantic::owner(context), false,
+                                                   &local.semanticGroup);
 
       ExpansionFrame *previous = currentExpansion;
       currentExpansion = &local;
+      Semantic::OwnerScope semanticScope(context, local.semanticOwner, local.semanticGroup);
       try {
         rewrite.elaborate(context);
       } catch (...) {
@@ -291,6 +304,7 @@ namespace recurloop {
     ExpansionFrame &current = frame(context);
     lexicon::Phrase owner = phraseAt(context, dictionaryAddress);
     if (owner.isNull() || !owner.containsSubdictionary()) THROW(, "syntax rewrite match requires a dictionary")
+    const std::size_t begin = current.cursor;
     const std::size_t remaining = current.source.size() - current.cursor;
     auto populated = [](radix::Node *, radix::Match *candidate) {
       return !lexicon::Dictionary(*candidate).getPhrase().isNull();
@@ -309,6 +323,11 @@ namespace recurloop {
     lexicon::Phrase phrase = result.getPhrase();
     current.cursor += phrase.getKey().size();
     current.handled = true;
+    if (!current.originalOffsets.empty() && current.cursor < current.originalOffsets.size()) {
+      current.semanticOwner = Semantic::recordMapped(context, phrase, current.origin, current.originalSource,
+                                                     current.originalOffsets[begin], current.originalOffsets[current.cursor],
+                                                     current.semanticOwner, false, &current.semanticGroup);
+    }
     return phrase.getAddress();
   }
 
@@ -326,6 +345,7 @@ namespace recurloop {
 
       lexicon::Phrase successor =
           matched.containsSuccessor() ? matched.getSuccessor() : lexicon::Phrase(&context.lexicon);
+      Semantic::OwnerScope semanticScope(context, current.semanticOwner, current.semanticGroup);
       lexicon::phrase::type::action(context, matched);
       if (successor.isNull()) {
         const std::string key = matched.getKey();

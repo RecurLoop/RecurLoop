@@ -168,6 +168,7 @@ record IDE:Host {
     retiring_user_data:u8*
     candidate_title:u8*
     terminals:IDE:Terminal*
+    intelligence:IDE:RuntimeSession*
     watcher:IDE:Watcher*
     selected:u8*
     pending_since:i64
@@ -849,6 +850,54 @@ let IDE:RuntimeSession:destroy = fn (self:IDE:RuntimeSession*) -> void {
     self.clear()
     if self.fd >= 0 { shutdown(self.fd, 2); close(self.fd) }
     free(cast(u8*, self))
+}
+
+// One persistent, non-terminal client is reserved for source inspection. It
+// speaks to the same project server/generation as terminals but requests a
+// rollback-only elaboration trace instead of executing a user command.
+let IDE:append_hex = fn (out:LanguageKit:Text*, text:u8*) -> i64 {
+    if !out || !text { return 0 }
+    let digits = "0123456789abcdef"
+    var i = 0
+    while text[i] != 0 {
+        let value = cast(i64, text[i])
+        if !out.append_byte(digits[value / 16]) { return 0 }
+        if !out.append_byte(digits[value % 16]) { return 0 }
+        i += 1
+    }
+    return 1
+}
+
+let IDE:intelligence_session = fn (host:IDE:Host*) -> IDE:RuntimeSession* {
+    if !host || !host.runner { return cast(IDE:RuntimeSession*, 0) }
+    if !host.intelligence { host.intelligence = IDE:RuntimeSession:new(host.runner) }
+    return host.intelligence
+}
+
+let IDE:intelligence_refresh = fn (host:IDE:Host*) -> i64 {
+    if !host { return 0 }
+    let runtime = IDE:intelligence_session(host)
+    if !runtime { return 0 }
+    if runtime.request(":refresh") == 0 { return 1 }
+    runtime.destroy()
+    host.intelligence = IDE:RuntimeSession:new(host.runner)
+    if !host.intelligence { return 0 }
+    return host.intelligence.request(":refresh") == 0
+}
+
+let IDE:intelligence_analyze = fn (host:IDE:Host*, path:u8*, source:u8*) -> u8* {
+    if !host || !path || !source { return cast(u8*, 0) }
+    let runtime = IDE:intelligence_session(host)
+    if !runtime { return cast(u8*, 0) }
+    let request = LanguageKit:Text:new()
+    if !request { return cast(u8*, 0) }
+    defer request.destroy()
+    request.append(":inspect\t")
+    if !IDE:append_hex(request, path) { return cast(u8*, 0) }
+    request.append("\t")
+    if !IDE:append_hex(request, source) { return cast(u8*, 0) }
+    if runtime.request(request.data) != 0 { return cast(u8*, 0) }
+    return IDE:copy(runtime.last_output)
 }
 
 let IDE:process_success = fn (pid:i32) -> i64 {
@@ -1744,6 +1793,7 @@ let IDE:notify_reload_failure = fn (host:IDE:Host*) -> void {
 
 let IDE:notify_runtime_ready = fn (host:IDE:Host*) -> void {
     if !host { return }
+    IDE:intelligence_refresh(host)
     if host.runner && host.runner.lifecycle {
         let lifecycle = host.runner.lifecycle
         lifecycle(4, cast(u8*, host))
@@ -2084,6 +2134,7 @@ let IDE:free_host = fn (host:IDE:Host*) -> void {
         IDE:job_destroy(job)
     }
     IDE:free_terminals(host)
+    if host.intelligence { host.intelligence.destroy(); host.intelligence = cast(IDE:RuntimeSession*, 0) }
     if host.watcher { host.watcher.destroy() }
     if host.candidate_title { free(host.candidate_title) }
     if host.selected { free(host.selected) }
@@ -2368,6 +2419,7 @@ let IDE:Config:open = fn (self:IDE:Config*) -> i64 {
     host.retiring_user_data = cast(u8*, 0)
     host.candidate_title = cast(u8*, 0)
     host.terminals = cast(IDE:Terminal*, 0)
+    host.intelligence = cast(IDE:RuntimeSession*, 0)
     host.watcher = cast(IDE:Watcher*, 0)
     host.selected = cast(u8*, 0)
     host.pending_since = 0

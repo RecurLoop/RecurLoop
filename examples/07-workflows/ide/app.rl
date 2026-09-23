@@ -19,6 +19,28 @@ record IDE:App:TerminalView {
     next:IDE:App:TerminalView*
 }
 
+record IDE:App:SemanticSpan {
+    start:i64
+    finish:i64
+    next:IDE:App:SemanticSpan*
+}
+
+record IDE:App:SemanticHover {
+    start:i64
+    finish:i64
+    group:i64
+    phrase:u8*
+    kind:u8*
+    docs:u8*
+    next:IDE:App:SemanticHover*
+}
+
+record IDE:App:SemanticStyle {
+    color:u8*
+    tag:u8*
+    next:IDE:App:SemanticStyle*
+}
+
 record IDE:App:State {
     host:IDE:Host*
     root_box:u8*
@@ -29,6 +51,11 @@ record IDE:App:State {
     notebook:u8*
     files:IDE:App:FileItem*
     terminal_views:IDE:App:TerminalView*
+    semantic_spans:IDE:App:SemanticSpan*
+    semantic_hovers:IDE:App:SemanticHover*
+    semantic_hover_tail:IDE:App:SemanticHover*
+    semantic_styles:IDE:App:SemanticStyle*
+    semantic_idle_source:u32
 }
 
 record IDE:App:TreeLoad {

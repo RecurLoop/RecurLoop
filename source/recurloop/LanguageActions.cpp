@@ -8,6 +8,7 @@
 #include <recurloop/TranslationUnits.hpp>
 #include <recurloop/LanguageGrammar.hpp>
 #include <recurloop/LexiconTransaction.hpp>
+#include <recurloop/Semantic.hpp>
 #include <utilities/Byte.hpp>
 
 #include <cctype>
@@ -46,6 +47,7 @@ namespace recurloop {
       std::int64_t status = 0;
       if (!expression.empty()) {
         const context::Value value = Expressions::evaluate(context, expression, origin);
+        if (Semantic::active(context)) return;
         if (!value.isInteger()) THROW_AT(origin, "exit status must be an integer")
         status = value.asInteger();
         if (status < 0 || status > 255) THROW_AT(origin, "exit status must be between 0 and 255")
@@ -62,6 +64,7 @@ namespace recurloop {
     void action_continue(context::Context &context, lexicon::Phrase &invoked) {
       DEBUG_PROFILE_SCOPE(Continue);
       DEBUG_LOG(CONTINUE, "");
+      if (Semantic::active(context)) return;
       context.source.buffer.str.clear();
       context.source.buffer.offset = 0;
       context.source.buffer.bits = 0;
@@ -284,6 +287,7 @@ namespace recurloop {
         saved.setPermanent(context.exec.pendingPhrasePermanent).save();
         context.exec.hasPendingPhrasePermanent = false;
       }
+      Semantic::applyPending(context, saved);
 
       context::Staging::pop(context, 1);
 
@@ -528,6 +532,7 @@ namespace recurloop {
 
       lexicon::Phrase &saved = context.staging.phrase.save();
       Assembler::commitNative(context, saved);
+      Semantic::applyPending(context, saved);
 
       context::Staging::pop(context, 0);
 

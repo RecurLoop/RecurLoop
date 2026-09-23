@@ -26,6 +26,21 @@ namespace recurloop {
       return value;
     }
 
+    unsigned hexNibble(char value) {
+      if (value >= '0' && value <= '9') return static_cast<unsigned>(value - '0');
+      if (value >= 'a' && value <= 'f') return static_cast<unsigned>(value - 'a' + 10);
+      if (value >= 'A' && value <= 'F') return static_cast<unsigned>(value - 'A' + 10);
+      THROW(, "invalid hexadecimal server payload")
+    }
+
+    std::string unhex(std::string_view value) {
+      if ((value.size() & 1u) != 0) THROW(, "invalid hexadecimal server payload length")
+      std::string result(value.size() / 2, '\0');
+      for (std::size_t i = 0; i < result.size(); ++i)
+        result[i] = static_cast<char>((hexNibble(value[i * 2]) << 4) | hexNibble(value[i * 2 + 1]));
+      return result;
+    }
+
     bool languageExit(std::string_view line) {
       line = trim(line);
       return line == "exit" ||
@@ -78,12 +93,18 @@ namespace recurloop {
   Server::CommandResult Server::handle(Session &session, std::string_view line) {
     try {
       constexpr std::string_view loadFilePrefix = ":load-file\t";
+      constexpr std::string_view inspectPrefix = ":inspect\t";
       const bool exits = languageExit(line);
       SessionResponse response;
       if (line.starts_with(loadFilePrefix)) {
         const std::string_view path = line.substr(loadFilePrefix.size());
         if (path.empty()) return {"load-file requires a path\nstatus=1\n", false, 1};
         response = session.executeFile(std::string(path));
+      } else if (line.starts_with(inspectPrefix)) {
+        const std::string_view payload = line.substr(inspectPrefix.size());
+        const std::size_t separator = payload.find('\t');
+        if (separator == std::string_view::npos) return {"inspect requires path and source payloads\nstatus=1\n", false, 1};
+        response = session.inspect(unhex(payload.substr(separator + 1)), unhex(payload.substr(0, separator)));
       } else {
         response = session.evaluate(line);
       }

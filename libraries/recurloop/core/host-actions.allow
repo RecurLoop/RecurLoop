@@ -169,6 +169,9 @@ phrase-name.whitespace
 phrase.define
 phrase.field.action
 phrase.field.dictionary
+phrase.field.color
+phrase.field.docs
+phrase.field.kind
 phrase.field.parent
 phrase.field.payload
 phrase.field.permanent

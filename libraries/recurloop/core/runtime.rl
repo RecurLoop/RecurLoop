@@ -303,10 +303,16 @@ phrase align = "align" in root {
 }
 
 phrase alloc = "alloc" in root {
+  kind "keyword"
+  color "#C586C0"
+  docs "Allocates storage for a value or object."
   type phrase_types_data
 }
 
 phrase sizeof = "sizeof" in root {
+  kind "keyword"
+  color "#C586C0"
+  docs "Returns the storage size of a type or value."
   type phrase_types_data
 }
 
@@ -349,6 +355,9 @@ phrase bpl = "bpl" in root {
 }
 
 phrase break = "break" in root {
+  kind "keyword"
+  color "#C586C0"
+  docs "Leaves the nearest loop."
   type phrase_types_data
 }
 
@@ -377,6 +386,9 @@ phrase caller = "caller" in root {
 }
 
 phrase cast = "cast" in root {
+  kind "keyword"
+  color "#C586C0"
+  docs "Converts a value to an explicitly selected type."
   type phrase_types_data
 }
 
@@ -425,6 +437,9 @@ phrase contains = "contains" in root {
 }
 
 phrase continue = "continue" in root {
+  kind "keyword"
+  color "#C586C0"
+  docs "Continues with the next loop iteration."
   type phrase_types_elaborate
   action host "language.continue"
 }
@@ -460,6 +475,9 @@ phrase dec = "dec" in root {
 }
 
 phrase defer = "defer" in root {
+  kind "keyword"
+  color "#C586C0"
+  docs "Schedules an action for the end of the current scope."
   type phrase_types_data
 }
 
@@ -536,6 +554,9 @@ phrase edx = "edx" in root {
 }
 
 phrase else = "else" in root {
+  kind "keyword"
+  color "#C586C0"
+  docs "Provides the alternative branch of a conditional."
   type phrase_types_data
 }
 
@@ -544,6 +565,9 @@ phrase embed = "embed" in root {
 }
 
 phrase emit = "emit" in root {
+  kind "keyword"
+  color "#C586C0"
+  docs "Selects native output generation such as an executable, object, or raw image."
   dictionary
   type phrase_types_elaborate
   action host "lookup.enter"
@@ -554,6 +578,9 @@ phrase ends_with = "ends_with" in root {
 }
 
 phrase engine = "engine" in root {
+  kind "keyword"
+  color "#C586C0"
+  docs "Accesses RecurLoop engine image operations."
   dictionary
   type phrase_types_elaborate
   action host "lookup.enter"
@@ -580,11 +607,17 @@ phrase exec = "exec" in root {
 }
 
 phrase exit = "exit" in root {
+  kind "keyword"
+  color "#C586C0"
+  docs "Stops source execution with an optional status code."
   type phrase_types_elaborate
   action host "language.exit"
 }
 
 phrase false = "false" in root {
+  kind "literal"
+  color "#569CD6"
+  docs "Boolean false literal."
   type phrase_types_data
 }
 
@@ -615,6 +648,9 @@ phrase idiv = "idiv" in root {
 }
 
 phrase if = "if" in root {
+  kind "keyword"
+  color "#C586C0"
+  docs "Evaluates a condition and executes its matching branch."
   type phrase_types_data
 }
 
@@ -627,10 +663,14 @@ phrase inc = "inc" in root {
 }
 
 phrase include = "include" in root {
+  kind "keyword"
+  color "#C586C0"
+  docs "Loads and elaborates source from another file."
   type phrase_types_data
 }
 
 phrase include_b26ec9 = "include" in root {
+  prototype include
   type phrase_types_elaborate
   action host "source.include"
 }
@@ -788,12 +828,18 @@ phrase len = "len" in root {
 }
 
 phrase let = "let" in root {
+  kind "keyword"
+  color "#569CD6"
+  docs "Defines an immutable phrase or value."
   dictionary
   type phrase_types_elaborate
   action host "let.enter"
 }
 
 phrase lexicon = "lexicon" in root {
+  kind "keyword"
+  color "#C586C0"
+  docs "Defines or enters a lexicon-backed language scope."
   type phrase_types_elaborate
   action host "lexicon.create"
 }
@@ -811,6 +857,9 @@ phrase manual = "manual" in root {
 }
 
 phrase merge = "merge" in root {
+  kind "keyword"
+  color "#C586C0"
+  docs "Merges a translation unit or lexicon definition into the current context."
   type phrase_types_elaborate
   action host "lexicon.merge"
 }
@@ -844,6 +893,9 @@ phrase nobits = "nobits" in root {
 }
 
 phrase none = "none" in root {
+  kind "literal"
+  color "#569CD6"
+  docs "Represents the absence of a phrase or value."
   type phrase_types_data
 }
 
@@ -864,6 +916,9 @@ phrase null = "null" in root {
 }
 
 phrase object = "object" in root {
+  kind "keyword"
+  color "#569CD6"
+  docs "Starts an object definition."
   type phrase_types_data
 }
 
@@ -880,6 +935,9 @@ phrase or = "or" in root {
 }
 
 phrase packed = "packed" in root {
+  kind "keyword"
+  color "#C586C0"
+  docs "Requests packed storage/layout semantics."
   type phrase_types_data
 }
 
@@ -900,6 +958,9 @@ phrase permanent = "permanent" in root {
 }
 
 phrase phrase = "phrase" in root {
+  kind "keyword"
+  color "#569CD6"
+  docs "Creates a phrase definition with configurable fields."
   type phrase_types_elaborate
   action host "phrase.define"
 }
@@ -1106,6 +1167,9 @@ phrase ret = "ret" in root {
 }
 
 phrase return = "return" in root {
+  kind "keyword"
+  color "#C586C0"
+  docs "Returns from the current function."
   type phrase_types_data
 }
 
@@ -1244,10 +1308,16 @@ phrase trim = "trim" in root {
 }
 
 phrase true = "true" in root {
+  kind "literal"
+  color "#569CD6"
+  docs "Boolean true literal."
   type phrase_types_data
 }
 
 phrase type = "type" in root {
+  kind "function"
+  color "#DCDCAA"
+  docs "Returns type information for a value."
   type phrase_types_data
 }
 
@@ -1268,6 +1338,9 @@ phrase value = "value" in root {
 }
 
 phrase while = "while" in root {
+  kind "keyword"
+  color "#C586C0"
+  docs "Repeats a block while its condition is true."
   type phrase_types_data
 }
 
@@ -1658,16 +1731,25 @@ phrase engine_colon = ":" in engine {
 }
 
 phrase engine_define = "define" in engine {
+  kind "keyword"
+  color "#C586C0"
+  docs "Defines an engine image from source."
   type phrase_types_callable
   action host "engine.define"
 }
 
 phrase engine_export = "export" in engine {
+  kind "keyword"
+  color "#C586C0"
+  docs "Exports an engine or lexicon image."
   type phrase_types_scoped_callable
   action host "engine.export"
 }
 
 phrase engine_import = "import" in engine {
+  kind "keyword"
+  color "#C586C0"
+  docs "Imports a compiled RecurLoop engine image into the current project runtime."
   type phrase_types_callable
   action host "engine.import"
 }

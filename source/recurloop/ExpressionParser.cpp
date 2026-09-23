@@ -4,6 +4,7 @@
 #include <recurloop/LanguageGrammar.hpp>
 #include <recurloop/NativeCall.hpp>
 #include <recurloop/PhraseNames.hpp>
+#include <recurloop/Semantic.hpp>
 
 #include <compiler/DynamicLinker.hpp>
 #include <compiler/JitLinker.hpp>
@@ -180,8 +181,8 @@ namespace recurloop {
           THROW(, "expression phrase grammar is incomplete")
       }
 
-      context::Value parse() {
-        context::Value result = expression(1, true);
+      context::Value parse(bool active = true) {
+        context::Value result = expression(1, active);
         if (lexer.current().kind != TokenKind::End)
           expressionFail(context, lexer.current().offset, "unexpected token '" + lexer.current().text + "'");
         return result;
@@ -573,7 +574,11 @@ namespace recurloop {
     internal::ExpressionDiagnostic *previous = internal::currentExpressionDiagnostic;
     internal::currentExpressionDiagnostic = &diagnostic;
     try {
-      context::Value result = internal::Parser(context, source).parse();
+      // Semantic inspection must elaborate/parse source without invoking user
+      // functions, builtins or operators. Parser already carries an `active`
+      // bit through every expression branch, so reuse that mechanism rather
+      // than inventing a second expression parser.
+      context::Value result = internal::Parser(context, source).parse(!Semantic::active(context));
       internal::currentExpressionDiagnostic = previous;
       return result;
     } catch (...) {

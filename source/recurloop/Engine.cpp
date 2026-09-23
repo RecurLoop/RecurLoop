@@ -5,6 +5,7 @@
 #include <recurloop/EngineImage.hpp>
 #include <recurloop/Execution.hpp>
 #include <recurloop/Expressions.hpp>
+#include <recurloop/Semantic.hpp>
 #include <recurloop/TranslationUnits.hpp>
 #include <utilities/Exception.hpp>
 
@@ -48,6 +49,18 @@ namespace recurloop {
     std::string path(context::Context &context, std::string_view operation) {
       return pathExpression(context, readLine(context), operation);
     }
+
+    void inspectExpression(context::Context &context, std::string_view expression, std::string_view operation) {
+      if (expression.empty()) THROW(, operation << " requires an expression")
+      (void)Expressions::evaluate(context, expression);
+    }
+
+    void resumeRoot(context::Context &context) {
+      lexicon::Phrase root = context.lexicon.phrase();
+      if (context::Lookup::current(context).getAddress() == root.getAddress()) return;
+      context.lookup = {};
+      context::Lookup::in(context, root);
+    }
   } // namespace
 
   void Engine::registerActions(context::Context &context) {
@@ -59,6 +72,15 @@ namespace recurloop {
 
   void Engine::exportImage(context::Context &context, lexicon::Phrase &) {
     const std::string source = readLine(context);
+    if (Semantic::active(context)) {
+      if (source.empty() || source.front() != '<') inspectExpression(context, source, "engine export");
+      else {
+        const std::size_t close = source.find('>');
+        if (close == std::string::npos) THROW(, "engine export lexicon reference is missing '>'")
+        inspectExpression(context, trim(source.substr(close + 1)), "engine export lexicon");
+      }
+      return;
+    }
     if (source.empty() || source.front() != '<') {
       EngineImage::save(context, pathExpression(context, source, "engine export"));
       return;
@@ -74,6 +96,11 @@ namespace recurloop {
   }
 
   void Engine::importImage(context::Context &context, lexicon::Phrase &) {
+    if (Semantic::active(context)) {
+      inspectExpression(context, readLine(context), "engine import");
+      resumeRoot(context);
+      return;
+    }
     const std::string imagePath = path(context, "engine import");
     // The restore replaces the lexicon that owns the currently invoked phrase.
     context.exec.invoked = nullptr;
@@ -94,12 +121,20 @@ namespace recurloop {
   void Engine::define(context::Context &context, lexicon::Phrase &) {
     SourceBlock block = Blocks::capture(context);
     if (!trim(std::move(block.header)).empty()) THROW(, "engine define must be followed directly by '{'")
+    if (Semantic::active(context)) {
+      resumeRoot(context);
+      return;
+    }
     // The restore replaces the lexicon that owns the currently invoked phrase.
     context.exec.invoked = nullptr;
     EngineImage::define(context, block.body, block.path);
   }
 
   void Engine::includeSource(context::Context &context, lexicon::Phrase &) {
+    if (Semantic::active(context)) {
+      inspectExpression(context, readLine(context), "include");
+      return;
+    }
     std::filesystem::path includePath(path(context, "include"));
     if (includePath.is_relative() && !context.source.path.empty() && context.source.path.front() != '<')
       includePath = std::filesystem::path(context.source.path).parent_path() / includePath;

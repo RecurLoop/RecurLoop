@@ -271,6 +271,12 @@ namespace recurloop {
       context_->exec.hasPendingPhraseSerializable = false;
       context_->exec.hasPendingPhrasePermanent = false;
       context_->exec.hasPendingPhraseRewritable = false;
+      context_->exec.pendingPhraseKind.clear();
+      context_->exec.pendingPhraseColor.clear();
+      context_->exec.pendingPhraseDocs.clear();
+      context_->exec.hasPendingPhraseKind = false;
+      context_->exec.hasPendingPhraseColor = false;
+      context_->exec.hasPendingPhraseDocs = false;
       context_->exec.invoked = nullptr;
     } catch (...) {
       // Rollback is used from error/destructor paths and must never obscure the

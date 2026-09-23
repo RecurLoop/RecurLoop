@@ -33,6 +33,10 @@ namespace recurloop {
       return id_;
     }
     SessionResponse evaluate(std::string_view source, std::string_view path = {});
+    // Elaborate source for editor semantics and always roll the request back.
+    // Syntax errors are returned as diagnostics together with any spans that
+    // were discovered before the error.
+    SessionResponse inspect(std::string_view source, std::string_view path = {});
     SessionResponse executeFile(const std::string &path);
     SessionResponse executeArguments(int startIndex, std::ostream *out = nullptr, std::ostream *err = nullptr);
     Generations generations() const;

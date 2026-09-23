@@ -5,6 +5,7 @@
 #include <recurloop/Blocks.hpp>
 #include <recurloop/Functions.hpp>
 #include <recurloop/LanguageGrammar.hpp>
+#include <recurloop/Semantic.hpp>
 #include <recurloop/SyntaxCursor.hpp>
 #include <utilities/Exception.hpp>
 
@@ -153,6 +154,36 @@ namespace recurloop {
         if (target != nullptr) THROW(, "phrase payload cannot be changed after creation")
         const std::string value = string();
         context.exec.pendingPhrasePayload.assign(value.begin(), value.end());
+      }
+
+      void applyKind(lexicon::Phrase *target) {
+        std::string value = string();
+        if (target != nullptr) {
+          Semantic::setKind(context, *target, std::move(value));
+          return;
+        }
+        context.exec.pendingPhraseKind = std::move(value);
+        context.exec.hasPendingPhraseKind = true;
+      }
+
+      void applyColor(lexicon::Phrase *target) {
+        std::string value = string();
+        if (target != nullptr) {
+          Semantic::setColor(context, *target, std::move(value));
+          return;
+        }
+        context.exec.pendingPhraseColor = std::move(value);
+        context.exec.hasPendingPhraseColor = true;
+      }
+
+      void applyDocs(lexicon::Phrase *target) {
+        std::string value = string();
+        if (target != nullptr) {
+          Semantic::setDocs(context, *target, std::move(value));
+          return;
+        }
+        context.exec.pendingPhraseDocs = std::move(value);
+        context.exec.hasPendingPhraseDocs = true;
       }
 
       lexicon::Phrase referenceValue() {
@@ -385,6 +416,21 @@ namespace recurloop {
       frame.parser->applyPayload(frame.target);
     }
 
+    void fieldKind(context::Context &, lexicon::Phrase &) {
+      FieldFrame &frame = fieldFrame();
+      frame.parser->applyKind(frame.target);
+    }
+
+    void fieldColor(context::Context &, lexicon::Phrase &) {
+      FieldFrame &frame = fieldFrame();
+      frame.parser->applyColor(frame.target);
+    }
+
+    void fieldDocs(context::Context &, lexicon::Phrase &) {
+      FieldFrame &frame = fieldFrame();
+      frame.parser->applyDocs(frame.target);
+    }
+
     void fieldType(context::Context &, lexicon::Phrase &) {
       FieldFrame &frame = fieldFrame();
       frame.parser->applyType(frame.target);
@@ -417,6 +463,9 @@ namespace recurloop {
     context.actions().define("phrase.field.permanent", fieldPermanent);
     context.actions().define("phrase.field.rewrite", fieldRewrite);
     context.actions().define("phrase.field.payload", fieldPayload);
+    context.actions().define("phrase.field.kind", fieldKind);
+    context.actions().define("phrase.field.color", fieldColor);
+    context.actions().define("phrase.field.docs", fieldDocs);
     context.actions().define("phrase.field.type", fieldType);
     context.actions().define("phrase.field.prototype", fieldPrototype);
     context.actions().define("phrase.field.successor", fieldSuccessor);
@@ -445,6 +494,9 @@ namespace recurloop {
     define("permanent", fieldPermanent);
     define("rewrite", fieldRewrite);
     define("payload", fieldPayload);
+    define("kind", fieldKind);
+    define("color", fieldColor);
+    define("docs", fieldDocs);
     define("type", fieldType);
     define("prototype", fieldPrototype);
     define("successor", fieldSuccessor);
@@ -459,6 +511,7 @@ namespace recurloop {
     context.exec.hasPendingPhraseSerializable = false;
     context.exec.hasPendingPhrasePermanent = false;
     context.exec.hasPendingPhraseRewritable = false;
+    Semantic::clearPending(context);
     try {
       Parser(context, block.body, {block.path, block.line, block.position}).parse();
     } catch (...) {
@@ -466,6 +519,7 @@ namespace recurloop {
       context.exec.hasPendingPhraseSerializable = false;
       context.exec.hasPendingPhrasePermanent = false;
       context.exec.hasPendingPhraseRewritable = false;
+      Semantic::clearPending(context);
       throw;
     }
     context::Lookup::leave(context, invoked);

@@ -3,6 +3,7 @@
 #include <recurloop/Execution.hpp>
 #include <recurloop/Project.hpp>
 #include <recurloop/SessionRequest.hpp>
+#include <recurloop/Semantic.hpp>
 #include <utilities/Exception.hpp>
 
 #include <algorithm>
@@ -206,6 +207,51 @@ namespace recurloop {
     const std::string sourceCopy(source);
     const std::string pathCopy(path.empty() ? "<session>" : path);
     return runRequest([&](context::Context &context) { executeSource(context, sourceCopy, pathCopy, 1, 1); });
+  }
+
+  SessionResponse Session::inspect(std::string_view source, std::string_view path) {
+    std::lock_guard lock(mutex_);
+    const std::string sourceCopy(source);
+    const std::string pathCopy(path.empty() ? "<ide>" : path);
+
+    // Source intelligence follows the newest published project generation
+    // without depending on an IDE-side :refresh race. Reattach only when the
+    // project actually changed; ordinary keystrokes reuse the same private COW
+    // context and RequestGeneration restores it after every inspection.
+    std::shared_ptr<const ProjectGeneration> current = project_->current();
+    if (!projectGeneration_ || !current || projectGeneration_->id != current->id) attach(std::move(current));
+    context::Context &context = contextGeneration_->context();
+    const GenerationId requestId = project_->nextId();
+    Generations &generations = contextGeneration_->generations();
+    RequestGeneration request(context, generations, requestId, rollbackBuffer_);
+    SessionRequestState sessionRequest;
+    SessionRequestScope requestScope(sessionRequest);
+    std::ostringstream discardedOutput;
+    std::ostringstream discardedErrors;
+    const context::IOStreams previousIo = context.io;
+    context.io = {nullptr, &discardedOutput, &discardedErrors};
+    context.exec.status = 0;
+
+    Semantic::InspectionScope inspection(context, sourceCopy, pathCopy);
+    std::string diagnostic;
+    try {
+      executeSource(context, sourceCopy, pathCopy, 1, 1);
+    } catch (const Exception &error) {
+      diagnostic = describe(error);
+    } catch (const std::exception &error) {
+      diagnostic = std::string("<ide>:1:1: ") + error.what();
+    } catch (...) {
+      diagnostic = "<ide>:1:1: unknown internal error";
+    }
+
+    SessionResponse response;
+    response.output = inspection.encode(diagnostic);
+    request.rollback();
+    context.io = previousIo;
+    context.exec.status = 0;
+    response.status = 0;
+    response.generations = contextGeneration_->generations();
+    return response;
   }
 
   SessionResponse Session::executeFile(const std::string &path) {

@@ -64,5 +64,14 @@ namespace context {
     bool hasPendingPhrasePermanent = false;
     bool pendingPhraseRewritable = false;
     bool hasPendingPhraseRewritable = false;
+
+    // Optional IDE/introspection metadata collected while a phrase definition
+    // is staged. It is committed only after the phrase has a stable address.
+    std::string pendingPhraseKind;
+    std::string pendingPhraseColor;
+    std::string pendingPhraseDocs;
+    bool hasPendingPhraseKind = false;
+    bool hasPendingPhraseColor = false;
+    bool hasPendingPhraseDocs = false;
   };
 } // namespace context
