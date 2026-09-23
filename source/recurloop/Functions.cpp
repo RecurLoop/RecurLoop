@@ -448,7 +448,7 @@ namespace recurloop {
             output->debug);
         Assembler::finalizeLlvm(context, invoked, program.objects, program.providedSymbols, program.imports);
       } else {
-        module = function_internal::generateLlvmModule(context, signature, statements);
+        module = function_internal::generateLlvmModule(context, signature, statements, context.exec.quickCompile);
         Assembler::finalize(context, invoked, module);
       }
 #else
@@ -634,7 +634,7 @@ namespace recurloop {
       compiler::Module module;
       try {
 #ifdef RECURLOOP_ENABLE_LLVM
-        module = generateLlvmModule(context, definition, body);
+        module = generateLlvmModule(context, definition, body, context.exec.quickCompile);
 #else
         module = generateModule(context, definition, body);
 #endif

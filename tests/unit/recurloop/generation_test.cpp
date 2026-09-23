@@ -192,7 +192,7 @@ TEST(RecurloopGeneration, ResetKernelStaysEmptyInsideProjectSession) {
   EXPECT_EQ(errors.str().find("Phrase has no type"), std::string::npos);
 }
 
-TEST(RecurloopGeneration, ProjectFileCacheWritesAndRestoresRliSteps) {
+TEST(RecurloopGeneration, ProjectFileCacheWritesAndRestoresLinkedRliModules) {
   namespace fs = std::filesystem;
   const fs::path root = fs::temp_directory_path() / "recurloop-project-cache-generation-test";
   std::error_code error;
@@ -203,7 +203,8 @@ TEST(RecurloopGeneration, ProjectFileCacheWritesAndRestoresRliSteps) {
   {
     std::ofstream out(source);
     ASSERT_TRUE(out.is_open());
-    out << "var cached_value = 17\n";
+    out << "var cached_value = 17\n"
+           "fn cached_increment(value:i64) -> i64 { return value + 1 }\n";
   }
 
   auto state = project();
@@ -215,9 +216,25 @@ TEST(RecurloopGeneration, ProjectFileCacheWritesAndRestoresRliSteps) {
   const auto firstLoad = first->executeFile(source.string());
   ASSERT_EQ(firstLoad.status, 0) << firstLoad.error;
   EXPECT_EQ(first->evaluate("print cached_value").output, "17\n");
-  EXPECT_TRUE(fs::is_regular_file(root / "cache" / "steps" / "000000.rli"));
-  EXPECT_TRUE(fs::is_regular_file(root / "cache" / "steps" / "000000.manifest"));
+  EXPECT_EQ(first->evaluate("print cached_increment(cached_value)").output, "18\n");
+  std::size_t moduleImages = 0;
+  std::size_t moduleManifests = 0;
+  fs::path moduleImage;
+  for (const auto &entry : fs::recursive_directory_iterator(root / "cache" / "modules")) {
+    if (entry.path().extension() == ".rli") {
+      ++moduleImages;
+      moduleImage = entry.path();
+    }
+    if (entry.path().extension() == ".manifest") ++moduleManifests;
+  }
+  EXPECT_EQ(moduleImages, 1u);
+  EXPECT_EQ(moduleManifests, 1u);
   EXPECT_EQ(state->cacheWrites(), 1u);
+  ASSERT_FALSE(moduleImage.empty());
+  std::ifstream image(moduleImage, std::ios::binary);
+  char magic[6]{};
+  ASSERT_TRUE(image.read(magic, sizeof(magic)));
+  EXPECT_EQ(std::string_view(magic, sizeof(magic)), "RLLINK");
 
   auto second = state->openSession();
   ASSERT_EQ(second->evaluate(":baseline").status, 0);
@@ -225,7 +242,47 @@ TEST(RecurloopGeneration, ProjectFileCacheWritesAndRestoresRliSteps) {
   const auto secondLoad = second->executeFile(source.string());
   ASSERT_EQ(secondLoad.status, 0) << secondLoad.error;
   EXPECT_EQ(second->evaluate("print cached_value").output, "17\n");
+  EXPECT_EQ(second->evaluate("print cached_increment(cached_value)").output, "18\n");
   EXPECT_GE(state->cacheHits(), 1u);
+
+  fs::remove_all(root, error);
+}
+
+TEST(RecurloopGeneration, ProjectFileCacheExactUsesLinkedModuleOverlay) {
+  namespace fs = std::filesystem;
+  const fs::path root = fs::temp_directory_path() / "recurloop-project-cache-exact-generation-test";
+  std::error_code error;
+  fs::remove_all(root, error);
+  ASSERT_TRUE(fs::create_directories(root / "cache"));
+
+  const fs::path source = root / "source.rl";
+  {
+    std::ofstream out(source);
+    ASSERT_TRUE(out.is_open());
+    out << "var cached_exact_value = 41\n";
+  }
+
+  auto state = project();
+  state->configureCache((root / "cache").string());
+
+  auto warm = state->openSession();
+  ASSERT_EQ(warm->evaluate(":baseline").status, 0);
+  ASSERT_EQ(warm->evaluate(":cache-exact").status, 0);
+  ASSERT_EQ(warm->executeFile(source.string()).status, 0);
+  EXPECT_EQ(warm->evaluate("print cached_exact_value").output, "41\n");
+
+  auto restored = state->openSession();
+  ASSERT_EQ(restored->evaluate(":baseline").status, 0);
+  ASSERT_EQ(restored->evaluate(":cache-exact").status, 0);
+  ASSERT_EQ(restored->evaluate("var cache_walk_only = 99").status, 0);
+  const std::uint64_t hitsBefore = state->cacheHits();
+  ASSERT_EQ(restored->executeFile(source.string()).status, 0);
+  EXPECT_GT(state->cacheHits(), hitsBefore);
+  EXPECT_EQ(restored->evaluate("print cached_exact_value").output, "41\n");
+  // Linked module cache hits have the same composable semantics as ordinary
+  // image imports. :cache-exact remains accepted by IDE clients, but no longer
+  // turns append-only source modules into cumulative replacement snapshots.
+  EXPECT_EQ(restored->evaluate("print cache_walk_only").output, "99\n");
 
   fs::remove_all(root, error);
 }
@@ -271,7 +328,7 @@ TEST(RecurloopGeneration, ProjectFileCachePreservesAssignmentsToBaselineValues) 
   fs::remove_all(root, error);
 }
 
-TEST(RecurloopGeneration, ProjectFileCacheRestoresUnchangedIncludeFragmentsAndReportsDependencies) {
+TEST(RecurloopGeneration, ProjectFileCacheRestoresUnchangedSourceModulesAndReportsDependencies) {
   namespace fs = std::filesystem;
   const fs::path root = fs::temp_directory_path() / "recurloop-project-fragment-cache-generation-test";
   std::error_code error;
@@ -307,10 +364,11 @@ TEST(RecurloopGeneration, ProjectFileCacheRestoresUnchangedIncludeFragmentsAndRe
   ASSERT_EQ(first->executeFile(main.string()).status, 0);
   EXPECT_EQ(first->evaluate("print fragment_first + fragment_second").output, "33\n");
   EXPECT_GE(state->cacheWrites(), 3u);
-  std::size_t fragmentImages = 0;
-  for (const auto &entry : fs::directory_iterator(root / "cache" / "fragments"))
-    if (entry.path().extension() == ".rli") ++fragmentImages;
-  EXPECT_EQ(fragmentImages, 2u);
+  std::size_t moduleImages = 0;
+  for (const auto &entry : fs::recursive_directory_iterator(root / "cache" / "modules"))
+    if (entry.path().extension() == ".rli") ++moduleImages;
+  // main.rl, first.rl and second.rl each own exactly one cache image.
+  EXPECT_EQ(moduleImages, 3u);
 
   const auto dependencies = first->evaluate(":cache-dependencies");
   ASSERT_EQ(dependencies.status, 0) << dependencies.error;

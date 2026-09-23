@@ -66,11 +66,26 @@ namespace recurloop {
     static std::vector<std::uint8_t> read(const std::string &path);
     static void write(std::span<const std::uint8_t> bytes, const std::string &path);
     static void save(context::Context &context, const std::string &path);
+    // Save an append-only linked image containing only phrases allocated at or
+    // after `since`. References to older phrases are encoded as stable lexical
+    // paths and resolved from already loaded dependencies when the image is
+    // imported. Project source modules use this form for small, fast cache files.
+    static void saveLinked(context::Context &context, Size since, const std::string &path);
     // Save a self-contained semantic snapshot, ignoring the incremental export
     // base. Project source checkpoints use this form because source execution
     // may update mutable values that predate the current export boundary.
     static void saveFull(context::Context &context, const std::string &path);
     static void load(context::Context &context, const std::string &path);
+    // Restore a self-contained snapshot as the complete semantic graph. Unlike
+    // load(), this skips composable-overlay reconciliation with the current
+    // lexicon. Project build caches use this only when the session was reset to
+    // the immutable baseline immediately before the cache walk.
+    static void loadFull(context::Context &context, const std::string &path);
+    // Register an image that is already materialized in the current context as
+    // an export dependency without loading its phrases a second time. Project
+    // source-module caches use this immediately after compiling a child .rl
+    // file into its linked .rli image.
+    static void rememberDependency(context::Context &context, const std::string &path);
     // After startup imports, later exports may use the loaded images as their
     // deterministic dependency base instead of duplicating the complete graph.
     static void markExportBase(context::Context &context);

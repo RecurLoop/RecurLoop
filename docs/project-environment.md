@@ -1,8 +1,8 @@
 # Project environment and source-defined IDE
 
-The IDE is not a separate host executable. `ide.rli` contains the standard IDE
-runtime and default view; a normal `.rl` launcher imports that image, configures
-an `IDE:Config`, optionally replaces functions, and opens the window.
+The IDE is not a separate host executable. `ide.rli` contains the stable IDE
+runtime; a normal `.rl` launcher imports that image, configures an `IDE:Config`,
+can register a source-defined view lifecycle, and opens the window.
 
 A typical launcher is:
 
@@ -29,17 +29,39 @@ There is no hidden `.recurloop` IDE configuration directory.
 The cache directory is selected by `app.cache(...)`; relative paths are resolved
 inside the workspace. The default is `.cache/recurloop`.
 
-The persistent Project cache stores cumulative `.rli` checkpoints under
-`<cache>/steps`. The launcher source is a direct cache step. Any files reached
-through `include` are dependency-stamped into its manifest, so an included file
-change invalidates that step. `engine import` loads an already compiled `.rli`
-image and its image dependencies normally.
+Project source is cached as linked engine images under `<cache>/modules`. The
+mapping is intentionally file-shaped: `main.rl`, `editor.rl`, and `view.rl`
+produce their own `.rli`/manifest pairs instead of cumulative step snapshots.
+A linked module stores only its own semantic delta; dependency phrases are
+resolved by stable lexical references after dependency images have loaded.
 
-Included files also have graph-fragment checkpoints under `<cache>/fragments`.
-After a dependency change, the cache restores the unchanged prefix of the
-include graph and rebuilds from the first affected fragment. The Project reports
-the canonical dependency set to the IDE watcher; files outside that set do not
-trigger hot reload.
+When one source file changes, its module and every dependent source module are
+rebuilt, while unchanged dependencies are loaded directly from their `.rli`
+images. There is no separate per-include fragment cache and no increasing full
+snapshot written after every include. Imported library images continue to use
+the same EngineImage dependency metadata, so project modules and normal
+libraries share one dependency model.
+
+A file that performs an in-place mutation of older semantic state, or emits
+state before a later dependency, is conservatively cached as one self-contained
+image. This preserves source ordering without splitting that file into hidden
+cache fragments; ordinary declaration-only IDE modules stay linked and small.
+
+The Project reports the canonical `.rl` dependency set to the IDE watcher, so
+files outside that set do not trigger hot reload.
+
+## Source intelligence
+
+The editor asks the persistent Project runtime to inspect the current unsaved
+buffer. Inspection executes transactionally against the latest published
+generation and rolls back all semantic changes afterwards, so highlighting,
+hover information, and diagnostics cannot mutate the running project.
+
+Semantic spans come from the language itself. Phrase metadata fields `kind`,
+`color`, and `docs` drive highlighting and hover documentation and follow normal
+prototype inheritance. Inspection diagnostics are displayed directly below the
+editor. The GTK view does not maintain a second parser, AST, or hard-coded list
+of RecurLoop keywords.
 
 ## Reload
 
@@ -47,7 +69,7 @@ trigger hot reload.
 skipping `.git`, `build`, `.cache`, and `node_modules`. Stable write, rename and
 delete events schedule a rebuild only when their canonical path belongs to the
 active source dependency graph. Rebuilds start from the immutable `project.rli`
-baseline plus the longest valid cache path.
+baseline and restore unchanged source modules through their linked `.rli` graph.
 
 `app.reload("manual")` records source changes but does not rebuild automatically;
 a compact reload button is shown in the editor toolbar. `app.reload("off")`

@@ -119,6 +119,36 @@ TEST_F(EngineImageTesting, StillReadsVersionSevenImages) {
   EXPECT_FALSE(rootPhrase("compatible").isNull());
 }
 
+TEST_F(EngineImageTesting, LinkedImageStoresOnlyPostCheckpointStateAndAppliesWithoutRebuildingTheBase) {
+  initializeWith("let linked_base = <debug:ping>\n");
+  auto checkpoint = context.lexicon.checkpoint();
+  const Size since = checkpoint.getAddress();
+  ASSERT_NO_THROW(recurloop::executeSource(context, "let linked_child = <debug:ping>\n", "<linked>", 1));
+
+  const std::filesystem::path directory =
+      std::filesystem::path("/tmp") / ("recurloop-linked-image-" + std::to_string(getpid()));
+  const std::filesystem::path first = directory / "child.rli";
+  const std::filesystem::path second = directory / "child-again.rli";
+  std::filesystem::remove_all(directory);
+  std::filesystem::create_directories(directory);
+
+  recurloop::EngineImage::saveLinked(context, since, first.string());
+  recurloop::EngineImage::saveLinked(context, since, second.string());
+  const auto linked = recurloop::EngineImage::read(first.string());
+  EXPECT_EQ(linked, recurloop::EngineImage::read(second.string()));
+  EXPECT_LT(linked.size(), recurloop::EngineImage::encode(context).size());
+
+  auto rollback = checkpoint;
+  rollback.restore();
+  EXPECT_TRUE(rootPhrase("linked_child").isNull());
+  ASSERT_NO_THROW(recurloop::EngineImage::load(context, first.string()));
+  ASSERT_FALSE(rootPhrase("linked_child").isNull());
+  recurloop::executeSource(context, "linked_child\n", "<linked-consumer>", 1);
+  EXPECT_NE(output.str().find("pong"), std::string::npos);
+
+  std::filesystem::remove_all(directory);
+}
+
 TEST_F(EngineImageTesting, LoadsImageDependenciesTransitivelyAndSkipsAnAlreadyLoadedImage) {
   initializeWith("let base_dependency = <debug:ping>\n");
   const std::filesystem::path directory =

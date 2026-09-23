@@ -154,6 +154,20 @@ A permanent phrase cannot be redefined or modified. A rewritable root
 phrase is matched directly while an `fn` body is expanded; there is no second
 copy in a function-specific dictionary.
 
+### Semantic metadata
+
+`kind`, `color`, and `docs` are ordinary phrase fields, not an editor-side
+registry. Libraries can attach them to language phrases and prototypes; semantic
+inspection clients inherit the nearest metadata through the normal prototype
+chain. The source-defined IDE uses the same metadata for highlighting and hover
+documentation, so custom syntax can describe itself without adding an AST or a
+separate IntelliSense grammar.
+
+The fields accepted inside `phrase { ... }` are phrases too. Their standard
+definitions carry semantic metadata, which means hovering `type`, `prototype`,
+`successor`, `action`, `serializable`, and the other descriptor fields explains
+the phrase contract directly in the editor.
+
 ## Records and methods
 
 `record` defines physical native layout, including field offsets, alignment,

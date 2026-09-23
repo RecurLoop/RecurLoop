@@ -27,7 +27,7 @@ static void printHelp(const char *program) {
                "  --unix <path>         Also serve independent sessions on a Unix socket\n"
                "  --connect <path>      Attach an interactive console to a Unix socket\n"
                "  --no-stdio            Do not open a stdio session (requires --unix)\n"
-               "  --project-cache <dir> Cache project .rl loads as reusable .rli checkpoints\n"
+               "  --project-cache <dir> Cache project .rl files as linked .rli modules\n"
                "  -                     Use standard input (REPL on a terminal, source when piped)\n";
 }
 

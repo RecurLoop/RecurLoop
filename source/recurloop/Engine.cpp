@@ -102,9 +102,14 @@ namespace recurloop {
       return;
     }
     const std::string imagePath = path(context, "engine import");
+    // Project module caches treat imports exactly like linked-library
+    // dependencies. Notify the active cache on both sides of the load so it can
+    // keep source-owned state separate from dependency-owned state.
+    observeImageDependency(context, imagePath, false);
     // The restore replaces the lexicon that owns the currently invoked phrase.
     context.exec.invoked = nullptr;
     EngineImage::load(context, imagePath);
+    observeImageDependency(context, imagePath, true);
 
     // Loading a new image resets lookup to the restored root. Loading an image
     // that is already present is intentionally a no-op, however, and therefore

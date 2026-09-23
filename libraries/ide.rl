@@ -172,6 +172,8 @@ record IDE:Host {
     watcher:IDE:Watcher*
     selected:u8*
     pending_since:i64
+    reload_started_at:i64
+    last_reload_ms:i64
     terminal_number:i64
     shell_lifecycle:IDE:ShellLifecycle
     initial_module:u8*
@@ -780,8 +782,8 @@ let IDE:RuntimeSession:load_file = fn (self:IDE:RuntimeSession*, path:u8*) -> i3
 
 // Generated build drivers are unique to one revision and are deleted as soon
 // as the native module has been linked. Evaluate them as ordinary included
-// source instead of advancing the persistent step cache and serializing a full
-// checkpoint that can never be reused.
+// source instead of creating a persistent source-module cache entry that can
+// never be reused.
 let IDE:RuntimeSession:load_transient_file = fn (self:IDE:RuntimeSession*, path:u8*) -> i32 {
     if !self || !path { return 1 }
     let command = LanguageKit:Text:new()
@@ -810,6 +812,9 @@ let IDE:RuntimeSession:load_project_file = fn (self:IDE:RuntimeSession*, runner:
 let IDE:RuntimeSession:load_entry = fn (self:IDE:RuntimeSession*, runner:IDE:Runner*) -> i32 {
     if !self || !runner || !runner.application { return 1 }
     if self.request(":baseline") != 0 { return 1 }
+    // Project cache entries are linked .rli modules, one per .rl source. They
+    // compose exactly like library imports, so a candidate rebuild restores
+    // unchanged source modules without loading cumulative project snapshots.
     if self.request(":cache") != 0 { return 1 }
     if self.load_file(runner.application) != 0 { return 1 }
     return self.load_project_file(runner)
@@ -1314,7 +1319,7 @@ let IDE:worker_main = fn (kind:i64, program:u8*, root:u8*, application:u8*, sock
 
     // Startup already executes the launcher in the foreground process, so the
     // visible IDE does not need to be compiled into a .so again.  The first
-    // worker only warms/restores the step cache and publishes the launcher into
+    // worker only warms/restores the source-module cache and publishes the launcher into
     // the shared Project used by terminals.  This is substantially cheaper than
     // building an identical native view before the user can interact with it.
     if kind == 1 {
@@ -1993,7 +1998,9 @@ let IDE:finish_reload = fn (host:IDE:Host*, module_path:u8*, revision:u64, epoch
 
 let IDE:start_reload = fn (host:IDE:Host*) -> i64 {
     if !host || !host.runner || host.job { return 0 }
+    host.reload_started_at = IDE:now_ms()
     if !IDE:spawn_job(host, 2) {
+        host.reload_started_at = 0
         host.runner.last_status = 1
         if host.runner.last_error { free(host.runner.last_error) }
         host.runner.last_error = IDE:copy("cannot start IDE reload worker")
@@ -2052,6 +2059,10 @@ let IDE:job_done = fn (pid:i32, status:i32, data:u8*) -> void {
     }
 
     if kind == 2 {
+        if host.reload_started_at > 0 {
+            host.last_reload_ms = IDE:now_ms() - host.reload_started_at
+            host.reload_started_at = 0
+        }
         var outcome = 0
         var dependencies = cast(u8*, 0)
         if success && result {
@@ -2172,7 +2183,7 @@ let IDE:activate_watcher = fn (host:IDE:Host*) -> void {
 
 // Source-defined startup.  The current .rl process paints the default/overridden
 // view immediately; the persistent Project server starts on the GTK timer and
-// is then populated from the same configuration source through the step cache.
+// is then populated from the same configuration source through the source-module cache.
 let IDE:startup_tick = fn (data:u8*) -> i32 {
     let host = cast(IDE:Host*, data)
     if !host || !host.runner { return 0 }
@@ -2423,6 +2434,8 @@ let IDE:Config:open = fn (self:IDE:Config*) -> i64 {
     host.watcher = cast(IDE:Watcher*, 0)
     host.selected = cast(u8*, 0)
     host.pending_since = 0
+    host.reload_started_at = 0
+    host.last_reload_ms = 0
     host.terminal_number = 0
     host.shell_lifecycle = cast(IDE:ShellLifecycle, self.view_lifecycle)
     host.initial_module = cast(u8*, 0)

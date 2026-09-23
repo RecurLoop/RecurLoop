@@ -18,6 +18,7 @@ namespace recurloop {
     Refresh,
     Baseline,
     Cache,
+    CacheExact,
     CacheStatus,
     CacheDependencies,
     Help,

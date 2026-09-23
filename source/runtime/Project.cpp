@@ -6,8 +6,11 @@
 #include <recurloop/LexiconTransaction.hpp>
 #include <recurloop/Recurloop.hpp>
 #include <recurloop/Session.hpp>
+#include <radix/node/Data.hpp>
 
 #include <algorithm>
+#include <cstdlib>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <iomanip>
@@ -15,7 +18,7 @@
 
 namespace recurloop {
   namespace {
-    constexpr std::string_view CacheMagic{"recurloop-project-step-cache-v2"};
+    constexpr std::string_view CacheMagic{"recurloop-project-module-cache-v3"};
     constexpr std::uint64_t FnvOffset = 1469598103934665603ULL;
     constexpr std::uint64_t FnvPrime = 1099511628211ULL;
 
@@ -41,49 +44,31 @@ namespace recurloop {
       return value.size() >= suffix.size() && value.substr(value.size() - suffix.size()) == suffix;
     }
 
-    void hashBytes(std::uint64_t &hash, const void *data, std::size_t bytes) {
-      const auto *cursor = static_cast<const std::uint8_t *>(data);
-      for (std::size_t index = 0; index < bytes; ++index) {
-        hash ^= cursor[index];
+    std::uint64_t pathHash(std::string_view value) {
+      std::uint64_t hash = FnvOffset;
+      for (const unsigned char byte : value) {
+        hash ^= byte;
         hash *= FnvPrime;
-      }
-    }
-
-    void hashText(std::uint64_t &hash, std::string_view value) {
-      hashBytes(hash, value.data(), value.size());
-      const std::uint8_t separator = 0xff;
-      hashBytes(hash, &separator, sizeof(separator));
-    }
-
-    template <typename Value> void hashValue(std::uint64_t &hash, const Value &value) {
-      hashBytes(hash, &value, sizeof(value));
-    }
-
-    std::uint64_t nextChain(std::uint64_t input, const std::string &source,
-                            const std::unordered_map<std::string, ProjectCacheStamp> &dependencies) {
-      std::uint64_t hash = input == 0 ? FnvOffset : input;
-      hashText(hash, source);
-      std::vector<std::pair<std::string, ProjectCacheStamp>> ordered(dependencies.begin(), dependencies.end());
-      std::sort(ordered.begin(), ordered.end(),
-                [](const auto &left, const auto &right) { return left.first < right.first; });
-      for (const auto &[path, stamp] : ordered) {
-        hashText(hash, path);
-        hashValue(hash, stamp.size);
-        hashValue(hash, stamp.mtime);
       }
       return hash == 0 ? 1 : hash;
     }
 
-    std::string stepName(std::size_t step) {
+    std::string hexadecimal(std::uint64_t value) {
       std::ostringstream stream;
-      stream << std::setfill('0') << std::setw(6) << step;
+      stream << std::hex << std::setfill('0') << std::setw(16) << value;
       return stream.str();
+    }
+
+    bool relativeInside(const std::filesystem::path &path) {
+      if (path.empty() || path.is_absolute()) return false;
+      for (const auto &part : path)
+        if (part == "..") return false;
+      return true;
     }
 
     struct Manifest {
       std::uint64_t baseline = 0;
-      std::uint64_t input = 0;
-      std::uint64_t output = 0;
+      bool linked = true;
       std::string source;
       ProjectCacheStamp sourceStamp;
       std::unordered_map<std::string, ProjectCacheStamp> dependencies;
@@ -93,11 +78,13 @@ namespace recurloop {
       std::ifstream input(path);
       if (!input.is_open()) return false;
       std::string magic;
+      int linked = 0;
       std::size_t dependencyCount = 0;
-      if (!(input >> magic >> std::hex >> manifest.baseline >> manifest.input >> manifest.output >> std::dec >>
-            manifest.sourceStamp.size >> manifest.sourceStamp.mtime >> std::quoted(manifest.source) >> dependencyCount))
+      if (!(input >> magic >> std::hex >> manifest.baseline >> std::dec >> linked >> manifest.sourceStamp.size >>
+            manifest.sourceStamp.mtime >> std::quoted(manifest.source) >> dependencyCount))
         return false;
-      if (magic != CacheMagic || dependencyCount == 0) return false;
+      if (magic != CacheMagic || (linked != 0 && linked != 1) || dependencyCount == 0) return false;
+      manifest.linked = linked != 0;
       for (std::size_t index = 0; index < dependencyCount; ++index) {
         ProjectCacheStamp stamp;
         std::string dependency;
@@ -108,15 +95,15 @@ namespace recurloop {
       return input.eof();
     }
 
-    bool writeManifest(const std::filesystem::path &path, std::uint64_t baseline, std::uint64_t input,
-                       std::uint64_t output, const std::string &source, const ProjectCacheStamp &sourceStamp,
+    bool writeManifest(const std::filesystem::path &path, std::uint64_t baseline, bool linked,
+                       const std::string &source, const ProjectCacheStamp &sourceStamp,
                        const std::unordered_map<std::string, ProjectCacheStamp> &dependencies) {
       std::vector<std::pair<std::string, ProjectCacheStamp>> ordered(dependencies.begin(), dependencies.end());
       std::sort(ordered.begin(), ordered.end(),
                 [](const auto &left, const auto &right) { return left.first < right.first; });
       std::ofstream file(path, std::ios::trunc);
       if (!file.is_open()) return false;
-      file << CacheMagic << ' ' << std::hex << baseline << ' ' << input << ' ' << output << std::dec << ' '
+      file << CacheMagic << ' ' << std::hex << baseline << std::dec << ' ' << (linked ? 1 : 0) << ' '
            << sourceStamp.size << ' ' << sourceStamp.mtime << ' ' << std::quoted(source) << ' ' << ordered.size()
            << '\n';
       for (const auto &[dependency, stamp] : ordered)
@@ -125,12 +112,73 @@ namespace recurloop {
       return static_cast<bool>(file);
     }
 
-    std::string fragmentName(std::uint64_t input, std::string_view source) {
-      std::uint64_t hash = input == 0 ? FnvOffset : input;
-      hashText(hash, source);
-      std::ostringstream stream;
-      stream << std::hex << std::setfill('0') << std::setw(16) << hash;
-      return stream.str();
+    void hashBytes(std::uint64_t &hash, const void *data, std::size_t size) {
+      const auto *bytes = static_cast<const std::uint8_t *>(data);
+      for (std::size_t index = 0; index < size; ++index) {
+        hash ^= bytes[index];
+        hash *= FnvPrime;
+      }
+    }
+
+    template <typename Value> void hashValue(std::uint64_t &hash, const Value &value) {
+      hashBytes(hash, &value, sizeof(value));
+    }
+
+    std::uint64_t semanticPrefix(context::Context &context, Size before) {
+      std::uint64_t hash = FnvOffset;
+      for (radix::Item item = context.lexicon.lastItem(); !item.isNull(); item = item.earlier()) {
+        const Size address = item.getAddress();
+        const Size contentSize = item.contentSize();
+        if (address >= before || contentSize < sizeof(lexicon::Phrase::Contains)) continue;
+
+        Size offset = 0;
+        lexicon::Phrase::Contains contains;
+        std::memcpy(&contains, item.content(offset, sizeof(contains)).toPtr(), sizeof(contains));
+        if (contains & lexicon::phrase::Contains::UNSERIALIZABLE) continue;
+        hashValue(hash, address);
+        hashValue(hash, contains);
+        offset += sizeof(contains);
+
+        const auto hashField = [&](std::size_t size) {
+          if (offset > contentSize || size > contentSize - offset)
+            THROW(, "project cache encountered truncated phrase metadata")
+          hashBytes(hash, item.content(offset, size).toPtr(), size);
+          offset += size;
+        };
+        if (contains & lexicon::phrase::Contains::PROTOTYPE) hashField(sizeof(Size));
+        if (contains & lexicon::phrase::Contains::PARENT) hashField(sizeof(Size));
+        if (contains & lexicon::phrase::Contains::SUBDICTIONARY) offset += sizeof(radix::node::Data);
+        if (contains & lexicon::phrase::Contains::TYPE) hashField(sizeof(Size));
+        if (contains & lexicon::phrase::Contains::ACTION) {
+          lexicon::Phrase::ActionBinding action;
+          if (offset > contentSize || sizeof(action) > contentSize - offset)
+            THROW(, "project cache encountered truncated phrase action")
+          std::memcpy(&action, item.content(offset, sizeof(action)).toPtr(), sizeof(action));
+          hashValue(hash, action.dispatch);
+          hashValue(hash, action.implementation);
+          offset += sizeof(action);
+        }
+        if (contains & lexicon::phrase::Contains::SUCCESSOR) hashField(sizeof(Size));
+        if (offset > contentSize) THROW(, "project cache encountered truncated phrase payload")
+        const Size payloadSize = contentSize - offset;
+        if (payloadSize != 0) hashBytes(hash, item.content(offset, payloadSize).toPtr(), payloadSize);
+      }
+      return hash == 0 ? 1 : hash;
+    }
+
+    void snapshotSegment(ProjectCacheState::Module &module, context::Context &context) {
+      module.segmentUsed = context.lexicon.memoryUsed();
+      module.semanticPrefix = semanticPrefix(context, module.segmentUsed);
+    }
+
+    bool semanticPrefixChanged(const ProjectCacheState::Module &module, context::Context &context) {
+      const Size used = context.lexicon.memoryUsed();
+      if (used < module.segmentUsed) return true;
+      return module.semanticPrefix != semanticPrefix(context, module.segmentUsed);
+    }
+
+    bool segmentChanged(const ProjectCacheState::Module &module, context::Context &context) {
+      return context.lexicon.memoryUsed() != module.segmentUsed || semanticPrefixChanged(module, context);
     }
   } // namespace
 
@@ -232,40 +280,99 @@ namespace recurloop {
   void Project::configureCache(std::string directory) {
     namespace fs = std::filesystem;
     cacheDirectory_ = fs::absolute(std::move(directory)).lexically_normal().string();
-    cacheStepsDirectory_ = (fs::path(cacheDirectory_) / "steps").string();
-    cacheFragmentsDirectory_ = (fs::path(cacheDirectory_) / "fragments").string();
-    std::error_code error;
-    fs::create_directories(cacheStepsDirectory_, error);
-    error.clear();
-    fs::create_directories(cacheFragmentsDirectory_, error);
+    cacheModulesDirectory_ = (fs::path(cacheDirectory_) / "modules").string();
 
-    // Remove obsolete cache formats. The only persistent state now is a chain
-    // of real .rli checkpoints plus tiny manifests under steps/.
-    const fs::path root(cacheDirectory_);
+    std::error_code error;
+    fs::create_directories(cacheModulesDirectory_, error);
+
+    const char *projectRoot = std::getenv("RECURLOOP_PROJECT_ROOT");
+    if (projectRoot != nullptr && *projectRoot != '\0')
+      cacheSourceRoot_ = fs::absolute(fs::path(projectRoot), error).lexically_normal().string();
+    if (cacheSourceRoot_.empty() || error) {
+      error.clear();
+      cacheSourceRoot_ = fs::current_path(error).lexically_normal().string();
+    }
+
+    // Linked modules are append-only deltas instead of flattened snapshots.
+    // Old step/fragment trees are not compatible and would only waste space.
+    error.clear();
+    fs::remove_all(fs::path(cacheDirectory_) / "steps", error);
+    error.clear();
+    fs::remove_all(fs::path(cacheDirectory_) / "fragments", error);
     for (const char *legacy :
          {"project.rli", "project.manifest", "checkpoint.rli", "checkpoint.manifest", "project-bootstrap.rl"}) {
       error.clear();
-      fs::remove(root / legacy, error);
+      fs::remove(fs::path(cacheDirectory_) / legacy, error);
     }
   }
 
-  void Project::beginCache(ProjectCacheState &state) const {
-    state.enabled = cacheEnabled();
-    state.active = false;
-    state.step = 0;
-    state.chain = state.enabled ? baselineHash() : 0;
-    state.inputChain = 0;
-    state.source.clear();
-    state.dependencies.clear();
-    state.observed.clear();
-    state.fragmentChain = state.chain;
-    state.fragments.clear();
+  std::string Project::cacheModuleImagePath(std::string_view source) const {
+    namespace fs = std::filesystem;
+    std::error_code error;
+    const fs::path absolute = fs::absolute(fs::path(source), error).lexically_normal();
+    if (error) return {};
+
+    fs::path relative;
+    if (!cacheSourceRoot_.empty()) relative = absolute.lexically_relative(fs::path(cacheSourceRoot_));
+    fs::path output;
+    if (relativeInside(relative)) {
+      output = fs::path(cacheModulesDirectory_) / relative;
+    } else {
+      output = fs::path(cacheModulesDirectory_) / "external" /
+               (hexadecimal(pathHash(absolute.generic_string())) + "-" + absolute.filename().string());
+    }
+    output.replace_extension(".rli");
+    return output.string();
   }
 
-  bool Project::restoreCacheStep(ProjectCacheState &state, context::Context &context,
-                                 std::string_view source) noexcept {
+  std::string Project::cacheModuleManifestPath(std::string_view source) const {
     namespace fs = std::filesystem;
-    if (!state.enabled || cacheStepsDirectory_.empty() || !endsWith(source, ".rl")) return false;
+    fs::path path(cacheModuleImagePath(source));
+    if (path.empty()) return {};
+    path.replace_extension(".manifest");
+    return path.string();
+  }
+
+  void Project::beginCache(ProjectCacheState &state, bool exactRestore) const {
+    state.enabled = cacheEnabled();
+    state.exactRestore = state.enabled && exactRestore;
+    state.active = false;
+    state.step = 0;
+    state.observed.clear();
+    state.modules.clear();
+  }
+
+  void Project::beforeCacheDependency(ProjectCacheState &state, context::Context &context) noexcept {
+    if (!state.enabled || state.modules.empty()) return;
+    try {
+      ProjectCacheState::Module &module = state.modules.back();
+      // A single linked image can represent one source file only when all
+      // dependencies are established before that file contributes semantic
+      // state. If source state exists before a later dependency, keep the
+      // one-file cache invariant by falling back to a self-contained image for
+      // this file rather than creating hidden per-include segments.
+      if (segmentChanged(module, context)) module.linked = false;
+    } catch (...) {
+      state.enabled = false;
+    }
+  }
+
+  void Project::afterCacheDependency(ProjectCacheState &state, context::Context &context) noexcept {
+    if (!state.enabled || state.modules.empty()) return;
+    try {
+      // Subsequent source-owned state starts after the dependency. The module
+      // checkpoint moves forward without turning the dependency into local
+      // image contents.
+      snapshotSegment(state.modules.back(), context);
+    } catch (...) {
+      state.enabled = false;
+    }
+  }
+
+  bool Project::restoreCacheModule(ProjectCacheState &state, context::Context &context, std::string_view source,
+                                   bool nested) noexcept {
+    namespace fs = std::filesystem;
+    if (!state.enabled || cacheModulesDirectory_.empty() || !endsWith(source, ".rl")) return false;
     try {
       std::error_code error;
       const std::string absolute = fs::absolute(fs::path(source), error).lexically_normal().string();
@@ -273,12 +380,11 @@ namespace recurloop {
       ProjectCacheStamp stamp;
       if (!sourceStamp(absolute, stamp)) return false;
 
-      const fs::path base = fs::path(cacheStepsDirectory_) / stepName(state.step);
-      const fs::path imagePath = base.string() + ".rli";
-      const fs::path manifestPath = base.string() + ".manifest";
+      const fs::path imagePath(cacheModuleImagePath(absolute));
+      const fs::path manifestPath(cacheModuleManifestPath(absolute));
       Manifest manifest;
       if (!readManifest(manifestPath, manifest) || manifest.baseline != baselineHash() ||
-          manifest.input != state.chain || manifest.source != absolute || manifest.sourceStamp.size != stamp.size ||
+          manifest.source != absolute || manifest.sourceStamp.size != stamp.size ||
           manifest.sourceStamp.mtime != stamp.mtime) {
         cacheMisses_.fetch_add(1, std::memory_order_relaxed);
         return false;
@@ -293,240 +399,191 @@ namespace recurloop {
         return false;
       }
 
-      // A step image is a normal importable .rli delta. The export base is
-      // advanced after every successful step, so restoring the chain is just
-      // the normal sequence of EngineImage imports; earlier source never needs
-      // to be parsed again.
+      if (nested) beforeCacheDependency(state, context);
       LexiconTransaction transaction(context.lexicon);
-      EngineImage::load(context, imagePath.string());
-      EngineImage::markExportBase(context);
+      // Linked modules always compose like normal imports. A standalone fallback
+      // is also loaded as an overlay when nested; at the direct root exact mode
+      // may replace the graph because the caller has explicitly requested it.
+      if (state.exactRestore && !nested && !manifest.linked) EngineImage::loadFull(context, imagePath.string());
+      else EngineImage::load(context, imagePath.string());
       transaction.commit();
-      state.chain = manifest.output;
-      state.fragmentChain = manifest.output;
+
       state.observed.insert(manifest.dependencies.begin(), manifest.dependencies.end());
-      if (state.active) state.dependencies.insert(manifest.dependencies.begin(), manifest.dependencies.end());
+      if (nested && !state.modules.empty()) {
+        state.modules.back().dependencies.insert(manifest.dependencies.begin(), manifest.dependencies.end());
+        afterCacheDependency(state, context);
+      }
       ++state.step;
       cacheHits_.fetch_add(1, std::memory_order_relaxed);
       return true;
     } catch (...) {
       cacheMisses_.fetch_add(1, std::memory_order_relaxed);
-      state.enabled = false;
       return false;
     }
   }
 
-  void Project::beginCacheStep(ProjectCacheState &state, std::string_view source) noexcept {
+  void Project::beginCacheModule(ProjectCacheState &state, context::Context &context, std::string_view source) noexcept {
     namespace fs = std::filesystem;
-    if (!state.enabled || state.active || cacheStepsDirectory_.empty() || !endsWith(source, ".rl")) return;
+    if (!state.enabled || cacheModulesDirectory_.empty() || !endsWith(source, ".rl")) return;
     try {
       std::error_code error;
       const std::string absolute = fs::absolute(fs::path(source), error).lexically_normal().string();
       if (error) return;
       ProjectCacheStamp stamp;
       if (!sourceStamp(absolute, stamp)) return;
+
+      ProjectCacheState::Module module;
+      module.source = absolute;
+      module.sourceStamp = stamp;
+      module.dependencies.emplace(absolute, stamp);
+      snapshotSegment(module, context);
+      state.observed[absolute] = stamp;
+      state.modules.push_back(std::move(module));
       state.active = true;
-      state.inputChain = state.chain;
-      state.source = absolute;
-      state.sourceStamp = stamp;
-      state.dependencies.clear();
-      state.dependencies.emplace(absolute, stamp);
-      state.observed.emplace(absolute, stamp);
-      state.fragmentChain = nextChain(state.fragmentChain, absolute, {{absolute, stamp}});
     } catch (...) {
+      state.enabled = false;
     }
+  }
+
+  bool Project::commitCacheModule(ProjectCacheState &state, context::Context &context, std::string_view source,
+                                  bool nested) noexcept {
+    namespace fs = std::filesystem;
+    if (!state.enabled || state.modules.empty()) return false;
+    try {
+      std::error_code error;
+      const std::string absolute = fs::absolute(fs::path(source), error).lexically_normal().string();
+      if (error || state.modules.back().source != absolute) return false;
+
+      ProjectCacheState::Module module = std::move(state.modules.back());
+      state.modules.pop_back();
+
+      // In-place writes to state that existed before the current dependency
+      // boundary cannot be represented by an append-only linked image. Keep a
+      // correct 1:1 cache entry by making just this source standalone. Normal
+      // declaration-only project files stay linked and small.
+      if (semanticPrefixChanged(module, context)) module.linked = false;
+
+      const fs::path imagePath(cacheModuleImagePath(absolute));
+      const fs::path manifestPath(cacheModuleManifestPath(absolute));
+      if (imagePath.empty() || manifestPath.empty()) return false;
+      fs::create_directories(imagePath.parent_path(), error);
+      if (error) return false;
+
+      const std::uint64_t temporaryId = cacheTemporaryId_.fetch_add(1, std::memory_order_relaxed);
+      const fs::path imageTemporary = imagePath.string() + "." + std::to_string(temporaryId) + ".tmp";
+      const fs::path manifestTemporary = manifestPath.string() + "." + std::to_string(temporaryId) + ".tmp";
+
+      if (module.linked) EngineImage::saveLinked(context, module.segmentUsed, imageTemporary.string());
+      else EngineImage::saveFull(context, imageTemporary.string());
+      if (!writeManifest(manifestTemporary, baselineHash(), module.linked, module.source, module.sourceStamp,
+                         module.dependencies)) {
+        fs::remove(imageTemporary, error);
+        return false;
+      }
+
+      error.clear();
+      fs::rename(imageTemporary, imagePath, error);
+      if (error) {
+        fs::remove(imageTemporary, error);
+        fs::remove(manifestTemporary, error);
+        return false;
+      }
+      error.clear();
+      fs::rename(manifestTemporary, manifestPath, error);
+      if (error) {
+        fs::remove(manifestTemporary, error);
+        return false;
+      }
+
+      // The source was already executed in this context. Register the new image
+      // as a dependency without loading it a second time, so the enclosing
+      // source exports a link to this module instead of copying its contents.
+      EngineImage::rememberDependency(context, imagePath.string());
+      state.observed.insert(module.dependencies.begin(), module.dependencies.end());
+      if (!state.modules.empty()) {
+        state.modules.back().dependencies.insert(module.dependencies.begin(), module.dependencies.end());
+        afterCacheDependency(state, context);
+      } else {
+        state.active = false;
+      }
+      ++state.step;
+      cacheWrites_.fetch_add(1, std::memory_order_relaxed);
+      return true;
+    } catch (...) {
+      if (!state.modules.empty() && state.modules.back().source == source) state.modules.pop_back();
+      if (!nested && state.modules.empty()) state.active = false;
+      return false;
+    }
+  }
+
+  bool Project::restoreCacheStep(ProjectCacheState &state, context::Context &context,
+                                 std::string_view source) noexcept {
+    return restoreCacheModule(state, context, source, false);
+  }
+
+  void Project::beginCacheStep(ProjectCacheState &state, std::string_view source,
+                               context::Context &context) noexcept {
+    if (!state.modules.empty()) return;
+    beginCacheModule(state, context, source);
   }
 
   void Project::observeCacheSource(ProjectCacheState &state, std::string_view source) noexcept {
     namespace fs = std::filesystem;
-    if (!state.enabled || !state.active || !endsWith(source, ".rl")) return;
-    try {
-      std::error_code error;
-      const std::string absolute = fs::absolute(fs::path(source), error).lexically_normal().string();
-      if (error) return;
-      ProjectCacheStamp stamp;
-      if (sourceStamp(absolute, stamp)) {
-        state.dependencies[absolute] = stamp;
-        state.observed[absolute] = stamp;
-        for (auto &fragment : state.fragments) fragment.dependencies[absolute] = stamp;
-      }
-    } catch (...) {
-    }
-  }
-
-  bool Project::restoreCacheFragment(ProjectCacheState &state, context::Context &context,
-                                     std::string_view source) noexcept {
-    namespace fs = std::filesystem;
-    if (!state.enabled || cacheFragmentsDirectory_.empty() || !endsWith(source, ".rl")) return false;
-    try {
-      std::error_code error;
-      const std::string absolute = fs::absolute(fs::path(source), error).lexically_normal().string();
-      if (error) return false;
-      ProjectCacheStamp stamp;
-      if (!sourceStamp(absolute, stamp)) return false;
-      const std::uint64_t input = state.fragmentChain;
-      const fs::path base = fs::path(cacheFragmentsDirectory_) / fragmentName(input, absolute);
-      const fs::path imagePath = base.string() + ".rli";
-      Manifest manifest;
-      if (!readManifest(base.string() + ".manifest", manifest) || manifest.baseline != baselineHash() ||
-          manifest.input != input || manifest.source != absolute || manifest.sourceStamp.size != stamp.size ||
-          manifest.sourceStamp.mtime != stamp.mtime)
-        return false;
-      for (const auto &[dependency, dependencyStamp] : manifest.dependencies)
-        if (!sameStamp(dependency, dependencyStamp)) return false;
-      if (!fs::is_regular_file(imagePath, error) || error || fs::file_size(imagePath, error) == 0 || error)
-        return false;
-
-      LexiconTransaction transaction(context.lexicon);
-      EngineImage::load(context, imagePath.string());
-      EngineImage::markExportBase(context);
-      transaction.commit();
-      state.fragmentChain = manifest.output;
-      state.observed.insert(manifest.dependencies.begin(), manifest.dependencies.end());
-      if (!state.fragments.empty())
-        state.fragments.back().dependencies.insert(manifest.dependencies.begin(), manifest.dependencies.end());
-      cacheHits_.fetch_add(1, std::memory_order_relaxed);
-      return true;
-    } catch (...) {
-      return false;
-    }
-  }
-
-  void Project::beginCacheFragment(ProjectCacheState &state, std::string_view source) noexcept {
-    namespace fs = std::filesystem;
-    if (!state.enabled || cacheFragmentsDirectory_.empty() || !endsWith(source, ".rl")) return;
+    if (!state.enabled || !endsWith(source, ".rl")) return;
     try {
       std::error_code error;
       const std::string absolute = fs::absolute(fs::path(source), error).lexically_normal().string();
       if (error) return;
       ProjectCacheStamp stamp;
       if (!sourceStamp(absolute, stamp)) return;
-      ProjectCacheState::Fragment fragment;
-      fragment.inputChain = state.fragmentChain;
-      fragment.source = absolute;
-      fragment.sourceStamp = stamp;
-      fragment.dependencies.emplace(absolute, stamp);
       state.observed[absolute] = stamp;
-      if (state.active) state.dependencies[absolute] = stamp;
-      state.fragmentChain = nextChain(fragment.inputChain, absolute, fragment.dependencies);
-      state.fragments.push_back(std::move(fragment));
+      for (auto &module : state.modules) module.dependencies[absolute] = stamp;
     } catch (...) {
     }
   }
 
-  bool Project::commitCacheFragment(ProjectCacheState &state, context::Context &context,
+  bool Project::restoreCacheNestedModule(ProjectCacheState &state, context::Context &context,
+                                     std::string_view source) noexcept {
+    return restoreCacheModule(state, context, source, true);
+  }
+
+  void Project::beginCacheNestedModule(ProjectCacheState &state, std::string_view source,
+                                   context::Context &context) noexcept {
+    beforeCacheDependency(state, context);
+    beginCacheModule(state, context, source);
+  }
+
+  bool Project::commitCacheNestedModule(ProjectCacheState &state, context::Context &context,
                                     std::string_view source) noexcept {
-    namespace fs = std::filesystem;
-    if (!state.enabled || state.fragments.empty()) return false;
-    try {
-      std::error_code error;
-      const std::string absolute = fs::absolute(fs::path(source), error).lexically_normal().string();
-      if (error || state.fragments.back().source != absolute) return false;
-      ProjectCacheState::Fragment fragment = std::move(state.fragments.back());
-      state.fragments.pop_back();
-      const std::uint64_t output = nextChain(fragment.inputChain, fragment.source, fragment.dependencies);
-      const fs::path base = fs::path(cacheFragmentsDirectory_) / fragmentName(fragment.inputChain, fragment.source);
-      const fs::path imagePath = base.string() + ".rli";
-      const fs::path manifestPath = base.string() + ".manifest";
-      const std::uint64_t temporaryId = cacheTemporaryId_.fetch_add(1, std::memory_order_relaxed);
-      const fs::path imageTemporary = imagePath.string() + "." + std::to_string(temporaryId) + ".tmp";
-      const fs::path manifestTemporary = manifestPath.string() + "." + std::to_string(temporaryId) + ".tmp";
-      EngineImage::saveFull(context, imageTemporary.string());
-      if (!writeManifest(manifestTemporary, baselineHash(), fragment.inputChain, output, fragment.source,
-                         fragment.sourceStamp, fragment.dependencies)) {
-        fs::remove(imageTemporary, error);
-        return false;
-      }
-      fs::rename(imageTemporary, imagePath, error);
-      if (error) {
-        fs::remove(imageTemporary, error);
-        fs::remove(manifestTemporary, error);
-        return false;
-      }
-      fs::rename(manifestTemporary, manifestPath, error);
-      if (error) {
-        fs::remove(manifestTemporary, error);
-        return false;
-      }
-      EngineImage::markExportBase(context);
-      state.fragmentChain = output;
-      state.observed.insert(fragment.dependencies.begin(), fragment.dependencies.end());
-      if (state.active) state.dependencies.insert(fragment.dependencies.begin(), fragment.dependencies.end());
-      if (!state.fragments.empty())
-        state.fragments.back().dependencies.insert(fragment.dependencies.begin(), fragment.dependencies.end());
-      cacheWrites_.fetch_add(1, std::memory_order_relaxed);
-      return true;
-    } catch (...) {
-      return false;
-    }
+    if (state.modules.size() <= 1) return false;
+    return commitCacheModule(state, context, source, true);
   }
 
   void Project::commitCacheStep(ProjectCacheState &state, context::Context &context) noexcept {
-    namespace fs = std::filesystem;
-    if (!state.enabled || !state.active || cacheStepsDirectory_.empty()) return;
-    try {
-      const std::uint64_t outputChain = nextChain(state.inputChain, state.source, state.dependencies);
-      const fs::path base = fs::path(cacheStepsDirectory_) / stepName(state.step);
-      const fs::path imagePath = base.string() + ".rli";
-      const fs::path manifestPath = base.string() + ".manifest";
-      const std::uint64_t temporaryId = cacheTemporaryId_.fetch_add(1, std::memory_order_relaxed);
-      const fs::path imageTemporary = imagePath.string() + "." + std::to_string(temporaryId) + ".tmp";
-      const fs::path manifestTemporary = manifestPath.string() + "." + std::to_string(temporaryId) + ".tmp";
-      std::error_code error;
-
-      // Cache a complete semantic checkpoint at each direct source boundary.
-      // A source file may assign to a mutable value that was created by the
-      // immutable baseline (for example an IDE override). Such an assignment
-      // changes an existing phrase in place and therefore cannot be represented
-      // by an append-only EngineImage delta. Full checkpoints preserve both
-      // appended definitions and those pre-existing mutable values while still
-      // avoiding source parsing/compilation on a cache hit.
-      EngineImage::saveFull(context, imageTemporary.string());
-      if (!writeManifest(manifestTemporary, baselineHash(), state.inputChain, outputChain, state.source,
-                         state.sourceStamp, state.dependencies)) {
-        fs::remove(imageTemporary, error);
-        state.enabled = false;
-        state.active = false;
-        return;
-      }
-
-      error.clear();
-      fs::rename(imageTemporary, imagePath, error);
-      if (error) {
-        fs::remove(imageTemporary, error);
-        fs::remove(manifestTemporary, error);
-        state.enabled = false;
-        state.active = false;
-        return;
-      }
-      error.clear();
-      fs::rename(manifestTemporary, manifestPath, error);
-      if (error) {
-        fs::remove(manifestTemporary, error);
-        state.enabled = false;
-        state.active = false;
-        return;
-      }
-
-      EngineImage::markExportBase(context);
-      state.chain = outputChain;
-      state.active = false;
-      state.source.clear();
-      state.dependencies.clear();
-      ++state.step;
-      cacheWrites_.fetch_add(1, std::memory_order_relaxed);
-    } catch (...) {
+    if (!state.enabled || state.modules.size() != 1) return;
+    const std::string source = state.modules.back().source;
+    if (!commitCacheModule(state, context, source, false)) {
       state.enabled = false;
       state.active = false;
+      state.modules.clear();
     }
   }
 
+  void Project::beginCacheImageDependency(ProjectCacheState &state, context::Context &context,
+                                          std::string_view path) noexcept {
+    (void)path;
+    beforeCacheDependency(state, context);
+  }
+
+  void Project::completeCacheImageDependency(ProjectCacheState &state, context::Context &context,
+                                             std::string_view path) noexcept {
+    (void)path;
+    afterCacheDependency(state, context);
+  }
+
   void Project::abortCacheStep(ProjectCacheState &state) noexcept {
-    if (!state.active) return;
-    state.chain = state.inputChain;
     state.active = false;
-    state.source.clear();
-    state.dependencies.clear();
-    state.fragments.clear();
+    state.modules.clear();
   }
 
 } // namespace recurloop

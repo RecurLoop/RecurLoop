@@ -159,6 +159,7 @@ let IDE:App:add_semantic_hover = fn (state:IDE:App:State*, start:i64, finish:i64
 
 let IDE:App:semantic_parse = fn (state:IDE:App:State*, response:u8*) -> void {
     if !state || !response { return }
+    if state.semantic_diagnostic { Gui:label_text(state.semantic_diagnostic, "") }
     var line:i64 = 0
     while response[line] != 0 {
         let line_end = IDE:App:find_byte(response, line, 10)
@@ -185,6 +186,12 @@ let IDE:App:semantic_parse = fn (state:IDE:App:State*, response:u8*) -> void {
                 if kind { free(kind) }
                 if docs { free(docs) }
                 if phrase { free(phrase) }
+            }
+        } else if response[line] == 69 && response[line + 1] == 9 { // E\t
+            let diagnostic = IDE:App:decode_hex(response, line + 2, line_end)
+            if diagnostic {
+                if state.semantic_diagnostic { Gui:label_text(state.semantic_diagnostic, diagnostic) }
+                free(diagnostic)
             }
         }
         if response[line_end] == 0 { return }

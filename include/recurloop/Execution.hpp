@@ -12,12 +12,15 @@ namespace context {
 namespace recurloop {
   using SourceCompletedCallback = void (*)(void *user, context::Context &context, std::string_view path);
   using SourceEnterCallback = bool (*)(void *user, context::Context &context, std::string_view path);
+  using ImageDependencyCallback =
+      void (*)(void *user, context::Context &context, std::string_view path, bool complete);
 
   // Request-local observer used by the project runtime to checkpoint completed
   // source files. It is process-local state and never enters engine images.
   class SourceObserverScope {
   public:
-    SourceObserverScope(void *user, SourceCompletedCallback callback, SourceEnterCallback enter = nullptr) noexcept;
+    SourceObserverScope(void *user, SourceCompletedCallback callback, SourceEnterCallback enter = nullptr,
+                        ImageDependencyCallback dependency = nullptr) noexcept;
     SourceObserverScope(const SourceObserverScope &) = delete;
     SourceObserverScope &operator=(const SourceObserverScope &) = delete;
     ~SourceObserverScope();
@@ -26,11 +29,17 @@ namespace recurloop {
     void *previousUser_ = nullptr;
     SourceCompletedCallback previousCallback_ = nullptr;
     SourceEnterCallback previousEnter_ = nullptr;
+    ImageDependencyCallback previousDependency_ = nullptr;
   };
 
   // Gives the active project cache a chance to restore a completed nested
   // source fragment before `include` opens and evaluates it.
   bool restoreObservedSource(context::Context &context, std::string_view path);
+
+  // Notify the active project module cache about an engine-image dependency.
+  // `complete=false` is emitted immediately before loading the image and
+  // `complete=true` after it is available in the current context.
+  void observeImageDependency(context::Context &context, std::string_view path, bool complete);
 
   void executeSource(context::Context &context, std::string_view source, std::string_view path, Size line,
                      Size position = 1);

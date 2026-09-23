@@ -1188,11 +1188,12 @@ namespace recurloop::function_internal {
   }
 
   compiler::Module generateLlvmModule(context::Context &context, const FunctionDefinition &signature,
-                                      const std::vector<Statement> &body) {
+                                      const std::vector<Statement> &body, bool quick) {
     DiagnosticScope diagnostics(signature.sourceText,
                                 {signature.sourcePath, signature.sourceLine, signature.sourceColumn});
-    LlvmProgram program =
-        LlvmGenerator(context, signature, {}, llvm::sys::getDefaultTargetTriple(), "generic", {}).generate(body);
+    LlvmProgram program = LlvmGenerator(context, signature, {}, llvm::sys::getDefaultTargetTriple(), "generic", {},
+                                        quick)
+                              .generate(body);
     if (program.objects.size() != 1) fail({}, 0, "LLVM JIT compilation produced an invalid object set");
     return compiler::ElfReader::read(program.objects.front(),
                                      "LLVM JIT object for '" + signature.function.signature.symbol + "'");

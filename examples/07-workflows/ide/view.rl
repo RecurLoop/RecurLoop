@@ -23,6 +23,11 @@ let IDE:App:update_status = fn (state:IDE:App:State*) -> void {
         if state.host.reload_pending { text.append("  |  changes pending") }
         else { text.append("  |  manual reload") }
     } else { text.append("  |  reload off") }
+    if state.host.last_reload_ms > 0 {
+        text.append("  |  reload ")
+        IDE:append_u64(text, cast(u64, state.host.last_reload_ms))
+        text.append(" ms")
+    }
     if status != 0 && error && error[0] != 0 {
         text.append("  |  ")
         var k = 0
@@ -112,8 +117,12 @@ let IDE:App:create_editor = fn (state:IDE:App:State*) -> u8* {
     state.editor = Gui:editor()
     Gui:on_text_changed(state.editor, IDE:App:on_editor_changed, cast(u8*, state))
     Gui:on_text_tooltip(state.editor, IDE:App:on_editor_tooltip, cast(u8*, state))
+    state.semantic_diagnostic = Gui:label("")
+    Gui:label_align(state.semantic_diagnostic, cast(f32, 0.0))
+    Gui:class_add(state.semantic_diagnostic, "semantic-diagnostic")
     Gui:append(box, toolbar, 0, 0)
     Gui:append(box, Gui:scroll(state.editor), 1, 0)
+    Gui:append(box, state.semantic_diagnostic, 0, 0)
     return box
 }
 
@@ -162,6 +171,7 @@ let IDE:App:mount = fn (host:IDE:Host*) -> void {
     state.editor = cast(u8*, 0)
     state.file_label = cast(u8*, 0)
     state.status = cast(u8*, 0)
+    state.semantic_diagnostic = cast(u8*, 0)
     state.notebook = cast(u8*, 0)
     state.files = cast(IDE:App:FileItem*, 0)
     state.terminal_views = cast(IDE:App:TerminalView*, 0)

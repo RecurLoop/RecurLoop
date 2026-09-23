@@ -23,6 +23,9 @@
 namespace recurloop {
   namespace {
     constexpr std::array<std::uint8_t, 8> Magic = {'R', 'L', 'E', 'N', 'G', 0, 1, 0};
+    constexpr std::array<std::uint8_t, 8> LinkedMagic = {'R', 'L', 'L', 'I', 'N', 'K', 0, 1};
+    constexpr std::uint32_t LinkedVersion = 1;
+    constexpr std::uint64_t ExternalReferenceMask = std::uint64_t{1} << 63;
     constexpr std::string_view ImageLayoutsName{"\0image-layouts", 14};
     constexpr std::string_view ImageDependenciesName{"\0image-dependencies", 19};
     constexpr std::string_view ImageExportBaseName{"\0image-export-base", 18};
@@ -66,6 +69,22 @@ namespace recurloop {
     struct ImageDependency {
       std::string identity;
       std::string path;
+    };
+
+    struct PathElement {
+      std::string key;
+      std::uint64_t keyBits = 0;
+    };
+
+    struct ExternalReference {
+      std::vector<PathElement> path;
+      std::uint32_t older = 0;
+    };
+
+    struct LinkedSnapshot {
+      std::vector<ImageDependency> dependencies;
+      std::vector<ExternalReference> external;
+      std::vector<Record> phrases;
     };
 
     struct PayloadLayoutField {
@@ -239,6 +258,50 @@ namespace recurloop {
                      return left.identity == right.identity;
                    }),
                    result.end());
+      return result;
+    }
+
+    std::vector<ImageDependency> imageDependencies(context::Context &context) {
+      lexicon::Phrase dependencies = imageDependencies(context, false);
+      if (dependencies.isNull() || !dependencies.containsSubdictionary()) return {};
+
+      struct OrderedDependency {
+        Size address = 0;
+        ImageDependency dependency;
+      };
+      std::vector<OrderedDependency> ordered;
+      auto populated = [](radix::Node *, radix::Node *candidate) { return !candidate->isEmpty(); };
+      for (lexicon::Dictionary child = dependencies.fore(populated); !child.isNull(); child = child.next(populated)) {
+        lexicon::Phrase entry = child.getPhrase();
+        if (entry.payloadSize() == 0) continue;
+        const std::string path(reinterpret_cast<const char *>(entry.content(0, entry.payloadSize()).toPtr()),
+                               entry.payloadSize());
+        if (entry.getKey().empty() || path.empty() || path.find('\0') != std::string::npos)
+          THROW(, "engine image contains an invalid runtime dependency descriptor")
+        ordered.push_back({entry.getAddress(), {entry.getKey(), path}});
+      }
+      std::sort(ordered.begin(), ordered.end(), [](const auto &left, const auto &right) {
+        return left.address < right.address;
+      });
+      std::vector<ImageDependency> result;
+      result.reserve(ordered.size());
+      for (OrderedDependency &entry : ordered) result.push_back(std::move(entry.dependency));
+      return result;
+    }
+
+    std::vector<ImageDependency> portableDependencies(context::Context &context,
+                                                       const std::filesystem::path &outputPath) {
+      std::vector<ImageDependency> result = imageDependencies(context);
+      const std::filesystem::path output = absolutePath(outputPath);
+      const std::filesystem::path directory = output.parent_path();
+      std::erase_if(result, [&](const ImageDependency &dependency) {
+        return absolutePath(dependency.path) == output;
+      });
+      for (ImageDependency &dependency : result) {
+        const std::filesystem::path absolute = absolutePath(dependency.path);
+        const std::filesystem::path relative = absolute.lexically_relative(directory);
+        dependency.path = relative.empty() ? absolute.generic_string() : relative.generic_string();
+      }
       return result;
     }
 
@@ -664,6 +727,432 @@ namespace recurloop {
       // function is compiled.
       writer.number(0, 4);
       return writer.bytes;
+    }
+
+    bool linkedMagic(std::span<const std::uint8_t> bytes) {
+      return bytes.size() >= LinkedMagic.size() &&
+             std::equal(LinkedMagic.begin(), LinkedMagic.end(), bytes.begin());
+    }
+
+    std::string externalReferenceKey(const ExternalReference &reference) {
+      Writer writer;
+      writer.number(reference.path.size(), 4);
+      for (const PathElement &element : reference.path) {
+        writer.number(element.keyBits, 8);
+        writer.data(std::span<const std::uint8_t>(reinterpret_cast<const std::uint8_t *>(element.key.data()),
+                                                  element.key.size()));
+      }
+      writer.number(reference.older, 4);
+      return {reinterpret_cast<const char *>(writer.bytes.data()), writer.bytes.size()};
+    }
+
+    lexicon::Phrase resolveExternal(context::Context &context, const ExternalReference &reference) {
+      lexicon::Phrase phrase = context.lexicon.phrase();
+      for (const PathElement &element : reference.path) {
+        if (phrase.isNull() || !phrase.containsSubdictionary())
+          THROW(, "linked engine image external path crosses a non-dictionary phrase")
+        phrase = exact(phrase, element.key, element.keyBits);
+        if (phrase.isNull()) THROW(, "linked engine image external phrase is unavailable")
+      }
+      for (std::uint32_t index = 0; index < reference.older; ++index) {
+        phrase = phrase.older();
+        if (phrase.isNull()) THROW(, "linked engine image external phrase history is unavailable")
+      }
+      return phrase;
+    }
+
+    ExternalReference describeExternal(context::Context &context, const Record &record,
+                                       const std::unordered_map<std::uint64_t, const Record *> &byId) {
+      ExternalReference result;
+      const Record *cursor = &record;
+      while (cursor->parent != 0) {
+        result.path.push_back({cursor->key, cursor->keyBits});
+        const auto parent = byId.find(cursor->parent);
+        if (parent == byId.end()) THROW(, "linked engine image cannot resolve an external phrase owner")
+        cursor = parent->second;
+      }
+      std::reverse(result.path.begin(), result.path.end());
+
+      lexicon::Phrase visible = context.lexicon.phrase();
+      for (const PathElement &element : result.path) {
+        if (!visible.containsSubdictionary())
+          THROW(, "linked engine image external phrase owner is not a dictionary")
+        visible = exact(visible, element.key, element.keyBits);
+        if (visible.isNull()) THROW(, "linked engine image cannot locate an external phrase")
+      }
+      while (visible.getAddress() != record.sourceAddress) {
+        visible = visible.older();
+        if (visible.isNull()) THROW(, "linked engine image cannot identify an external phrase generation")
+        if (result.older == std::numeric_limits<std::uint32_t>::max())
+          THROW(, "linked engine image external phrase history is too deep")
+        ++result.older;
+      }
+      return result;
+    }
+
+    LinkedSnapshot captureLinked(context::Context &context, Size since, const std::filesystem::path &outputPath) {
+      if (since == 0 || since > context.lexicon.memoryUsed())
+        THROW(, "linked engine image checkpoint is outside the lexicon")
+
+      std::vector<Record> captured = capture(context, since);
+      if (captured.empty()) THROW(, "cannot export an empty linked engine image context")
+
+      std::unordered_map<std::uint64_t, const Record *> byId;
+      byId.reserve(captured.size());
+      for (const Record &record : captured) byId.emplace(record.id, &record);
+
+      // Runtime dependency descriptors belong to the image header, not to the
+      // module's semantic delta. Excluding this hidden subtree is what keeps a
+      // linked module independent of how many dependencies were already loaded.
+      std::unordered_set<std::uint64_t> dependencyRecords;
+      const std::uint64_t rootId = captured.front().id;
+      for (const Record &record : captured)
+        if (record.parent == rootId && record.key == ImageDependenciesName) {
+          dependencyRecords.insert(record.id);
+          break;
+        }
+      if (!dependencyRecords.empty()) {
+        bool changed = true;
+        while (changed) {
+          changed = false;
+          for (const Record &record : captured)
+            if (!dependencyRecords.contains(record.id) && dependencyRecords.contains(record.parent)) {
+              dependencyRecords.insert(record.id);
+              changed = true;
+            }
+        }
+      }
+
+      std::vector<const Record *> local;
+      local.reserve(captured.size());
+      std::unordered_map<std::uint64_t, std::uint64_t> localIds;
+      for (const Record &record : captured) {
+        if (record.sourceAddress < since || dependencyRecords.contains(record.id)) continue;
+        const std::uint64_t id = local.size() + 1;
+        if ((id & ExternalReferenceMask) != 0) THROW(, "linked engine image has too many local phrases")
+        localIds.emplace(record.id, id);
+        local.push_back(&record);
+      }
+
+      std::unordered_set<std::uint64_t> externalIds;
+      const auto collect = [&](std::uint64_t id) {
+        if (id != 0 && !localIds.contains(id)) externalIds.insert(id);
+      };
+      for (const Record *record : local) {
+        collect(record->parent);
+        collect(record->prototypeId);
+        collect(record->typeId);
+        collect(record->successorId);
+        collect(record->actionImplementationId);
+        for (const Relocation &relocation : record->relocations)
+          if (relocation.kind == RelocationKind::Phrase) collect(relocation.phrase);
+      }
+
+      struct ExternalEntry {
+        std::uint64_t originalId = 0;
+        ExternalReference reference;
+        std::string key;
+      };
+      std::vector<ExternalEntry> externalEntries;
+      externalEntries.reserve(externalIds.size());
+      for (const std::uint64_t id : externalIds) {
+        const auto found = byId.find(id);
+        if (found == byId.end()) THROW(, "linked engine image contains an unknown external phrase")
+        ExternalReference reference = describeExternal(context, *found->second, byId);
+        externalEntries.push_back({id, reference, externalReferenceKey(reference)});
+      }
+      std::sort(externalEntries.begin(), externalEntries.end(), [](const auto &left, const auto &right) {
+        return left.key < right.key;
+      });
+
+      LinkedSnapshot result;
+      result.dependencies = portableDependencies(context, outputPath);
+      result.external.reserve(externalEntries.size());
+      std::unordered_map<std::uint64_t, std::uint64_t> externalReferences;
+      for (std::size_t index = 0; index < externalEntries.size(); ++index) {
+        if (index + 1 >= ExternalReferenceMask) THROW(, "linked engine image has too many external phrases")
+        result.external.push_back(std::move(externalEntries[index].reference));
+        externalReferences.emplace(externalEntries[index].originalId,
+                                   ExternalReferenceMask | static_cast<std::uint64_t>(index + 1));
+      }
+
+      const auto remap = [&](std::uint64_t id) -> std::uint64_t {
+        if (id == 0) return 0;
+        if (const auto found = localIds.find(id); found != localIds.end()) return found->second;
+        const auto external = externalReferences.find(id);
+        if (external == externalReferences.end()) THROW(, "linked engine image lost an external phrase reference")
+        return external->second;
+      };
+
+      result.phrases.reserve(local.size());
+      for (const Record *source : local) {
+        Record record = *source;
+        record.id = localIds.at(source->id);
+        record.parent = remap(source->parent);
+        record.prototypeId = remap(source->prototypeId);
+        record.typeId = remap(source->typeId);
+        record.successorId = remap(source->successorId);
+        record.actionImplementationId = remap(source->actionImplementationId);
+        for (Relocation &relocation : record.relocations)
+          if (relocation.kind == RelocationKind::Phrase) relocation.phrase = remap(relocation.phrase);
+        record.sourceAddress = 0;
+        record.parentAddress = 0;
+        record.depth = 0;
+        result.phrases.push_back(std::move(record));
+      }
+      return result;
+    }
+
+    void writeRecord(Writer &writer, const Record &record) {
+      writer.number(record.id, 8);
+      writer.number(record.parent, 8);
+      writer.text(record.key);
+      writer.number(record.keyBits, 8);
+      std::uint8_t flags = record.subdictionary ? 1 : 0;
+      flags |= record.prototype ? 2 : 0;
+      flags |= record.type ? 4 : 0;
+      flags |= record.action ? 8 : 0;
+      flags |= record.successor ? 16 : 0;
+      flags |= record.permanent ? 32 : 0;
+      flags |= record.rewritable ? 64 : 0;
+      writer.number(flags, 1);
+      writer.number(record.prototypeId, 8);
+      writer.number(record.typeId, 8);
+      writer.number(record.successorId, 8);
+      writer.number(record.actionImplementationId, 8);
+      writer.text(record.actionName);
+      writer.data(record.payload);
+      writer.number(record.relocations.size(), 4);
+      for (const Relocation &relocation : record.relocations) {
+        writer.number(static_cast<std::uint8_t>(relocation.kind), 1);
+        writer.number(relocation.offset, 8);
+        writer.number(relocation.phrase, 8);
+        writer.text(relocation.action);
+      }
+    }
+
+    Record readRecord(context::Context &context, Reader &reader) {
+      Record record;
+      record.id = reader.number(8);
+      record.parent = reader.number(8);
+      record.key = reader.text();
+      record.keyBits = reader.number(8);
+      if (record.keyBits > record.key.size() * Byte::length || record.key.size() != Bit::bytes(record.keyBits))
+        THROW(, "engine image phrase key size does not match its bit length")
+      if (record.keyBits % Byte::length != 0 && !record.key.empty() &&
+          (static_cast<std::uint8_t>(record.key.back()) &
+           ((1u << (Byte::length - record.keyBits % Byte::length)) - 1)) != 0)
+        THROW(, "engine image phrase key has non-zero padding bits")
+      const std::uint8_t flags = reader.number(1);
+      if ((flags & ~std::uint8_t{127}) != 0) THROW(, "engine image phrase has unknown flags")
+      record.subdictionary = flags & 1;
+      record.prototype = flags & 2;
+      record.type = flags & 4;
+      record.action = flags & 8;
+      record.successor = flags & 16;
+      record.permanent = flags & 32;
+      record.rewritable = flags & 64;
+      record.prototypeId = reader.number(8);
+      record.typeId = reader.number(8);
+      record.successorId = reader.number(8);
+      record.actionImplementationId = reader.number(8);
+      record.actionName = reader.text();
+      record.payload = reader.data();
+      const std::size_t relocations = reader.number(4);
+      record.relocations.reserve(relocations);
+      for (std::size_t relocationIndex = 0; relocationIndex < relocations; ++relocationIndex) {
+        Relocation relocation;
+        relocation.kind = static_cast<RelocationKind>(reader.number(1));
+        if (relocation.kind != RelocationKind::Phrase && relocation.kind != RelocationKind::Action)
+          THROW(, "engine image contains an unknown relocation kind")
+        relocation.offset = reader.number(8);
+        relocation.phrase = reader.number(8);
+        relocation.action = reader.text();
+        const std::size_t width =
+            relocation.kind == RelocationKind::Phrase ? sizeof(Size) : sizeof(lexicon::Phrase::Action);
+        if (relocation.offset > record.payload.size() || width > record.payload.size() - relocation.offset)
+          THROW(, "engine image relocation points outside phrase payload")
+        if (relocation.kind == RelocationKind::Action && !relocation.action.empty())
+          (void)context.actions().get(relocation.action);
+        record.relocations.push_back(std::move(relocation));
+      }
+      if (record.action && !record.actionName.empty()) (void)context.actions().get(record.actionName);
+      return record;
+    }
+
+    std::vector<std::uint8_t> encodeLinked(const LinkedSnapshot &snapshot) {
+      Writer writer;
+      writer.bytes.insert(writer.bytes.end(), LinkedMagic.begin(), LinkedMagic.end());
+      writer.number(LinkedVersion, 4);
+      writer.number(sizeof(Size), 1);
+      writer.number(sizeof(void *), 1);
+      writer.number(snapshot.dependencies.size(), 4);
+      for (const ImageDependency &dependency : snapshot.dependencies) {
+        writer.text(dependency.identity);
+        writer.text(dependency.path);
+      }
+      writer.number(snapshot.external.size(), 4);
+      for (const ExternalReference &reference : snapshot.external) {
+        writer.number(reference.path.size(), 4);
+        for (const PathElement &element : reference.path) {
+          writer.text(element.key);
+          writer.number(element.keyBits, 8);
+        }
+        writer.number(reference.older, 4);
+      }
+      writer.number(snapshot.phrases.size(), 8);
+      for (const Record &record : snapshot.phrases) writeRecord(writer, record);
+      return writer.bytes;
+    }
+
+    LinkedSnapshot decodeLinked(context::Context &context, std::span<const std::uint8_t> bytes) {
+      Reader reader(bytes);
+      for (std::uint8_t expected : LinkedMagic)
+        if (reader.number(1) != expected) THROW(, "invalid linked engine image magic")
+      if (reader.number(4) != LinkedVersion) THROW(, "unsupported linked engine image version")
+      if (reader.number(1) != sizeof(Size) || reader.number(1) != sizeof(void *))
+        THROW(, "linked engine image ABI does not match this runtime")
+
+      LinkedSnapshot result;
+      const std::size_t dependencyCount = reader.number(4);
+      result.dependencies.reserve(dependencyCount);
+      std::unordered_set<std::string> dependencyIdentities;
+      for (std::size_t index = 0; index < dependencyCount; ++index) {
+        ImageDependency dependency{reader.text(), reader.text()};
+        if (dependency.identity.empty() || dependency.path.empty() || dependency.path.find('\0') != std::string::npos ||
+            !dependencyIdentities.insert(dependency.identity).second)
+          THROW(, "linked engine image contains an invalid dependency descriptor")
+        result.dependencies.push_back(std::move(dependency));
+      }
+
+      const std::size_t externalCount = reader.number(4);
+      result.external.reserve(externalCount);
+      for (std::size_t index = 0; index < externalCount; ++index) {
+        ExternalReference reference;
+        const std::size_t pathCount = reader.number(4);
+        reference.path.reserve(pathCount);
+        for (std::size_t pathIndex = 0; pathIndex < pathCount; ++pathIndex) {
+          PathElement element{reader.text(), reader.number(8)};
+          if (element.keyBits > element.key.size() * Byte::length || element.key.size() != Bit::bytes(element.keyBits))
+            THROW(, "linked engine image external path has an invalid key size")
+          if (element.keyBits % Byte::length != 0 && !element.key.empty() &&
+              (static_cast<std::uint8_t>(element.key.back()) &
+               ((1u << (Byte::length - element.keyBits % Byte::length)) - 1)) != 0)
+            THROW(, "linked engine image external path has non-zero padding bits")
+          reference.path.push_back(std::move(element));
+        }
+        reference.older = static_cast<std::uint32_t>(reader.number(4));
+        result.external.push_back(std::move(reference));
+      }
+
+      const std::size_t count = reader.number(8);
+      result.phrases.reserve(count);
+      std::unordered_set<std::uint64_t> ids;
+      std::unordered_map<std::uint64_t, bool> dictionaries;
+      for (std::size_t index = 0; index < count; ++index) {
+        Record record = readRecord(context, reader);
+        if (record.id == 0 || (record.id & ExternalReferenceMask) != 0 || !ids.insert(record.id).second)
+          THROW(, "linked engine image contains an invalid local phrase id")
+        dictionaries.emplace(record.id, record.subdictionary);
+        result.phrases.push_back(std::move(record));
+      }
+      if (!reader.done()) THROW(, "linked engine image contains trailing bytes")
+
+      const auto validReference = [&](std::uint64_t id) {
+        if (id == 0) return true;
+        if ((id & ExternalReferenceMask) != 0) {
+          const std::uint64_t external = id & ~ExternalReferenceMask;
+          return external != 0 && external <= result.external.size();
+        }
+        return ids.contains(id);
+      };
+      std::unordered_set<std::uint64_t> available;
+      for (const Record &record : result.phrases) {
+        if (!validReference(record.parent) || !validReference(record.prototypeId) || !validReference(record.typeId) ||
+            !validReference(record.successorId) || !validReference(record.actionImplementationId))
+          THROW(, "linked engine image contains an unresolved phrase reference")
+        if (record.parent == 0) THROW(, "linked engine image local phrase has no owner")
+        if ((record.parent & ExternalReferenceMask) == 0) {
+          if (!available.contains(record.parent))
+            THROW(, "linked engine image phrase is declared before its dictionary owner")
+          if (!dictionaries.at(record.parent)) THROW(, "linked engine image phrase owner has no subdictionary")
+        }
+        if ((!record.prototype && record.prototypeId != 0) || (!record.type && record.typeId != 0) ||
+            (!record.successor && record.successorId != 0))
+          THROW(, "linked engine image assigns a reference to a phrase without the corresponding slot")
+        if (!record.action && (!record.actionName.empty() || record.actionImplementationId != 0))
+          THROW(, "linked engine image assigns an action to a phrase without an action slot")
+        for (const Relocation &relocation : record.relocations)
+          if (relocation.kind == RelocationKind::Phrase) {
+            if (!relocation.action.empty() || !validReference(relocation.phrase))
+              THROW(, "linked engine image contains an invalid payload phrase relocation")
+          } else if (relocation.phrase != 0) {
+            THROW(, "linked engine image action relocation contains a phrase id")
+          }
+        available.insert(record.id);
+      }
+      return result;
+    }
+
+    void applyLinked(context::Context &context, const LinkedSnapshot &snapshot) {
+      std::vector<lexicon::Phrase> external;
+      external.reserve(snapshot.external.size());
+      for (const ExternalReference &reference : snapshot.external) external.push_back(resolveExternal(context, reference));
+
+      std::unordered_map<std::uint64_t, lexicon::Phrase> phrases;
+      phrases.reserve(snapshot.phrases.size());
+      lexicon::Phrase undefined(&context.lexicon);
+      const auto resolve = [&](std::uint64_t id) -> lexicon::Phrase {
+        if (id == 0) return undefined;
+        if ((id & ExternalReferenceMask) != 0) {
+          const std::uint64_t index = id & ~ExternalReferenceMask;
+          if (index == 0 || index > external.size()) THROW(, "linked engine image external reference is out of range")
+          return external[index - 1];
+        }
+        const auto found = phrases.find(id);
+        if (found == phrases.end()) THROW(, "linked engine image local phrase reference is unavailable")
+        return found->second;
+      };
+
+      for (const Record &record : snapshot.phrases) {
+        lexicon::Phrase owner = resolve(record.parent);
+        if (owner.isNull() || !owner.containsSubdictionary())
+          THROW(, "linked engine image phrase owner is not a dictionary")
+        lexicon::Draft draft = owner.append(Byte(const_cast<char *>(record.key.data())), 0, record.keyBits).make();
+        if (record.subdictionary) draft.enableSubdictionary();
+        if (record.prototype) draft.setPrototype(undefined);
+        if (record.type) draft.setType(undefined);
+        if (record.action)
+          draft.setAction(record.actionName.empty() ? nullptr : context.actions().get(record.actionName));
+        if (record.successor) draft.setSuccessor(undefined);
+        lexicon::Phrase phrase = draft.save();
+        if (!record.payload.empty()) {
+          Byte output = phrase.allocate(record.payload.size());
+          std::memcpy(output.toPtr(), record.payload.data(), record.payload.size());
+        }
+        phrases.emplace(record.id, phrase);
+      }
+
+      for (const Record &record : snapshot.phrases) {
+        lexicon::Phrase phrase = phrases.at(record.id);
+        if (record.prototype) phrase.setPrototype(resolve(record.prototypeId));
+        if (record.type) phrase.setType(resolve(record.typeId));
+        if (record.successor) phrase.setSuccessor(resolve(record.successorId));
+        if (record.action) phrase.setActionImplementation(resolve(record.actionImplementationId));
+        if (record.rewritable) phrase.setRewritable(true);
+        if (record.permanent) phrase.setPermanent(true);
+        phrase.save();
+        for (const Relocation &relocation : record.relocations) {
+          if (relocation.kind == RelocationKind::Phrase) {
+            const Size address = resolve(relocation.phrase).getAddress();
+            std::memcpy(phrase.content(relocation.offset, sizeof(address)).toPtr(), &address, sizeof(address));
+          } else {
+            const lexicon::Phrase::Action action =
+                relocation.action.empty() ? nullptr : context.actions().get(relocation.action);
+            std::memcpy(phrase.content(relocation.offset, sizeof(action)).toPtr(), &action, sizeof(action));
+          }
+        }
+      }
     }
 
     void prepareDependencyPaths(std::vector<Record> &records, const std::filesystem::path &outputPath) {
@@ -1234,49 +1723,52 @@ namespace recurloop {
       }
     }
 
-    void restore(context::Context &context, const Snapshot &snapshot, bool initializeSemanticDefaults) {
+    void restore(context::Context &context, const Snapshot &snapshot, bool initializeSemanticDefaults,
+                 bool preserveExisting) {
       const std::vector<Record> &records = snapshot.phrases;
-      const std::vector<Record> previous = capture(context);
-      const std::uint64_t previousRoot = previous.front().id;
-
-      // Engine images are composable overlays, not whole-root replacements.
-      // Build a stable binary path for every phrase and preserve every phrase
-      // from the already-loaded language whose exact path is absent from the
-      // imported image. The old top-level-only rule discarded descendants of a
-      // colliding root (for example LanguageKit:Forms:Shell when another image
-      // also contained LanguageKit), leaving preserved phrases with dangling
-      // dependencies after a second --import.
-      const auto indexPaths = [](const std::vector<Record> &source) {
-        std::unordered_map<std::uint64_t, std::string> paths;
-        paths.reserve(source.size());
-        for (const Record &record : source) {
-          if (record.parent == 0) {
-            paths.emplace(record.id, std::string{});
-            continue;
-          }
-          const auto parent = paths.find(record.parent);
-          if (parent == paths.end()) THROW(, "engine image phrase is declared before its path parent")
-          std::string path = parent->second;
-          const std::uint64_t bytes = record.key.size();
-          path.append(reinterpret_cast<const char *>(&record.keyBits), sizeof(record.keyBits));
-          path.append(reinterpret_cast<const char *>(&bytes), sizeof(bytes));
-          path.append(record.key);
-          paths.emplace(record.id, std::move(path));
-        }
-        return paths;
-      };
-      const auto importedPathsById = indexPaths(records);
-      const auto previousPathsById = indexPaths(previous);
-      std::unordered_set<std::string> importedPaths;
-      importedPaths.reserve(records.size());
-      for (const Record &record : records) importedPaths.insert(importedPathsById.at(record.id));
+      // Normal image imports are composable overlays and therefore need a
+      // complete capture of the current graph before replacement. A project
+      // cache checkpoint is already a self-contained full graph; when the
+      // caller guarantees a baseline-reset cache walk, skipping this capture
+      // avoids an otherwise redundant full graph traversal and path index.
+      const std::vector<Record> previous = preserveExisting ? capture(context) : std::vector<Record>{};
+      const std::uint64_t previousRoot = previous.empty() ? 0 : previous.front().id;
 
       std::vector<Record> preserved;
-      preserved.reserve(previous.size());
-      for (const Record &record : previous) {
-        if (record.parent == 0) continue;
-        if (!importedPaths.contains(previousPathsById.at(record.id))) {
-          preserved.push_back(record);
+      if (preserveExisting) {
+        // Composable imports preserve every phrase whose exact binary path is
+        // absent from the incoming image. Full project checkpoints skip this
+        // entire path-indexing pass because they intentionally replace the
+        // graph produced by a baseline-reset build session.
+        const auto indexPaths = [](const std::vector<Record> &source) {
+          std::unordered_map<std::uint64_t, std::string> paths;
+          paths.reserve(source.size());
+          for (const Record &record : source) {
+            if (record.parent == 0) {
+              paths.emplace(record.id, std::string{});
+              continue;
+            }
+            const auto parent = paths.find(record.parent);
+            if (parent == paths.end()) THROW(, "engine image phrase is declared before its path parent")
+            std::string path = parent->second;
+            const std::uint64_t bytes = record.key.size();
+            path.append(reinterpret_cast<const char *>(&record.keyBits), sizeof(record.keyBits));
+            path.append(reinterpret_cast<const char *>(&bytes), sizeof(bytes));
+            path.append(record.key);
+            paths.emplace(record.id, std::move(path));
+          }
+          return paths;
+        };
+        const auto importedPathsById = indexPaths(records);
+        const auto previousPathsById = indexPaths(previous);
+        std::unordered_set<std::string> importedPaths;
+        importedPaths.reserve(records.size());
+        for (const Record &record : records) importedPaths.insert(importedPathsById.at(record.id));
+
+        preserved.reserve(previous.size());
+        for (const Record &record : previous) {
+          if (record.parent == 0) continue;
+          if (!importedPaths.contains(previousPathsById.at(record.id))) preserved.push_back(record);
         }
       }
 
@@ -1470,8 +1962,18 @@ namespace recurloop {
         THROW(, "engine image dependency cycle contains '" << resolved.string() << "'")
 
       try {
-        const Snapshot snapshot = decodeRecords(context, bytes);
-        const std::vector<ImageDependency> dependencies = imageDependencies(snapshot);
+        const bool linked = linkedMagic(bytes);
+        LinkedSnapshot linkedSnapshot;
+        Snapshot snapshot;
+        std::vector<ImageDependency> dependencies;
+        if (linked) {
+          linkedSnapshot = decodeLinked(context, bytes);
+          dependencies = linkedSnapshot.dependencies;
+        } else {
+          snapshot = decodeRecords(context, bytes);
+          dependencies = imageDependencies(snapshot);
+        }
+
         std::vector<std::pair<ImageDependency, std::filesystem::path>> resolvedDependencies;
         resolvedDependencies.reserve(dependencies.size());
         for (const ImageDependency &dependency : dependencies) {
@@ -1482,7 +1984,8 @@ namespace recurloop {
           loadImage(context, dependencyPath, loading, &resolvedDependencies.back().first.identity);
         }
 
-        restore(context, snapshot, true);
+        if (linked) applyLinked(context, linkedSnapshot);
+        else restore(context, snapshot, true, true);
         for (const auto &[dependency, dependencyPath] : resolvedDependencies)
           rememberImageDependency(context, dependency.identity, dependencyPath);
         rememberImageDependency(context, identity, resolved);
@@ -1503,11 +2006,11 @@ namespace recurloop {
   }
 
   void EngineImage::decode(context::Context &context, std::span<const std::uint8_t> bytes) {
-    restore(context, decodeRecords(context, bytes), true);
+    restore(context, decodeRecords(context, bytes), true, true);
   }
 
   void EngineImage::decodeExact(context::Context &context, std::span<const std::uint8_t> bytes) {
-    restore(context, decodeRecords(context, bytes), false);
+    restore(context, decodeRecords(context, bytes), false, true);
   }
 
   void EngineImage::merge(context::Context &context, std::span<const std::uint8_t> bytes, lexicon::Phrase target) {
@@ -1652,7 +2155,7 @@ namespace recurloop {
       const std::vector<std::string> fields = tokens(line, lineNumber);
       if (fields.empty()) continue;
       if ((fields[0] == "phrase" && fields.size() >= 3 && fields[2] == "parent") || fields[0] == "relocate") {
-        restore(context, parseManifest(context, source), true);
+        restore(context, parseManifest(context, source), true, true);
         return;
       }
       break;
@@ -1695,6 +2198,11 @@ namespace recurloop {
     write(bytes, path);
   }
 
+  void EngineImage::saveLinked(context::Context &context, Size since, const std::string &path) {
+    const LinkedSnapshot snapshot = captureLinked(context, since, path);
+    write(encodeLinked(snapshot), path);
+  }
+
   void EngineImage::saveFull(context::Context &context, const std::string &path) {
     std::vector<Record> records = capture(context);
     // A project checkpoint must be self-contained. In particular it must carry
@@ -1707,6 +2215,19 @@ namespace recurloop {
   void EngineImage::load(context::Context &context, const std::string &path) {
     std::unordered_set<std::string> loading;
     loadImage(context, path, loading);
+  }
+
+  void EngineImage::loadFull(context::Context &context, const std::string &path) {
+    const Snapshot snapshot = decodeRecords(context, read(path));
+    if (!imageDependencies(snapshot).empty())
+      THROW(, "full engine snapshot unexpectedly contains image dependencies")
+    restore(context, snapshot, true, false);
+  }
+
+  void EngineImage::rememberDependency(context::Context &context, const std::string &path) {
+    const std::filesystem::path resolved = absolutePath(path);
+    const std::vector<std::uint8_t> bytes = read(resolved.string());
+    rememberImageDependency(context, imageIdentity(bytes), resolved);
   }
 
 

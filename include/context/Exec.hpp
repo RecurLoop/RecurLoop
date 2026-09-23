@@ -57,6 +57,7 @@ namespace context {
     std::string pendingNativeSymbol;
     std::string definitionSymbolOverride;
     std::string pendingFunctionVariant;
+    bool quickCompile = false;
     std::vector<std::uint8_t> pendingPhrasePayload;
     bool pendingPhraseSerializable = true;
     bool hasPendingPhraseSerializable = false;

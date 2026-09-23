@@ -40,7 +40,7 @@ namespace recurloop::function_internal {
                                   const std::vector<Statement> &body, std::string_view executableEntry,
                                   bool debug = false);
   compiler::Module generateLlvmModule(context::Context &context, const FunctionDefinition &signature,
-                                      const std::vector<Statement> &body);
+                                      const std::vector<Statement> &body, bool quick = false);
   LlvmPhraseModule generateLlvmPhraseModule(context::Context &context, std::string_view symbol,
                                             std::span<const LlvmPhraseCall> calls);
 } // namespace recurloop::function_internal

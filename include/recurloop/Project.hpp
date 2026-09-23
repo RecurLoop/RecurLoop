@@ -25,28 +25,27 @@ namespace recurloop {
     std::int64_t mtime = 0;
   };
 
-  // One deterministic cache walk belongs to one build session. Direct project
-  // loads are full fast-path checkpoints; nested includes add graph-fragment
-  // resume boundaries and contribute their transitive dependency stamps.
+  // One project cache walk. Cached project sources are ordinary linked .rli
+  // modules: one source path maps to one image path and images depend on other
+  // source images/imported libraries instead of embedding cumulative project
+  // checkpoints. A small source stack is kept only while a cache miss is being
+  // evaluated so nested includes can be compiled into their own modules.
   struct ProjectCacheState {
-    struct Fragment {
-      std::uint64_t inputChain = 0;
+    struct Module {
       std::string source;
       ProjectCacheStamp sourceStamp;
       std::unordered_map<std::string, ProjectCacheStamp> dependencies;
+      Size segmentUsed = 0;
+      std::uint64_t semanticPrefix = 0;
+      bool linked = true;
     };
 
     bool enabled = false;
+    bool exactRestore = false;
     bool active = false;
     std::size_t step = 0;
-    std::uint64_t chain = 0;
-    std::uint64_t inputChain = 0;
-    std::string source;
-    ProjectCacheStamp sourceStamp;
-    std::unordered_map<std::string, ProjectCacheStamp> dependencies;
     std::unordered_map<std::string, ProjectCacheStamp> observed;
-    std::uint64_t fragmentChain = 0;
-    std::vector<Fragment> fragments;
+    std::vector<Module> modules;
   };
 
   // Long-lived project state shared by every transport and session. Published
@@ -67,29 +66,37 @@ namespace recurloop {
     // accidentally depend on a client's heap/JIT lifetime.
     std::shared_ptr<const ProjectGeneration> publish(context::Context &source);
 
-    // Persistent project source checkpoints. The shared project.rli remains the
-    // immutable baseline; the workspace cache stores cumulative, self-contained
-    // semantic .rli checkpoints after each direct project source file. A later
-    // build restores the longest still-valid prefix and only evaluates files
-    // from the first invalid step.
+    // Persistent project source modules. Every .rl file has one cache image and
+    // one manifest under <cache>/modules. The image uses normal EngineImage
+    // dependency links, so included source modules and imported libraries are
+    // loaded transitively rather than copied into cumulative step snapshots.
     void configureCache(std::string directory);
     bool cacheEnabled() const {
-      return !cacheStepsDirectory_.empty();
+      return !cacheModulesDirectory_.empty();
     }
     const std::string &cacheDirectory() const {
       return cacheDirectory_;
     }
-    const std::string &cacheStepsDirectory() const {
-      return cacheStepsDirectory_;
+    const std::string &cacheModulesDirectory() const {
+      return cacheModulesDirectory_;
     }
-    void beginCache(ProjectCacheState &state) const;
+    // Compatibility for status/output callers that used the old step name.
+    const std::string &cacheStepsDirectory() const {
+      return cacheModulesDirectory_;
+    }
+    void beginCache(ProjectCacheState &state, bool exactRestore = false) const;
     bool restoreCacheStep(ProjectCacheState &state, context::Context &context, std::string_view source) noexcept;
-    void beginCacheStep(ProjectCacheState &state, std::string_view source) noexcept;
+    void beginCacheStep(ProjectCacheState &state, std::string_view source, context::Context &context) noexcept;
     void observeCacheSource(ProjectCacheState &state, std::string_view source) noexcept;
-    bool restoreCacheFragment(ProjectCacheState &state, context::Context &context, std::string_view source) noexcept;
-    void beginCacheFragment(ProjectCacheState &state, std::string_view source) noexcept;
-    bool commitCacheFragment(ProjectCacheState &state, context::Context &context, std::string_view source) noexcept;
+    bool restoreCacheNestedModule(ProjectCacheState &state, context::Context &context,
+                              std::string_view source) noexcept;
+    void beginCacheNestedModule(ProjectCacheState &state, std::string_view source, context::Context &context) noexcept;
+    bool commitCacheNestedModule(ProjectCacheState &state, context::Context &context, std::string_view source) noexcept;
     void commitCacheStep(ProjectCacheState &state, context::Context &context) noexcept;
+    void beginCacheImageDependency(ProjectCacheState &state, context::Context &context,
+                                   std::string_view path) noexcept;
+    void completeCacheImageDependency(ProjectCacheState &state, context::Context &context,
+                                      std::string_view path) noexcept;
     void abortCacheStep(ProjectCacheState &state) noexcept;
 
     std::uint64_t cacheHits() const {
@@ -126,6 +133,16 @@ namespace recurloop {
     bool commitPublication(const std::shared_ptr<const ProjectGeneration> &generation);
     std::uint64_t baselineHash() const;
 
+    bool restoreCacheModule(ProjectCacheState &state, context::Context &context, std::string_view source,
+                            bool nested) noexcept;
+    void beginCacheModule(ProjectCacheState &state, context::Context &context, std::string_view source) noexcept;
+    bool commitCacheModule(ProjectCacheState &state, context::Context &context, std::string_view source,
+                           bool nested) noexcept;
+    void beforeCacheDependency(ProjectCacheState &state, context::Context &context) noexcept;
+    void afterCacheDependency(ProjectCacheState &state, context::Context &context) noexcept;
+    std::string cacheModuleImagePath(std::string_view source) const;
+    std::string cacheModuleManifestPath(std::string_view source) const;
+
     context::Config config_;
     ActionEntries actions_;
     std::vector<std::string> arguments_;
@@ -136,8 +153,8 @@ namespace recurloop {
 
     std::atomic<GenerationId> nextId_{1};
     std::string cacheDirectory_;
-    std::string cacheStepsDirectory_;
-    std::string cacheFragmentsDirectory_;
+    std::string cacheModulesDirectory_;
+    std::string cacheSourceRoot_;
     mutable std::uint64_t cacheBaselineHash_ = 0;
     mutable std::mutex cacheBaselineMutex_;
     std::atomic<std::uint64_t> cacheHits_{0};

@@ -212,8 +212,19 @@ phrase session_baseline = ":baseline" in root {
 }
 
 phrase session_cache = ":cache" in root {
+  kind "session command"
+  color "#C586C0"
+  docs "Enables linked per-source project .rli module caching for the current session."
   type phrase_types_elaborate
   action host "session.cache"
+}
+
+phrase session_cache_exact = ":cache-exact" in root {
+  kind "session command"
+  color "#C586C0"
+  docs "Compatibility alias for project module caching used by older baseline-reset build clients."
+  type phrase_types_elaborate
+  action host "session.cache-exact"
 }
 
 phrase session_cache_status = ":cache-status" in root {

@@ -315,6 +315,7 @@ namespace recurloop {
     thread_local void *sourceObserverUser = nullptr;
     thread_local SourceCompletedCallback sourceObserverCallback = nullptr;
     thread_local SourceEnterCallback sourceObserverEnter = nullptr;
+    thread_local ImageDependencyCallback sourceObserverDependency = nullptr;
 
     void notifySourceCompleted(context::Context &context, std::string_view path) {
       if (sourceObserverCallback != nullptr) sourceObserverCallback(sourceObserverUser, context, path);
@@ -322,22 +323,29 @@ namespace recurloop {
   } // namespace
 
   SourceObserverScope::SourceObserverScope(void *user, SourceCompletedCallback callback,
-                                           SourceEnterCallback enter) noexcept
+                                           SourceEnterCallback enter, ImageDependencyCallback dependency) noexcept
       : previousUser_(sourceObserverUser), previousCallback_(sourceObserverCallback),
-        previousEnter_(sourceObserverEnter) {
+        previousEnter_(sourceObserverEnter), previousDependency_(sourceObserverDependency) {
     sourceObserverUser = user;
     sourceObserverCallback = callback;
     sourceObserverEnter = enter;
+    sourceObserverDependency = dependency;
   }
 
   SourceObserverScope::~SourceObserverScope() {
     sourceObserverUser = previousUser_;
     sourceObserverCallback = previousCallback_;
     sourceObserverEnter = previousEnter_;
+    sourceObserverDependency = previousDependency_;
   }
 
   bool restoreObservedSource(context::Context &context, std::string_view path) {
     return sourceObserverEnter != nullptr && sourceObserverEnter(sourceObserverUser, context, path);
+  }
+
+  void observeImageDependency(context::Context &context, std::string_view path, bool complete) {
+    if (sourceObserverDependency != nullptr)
+      sourceObserverDependency(sourceObserverUser, context, path, complete);
   }
 
   void executeCurrentBlock(context::Context &context, bool scoped) {

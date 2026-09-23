@@ -9,8 +9,10 @@ include "explorer.rl"
 include "terminal.rl"
 include "view.rl"
 
+var test = "dupa"
+
 let IDE:App:configure = fn (app:IDE:Config*) -> void {
-    app.title("RecurLoop IDE")
+    app.title("RecurLoop IDE Dupa")
     app.size(1360, 860)
 
     app.workspace("examples/07-workflows/ide")

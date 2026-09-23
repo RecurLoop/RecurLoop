@@ -48,6 +48,7 @@ record IDE:App:State {
     editor:u8*
     file_label:u8*
     status:u8*
+    semantic_diagnostic:u8*
     notebook:u8*
     files:IDE:App:FileItem*
     terminal_views:IDE:App:TerminalView*

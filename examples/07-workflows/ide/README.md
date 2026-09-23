@@ -41,10 +41,19 @@ state shared between generations.
 mode, native window properties and project view. Reload modes are `"hot"`,
 `"manual"`, and `"off"`.
 
-The cache defaults to `<workspace>/.cache/recurloop`. Direct launcher loads are
-cumulative `.rli` checkpoints. Files reached through `include` are dependency
-stamped, so changing `editor.rl`, `explorer.rl`, `terminal.rl` or `view.rl`
-invalidates the relevant project step without rebuilding `ide.rli`.
+The cache defaults to `<workspace>/.cache/recurloop`. Project sources are
+compiled one-to-one into linked images under `<cache>/modules`: `app.rl` becomes
+`app.rli`, `editor.rl` becomes `editor.rli`, and so on. Includes use those
+module images as EngineImage dependencies instead of creating cumulative
+full-project checkpoints. Each linked `.rli` contains only source-owned phrases;
+references into earlier modules are resolved without copying their implementation.
+Changing `view.rl`, for example, leaves the unchanged
+`app/editor/explorer/terminal` modules reusable and does not rebuild `ide.rli`.
+
+Candidate builds reset to the immutable Project baseline and enable the normal
+linked module cache. The status bar shows the duration of the most recent reload
+in milliseconds, which makes cache behavior visible while editing the IDE
+itself.
 
 On a successful hot reload the replacement lifecycle module is loaded before
 the visible generation is unmounted. The old view is then destroyed and a new
@@ -54,6 +63,20 @@ the current visible view alive.
 The worker prepares its Project publication before compiling the generated
 lifecycle driver, then commits it only after linking succeeds. This keeps the
 publication transactional without a second load of the project environment.
+
+
+## Source intelligence
+
+The editor does not keep a separate RecurLoop parser or AST. It sends the
+current unsaved buffer to the persistent Project runtime for rollback-only
+semantic inspection. The returned spans use phrase-owned `kind`, `color`, and
+`docs` metadata for highlighting and hover help, including the standard fields
+inside `phrase { ... }` descriptors.
+
+Inspection also returns parser/elaboration diagnostics. The project-local editor
+shows the current diagnostic directly below the source buffer; a successful
+inspection clears it. Because the inspection transaction is rolled back, typing
+in the editor cannot mutate the published Project generation or terminal state.
 
 ## Persistent runtime state
 

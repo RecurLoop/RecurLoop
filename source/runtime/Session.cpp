@@ -149,15 +149,23 @@ namespace recurloop {
           break;
         case SessionCommand::Cache:
           cacheEnabled_ = project_->cacheEnabled();
+          contextGeneration_->context().exec.quickCompile = cacheEnabled_;
           if (cacheEnabled_) project_->beginCache(cacheState_);
           *requestOut << "cache=" << (cacheEnabled_ ? "enabled" : "disabled") << '\n';
           break;
+        case SessionCommand::CacheExact:
+          cacheEnabled_ = project_->cacheEnabled();
+          contextGeneration_->context().exec.quickCompile = cacheEnabled_;
+          if (cacheEnabled_) project_->beginCache(cacheState_, true);
+          *requestOut << "cache=" << (cacheEnabled_ ? "exact" : "disabled") << '\n';
+          break;
         case SessionCommand::CacheStatus:
           *requestOut << "cache=" << (project_->cacheEnabled() ? "enabled" : "disabled")
-                      << " active=" << (cacheEnabled_ ? "yes" : "no") << " step=" << cacheState_.step
+                      << " active=" << (cacheEnabled_ ? "yes" : "no")
+                      << " mode=modules files=" << cacheState_.step
                       << " hits=" << project_->cacheHits() << " misses=" << project_->cacheMisses()
                       << " writes=" << project_->cacheWrites();
-          if (project_->cacheEnabled()) *requestOut << " directory=" << project_->cacheStepsDirectory();
+          if (project_->cacheEnabled()) *requestOut << " directory=" << project_->cacheModulesDirectory();
           *requestOut << '\n';
           break;
         case SessionCommand::CacheDependencies: {
@@ -173,7 +181,7 @@ namespace recurloop {
         }
         case SessionCommand::Help:
           *requestOut << "phrases: :generations, :publish, :publish-prepare, :publish-commit, :refresh, :baseline, "
-                         ":cache, :cache-status, "
+                         ":cache, :cache-exact, :cache-status, "
                          ":cache-dependencies, :load \"<path>\", :quit, :exit\n";
           break;
         case SessionCommand::Quit: response.quit = true; break;
@@ -271,7 +279,7 @@ namespace recurloop {
         return;
       }
 
-      project_->beginCacheStep(cacheState_, absolute);
+      project_->beginCacheStep(cacheState_, absolute, context);
       started = cacheState_.active;
       struct CacheObserverBridge {
         Session *session;
@@ -280,15 +288,22 @@ namespace recurloop {
           &bridge,
           [](void *user, context::Context &context, std::string_view source) {
             auto *bridge = static_cast<CacheObserverBridge *>(user);
-            if (!bridge->session->project_->commitCacheFragment(bridge->session->cacheState_, context, source))
+            if (!bridge->session->project_->commitCacheNestedModule(bridge->session->cacheState_, context, source))
               bridge->session->project_->observeCacheSource(bridge->session->cacheState_, source);
           },
           [](void *user, context::Context &context, std::string_view source) {
             auto *bridge = static_cast<CacheObserverBridge *>(user);
-            if (bridge->session->project_->restoreCacheFragment(bridge->session->cacheState_, context, source))
+            if (bridge->session->project_->restoreCacheNestedModule(bridge->session->cacheState_, context, source))
               return true;
-            bridge->session->project_->beginCacheFragment(bridge->session->cacheState_, source);
+            bridge->session->project_->beginCacheNestedModule(bridge->session->cacheState_, source, context);
             return false;
+          },
+          [](void *user, context::Context &context, std::string_view path, bool complete) {
+            auto *bridge = static_cast<CacheObserverBridge *>(user);
+            if (complete)
+              bridge->session->project_->completeCacheImageDependency(bridge->session->cacheState_, context, path);
+            else
+              bridge->session->project_->beginCacheImageDependency(bridge->session->cacheState_, context, path);
           });
       executeStream(context, input, absolute, 1, 1);
     });

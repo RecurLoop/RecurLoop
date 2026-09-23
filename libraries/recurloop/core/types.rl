@@ -94,78 +94,117 @@ phrase record = "record" in root {
 
 phrase phrase_fields_action = "action" in phrase_fields {
   prototype action
+  kind "phrase field"
+  color "#9CDCFE"
+  docs "Binds the phrase to a host or phrase action implementation."
   type phrase_types_callable
   action host "phrase.field.action"
 }
 
 phrase phrase_fields_color = "color" in phrase_fields {
   prototype color
+  kind "phrase field"
+  color "#9CDCFE"
+  docs "Sets the semantic foreground color reported to IDE and introspection clients."
   type phrase_types_callable
   action host "phrase.field.color"
 }
 
 phrase phrase_fields_docs = "docs" in phrase_fields {
   prototype docs
+  kind "phrase field"
+  color "#9CDCFE"
+  docs "Attaches documentation reported to IDE and introspection clients."
   type phrase_types_callable
   action host "phrase.field.docs"
 }
 
 phrase phrase_fields_kind = "kind" in phrase_fields {
   prototype kind
+  kind "phrase field"
+  color "#9CDCFE"
+  docs "Sets the semantic category reported to IDE and introspection clients."
   type phrase_types_callable
   action host "phrase.field.kind"
 }
 
 phrase phrase_fields_dictionary = "dictionary" in phrase_fields {
   prototype dictionary
+  kind "phrase field"
+  color "#9CDCFE"
+  docs "Enables a nested subdictionary owned by the phrase."
   type phrase_types_callable
   action host "phrase.field.dictionary"
 }
 
 phrase phrase_fields_parent = "parent" in phrase_fields {
   prototype parent
+  kind "phrase field"
+  color "#9CDCFE"
+  docs "Sets the phrase parent used for dictionary ownership and lexical lookup."
   type phrase_types_callable
   action host "phrase.field.parent"
 }
 
 phrase phrase_fields_payload = "payload" in phrase_fields {
   prototype payload
+  kind "phrase field"
+  color "#9CDCFE"
+  docs "Initializes the phrase payload data."
   type phrase_types_callable
   action host "phrase.field.payload"
 }
 
 phrase phrase_fields_permanent = "permanent" in phrase_fields {
   prototype permanent
+  kind "phrase field"
+  color "#9CDCFE"
+  docs "Prevents the committed phrase from being redefined or modified."
   type phrase_types_callable
   action host "phrase.field.permanent"
 }
 
 phrase phrase_fields_prototype = "prototype" in phrase_fields {
   prototype prototype
+  kind "phrase field"
+  color "#9CDCFE"
+  docs "Sets the prototype used for inherited behavior and structure."
   type phrase_types_callable
   action host "phrase.field.prototype"
 }
 
 phrase phrase_fields_rewrite = "rewrite" in phrase_fields {
   prototype rewrite
+  kind "phrase field"
+  color "#9CDCFE"
+  docs "Allows the phrase to participate in source rewriting and function expansion."
   type phrase_types_callable
   action host "phrase.field.rewrite"
 }
 
 phrase phrase_fields_serializable = "serializable" in phrase_fields {
   prototype serializable
+  kind "phrase field"
+  color "#9CDCFE"
+  docs "Controls whether the phrase participates in engine-image serialization."
   type phrase_types_callable
   action host "phrase.field.serializable"
 }
 
 phrase phrase_fields_successor = "successor" in phrase_fields {
   prototype successor
+  kind "phrase field"
+  color "#9CDCFE"
+  docs "Sets the next lookup dictionary selected after the phrase matches."
   type phrase_types_callable
   action host "phrase.field.successor"
 }
 
 phrase phrase_fields_type = "type" in phrase_fields {
   prototype type
+  kind "phrase field"
+  color "#9CDCFE"
+  docs "Sets the semantic phrase type that controls elaboration or invocation."
   type phrase_types_callable
   action host "phrase.field.type"
 }

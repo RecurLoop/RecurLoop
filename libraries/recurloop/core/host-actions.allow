@@ -189,6 +189,7 @@ session.baseline
 session.cache-status
 session.cache-dependencies
 session.cache
+session.cache-exact
 session.generations
 session.help
 session.publish
