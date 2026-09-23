@@ -87,6 +87,7 @@ let IDE:App:update_open_path_after_rename = fn (state:IDE:App:State*, old_path:u
 
     free(state.host.selected)
     state.host.selected = updated
+    if state.history { IDE:App:history_retarget(state, updated) }
     let relative = IDE:relative(state.host.root, updated)
     if relative {
         Gui:label_text(state.file_label, relative)
@@ -99,8 +100,13 @@ let IDE:App:clear_open_path_if_inside = fn (state:IDE:App:State*, removed:u8*) -
     if !IDE:path_is_inside(state.host.selected, removed) { return }
     free(state.host.selected)
     state.host.selected = cast(u8*, 0)
+    IDE:App:history_close(state)
+    state.history_needs_refresh = 1
+    state.history_replaying = 1
     Gui:text_set(state.editor, "")
+    state.history_replaying = 0
     Gui:label_text(state.file_label, "No file selected")
+    if state.history_visible != 0 { IDE:App:history_refresh(state) }
 }
 
 let IDE:App:on_explorer_refresh = fn (widget:u8*, data:u8*) -> void {

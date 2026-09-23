@@ -60,16 +60,22 @@ let IDE:App:create_explorer = fn (state:IDE:App:State*) -> u8* {
     Gui:class_add(title, "explorer-title")
     Gui:append(header, title, 1, 0)
 
+    let history = Gui:icon_button("view-list-symbolic", "Editor History")
+    let search = Gui:icon_button("edit-find-symbolic", "Search Workspace (Ctrl+Shift+F)")
     let new_file = Gui:icon_button("document-new-symbolic", "New File")
     let new_folder = Gui:icon_button("folder-new-symbolic", "New Folder")
     let rename_item = Gui:icon_button("edit-rename-symbolic", "Rename")
     let delete_item = Gui:icon_button("user-trash-symbolic", "Delete")
     let refresh_tree = Gui:icon_button("view-refresh-symbolic", "Refresh Explorer")
+    Gui:on_click(history, IDE:App:on_show_history, cast(u8*, state))
+    Gui:on_click(search, IDE:App:on_show_search, cast(u8*, state))
     Gui:on_click(new_file, IDE:App:on_explorer_new_file, cast(u8*, state))
     Gui:on_click(new_folder, IDE:App:on_explorer_new_folder, cast(u8*, state))
     Gui:on_click(rename_item, IDE:App:on_explorer_rename, cast(u8*, state))
     Gui:on_click(delete_item, IDE:App:on_explorer_delete, cast(u8*, state))
     Gui:on_click(refresh_tree, IDE:App:on_explorer_refresh, cast(u8*, state))
+    Gui:append_end(header, search, 0, 2)
+    Gui:append_end(header, history, 0, 0)
     Gui:append_end(header, refresh_tree, 0, 0)
     Gui:append_end(header, delete_item, 0, 0)
     Gui:append_end(header, rename_item, 0, 0)
@@ -109,10 +115,28 @@ let IDE:App:create_editor = fn (state:IDE:App:State*) -> u8* {
         Gui:on_click(reload, IDE:App:on_manual_reload, cast(u8*, state))
         Gui:append_end(toolbar, reload, 0, 2)
     }
+
+    let find = Gui:icon_button("edit-find-symbolic", "Find (Ctrl+F)")
+    let find_all = Gui:icon_button("edit-find-symbolic", "Search Workspace (Ctrl+Shift+F)")
+    let undo = Gui:icon_button("edit-undo-symbolic", "Undo (Ctrl+Z)")
+    let redo = Gui:icon_button("edit-redo-symbolic", "Redo (Ctrl+Y / Ctrl+Shift+Z)")
     let save = Gui:icon_button("document-save-symbolic", "Save (Ctrl+S)")
+    Gui:on_click(find, IDE:App:on_show_find, cast(u8*, state))
+    Gui:on_click(find_all, IDE:App:on_show_search, cast(u8*, state))
+    Gui:on_click(undo, IDE:App:on_undo, cast(u8*, state))
+    Gui:on_click(redo, IDE:App:on_redo, cast(u8*, state))
     Gui:on_click(save, IDE:App:on_save, cast(u8*, state))
+    Gui:shortcut_click(state.host.window, find, 102, Gui:Modifier:Control())
+    Gui:shortcut_click(state.host.window, find_all, 102, Gui:Modifier:Control() + 1)
+    Gui:shortcut_click(state.host.window, undo, 122, Gui:Modifier:Control())
+    Gui:shortcut_click(state.host.window, redo, 121, Gui:Modifier:Control())
+    Gui:shortcut_click(state.host.window, redo, 122, Gui:Modifier:Control() + 1)
     Gui:shortcut_click(state.host.window, save, Gui:Key:S(), Gui:Modifier:Control())
     Gui:append_end(toolbar, save, 0, 4)
+    Gui:append_end(toolbar, redo, 0, 0)
+    Gui:append_end(toolbar, undo, 0, 0)
+    Gui:append_end(toolbar, find_all, 0, 0)
+    Gui:append_end(toolbar, find, 0, 2)
 
     state.editor = Gui:editor()
     Gui:on_text_changed(state.editor, IDE:App:on_editor_changed, cast(u8*, state))
@@ -121,7 +145,9 @@ let IDE:App:create_editor = fn (state:IDE:App:State*) -> u8* {
     Gui:label_align(state.semantic_diagnostic, cast(f32, 0.0))
     Gui:class_add(state.semantic_diagnostic, "semantic-diagnostic")
     Gui:append(box, toolbar, 0, 0)
-    Gui:append(box, Gui:scroll(state.editor), 1, 0)
+    Gui:append(box, IDE:App:create_find_bar(state), 0, 0)
+    state.editor_scroll = Gui:scroll(state.editor)
+    Gui:append(box, state.editor_scroll, 1, 0)
     Gui:append(box, state.semantic_diagnostic, 0, 0)
     return box
 }
@@ -168,7 +194,10 @@ let IDE:App:mount = fn (host:IDE:Host*) -> void {
     if !state.root_box { free(cast(u8*, state)); return }
     Gui:class_add(state.root_box, "app-root")
     state.file_box = cast(u8*, 0)
+    state.main_split = cast(u8*, 0)
+    state.right_split = cast(u8*, 0)
     state.editor = cast(u8*, 0)
+    state.editor_scroll = cast(u8*, 0)
     state.file_label = cast(u8*, 0)
     state.status = cast(u8*, 0)
     state.semantic_diagnostic = cast(u8*, 0)
@@ -180,37 +209,107 @@ let IDE:App:mount = fn (host:IDE:Host*) -> void {
     state.semantic_hover_tail = cast(IDE:App:SemanticHover*, 0)
     state.semantic_styles = cast(IDE:App:SemanticStyle*, 0)
     state.semantic_idle_source = 0
+    state.restore_idle_source = 0
+    state.restore_snapshot = IDE:App:view_state_load(state)
+    state.history = cast(IDE:App:History*, 0)
+    state.history_tree = cast(u8*, 0)
+    state.history_status = cast(u8*, 0)
+    state.history_pane = cast(u8*, 0)
+    state.explorer_pane = cast(u8*, 0)
+    state.sidebar_stack = cast(u8*, 0)
+    state.history_visible = 0
+    state.history_needs_refresh = 1
+    state.history_replaying = 0
+    state.history_refreshing = 0
+    state.history_refresh_idle_source = 0
+    state.find_bar = cast(u8*, 0)
+    state.find_input = cast(u8*, 0)
+    state.find_replace_input = cast(u8*, 0)
+    state.find_status = cast(u8*, 0)
+    state.find_case_button = cast(u8*, 0)
+    state.find_delimiter_button = cast(u8*, 0)
+    state.find_whitespace_button = cast(u8*, 0)
+    state.find_regex_button = cast(u8*, 0)
+    state.find_query = cast(u8*, 0)
+    state.find_case_sensitive = 0
+    state.find_boundary = 0
+    state.find_regex = 0
+    state.find_visible = 0
+    state.find_last_start = -1
+    state.find_last_finish = -1
+    state.search_pane = cast(u8*, 0)
+    state.search_tree = cast(u8*, 0)
+    state.search_input = cast(u8*, 0)
+    state.search_replace_input = cast(u8*, 0)
+    state.search_status = cast(u8*, 0)
+    state.search_case_button = cast(u8*, 0)
+    state.search_delimiter_button = cast(u8*, 0)
+    state.search_whitespace_button = cast(u8*, 0)
+    state.search_regex_button = cast(u8*, 0)
+    state.search_results = cast(IDE:App:SearchResult*, 0)
+    state.search_result_tail = cast(IDE:App:SearchResult*, 0)
+    state.search_result_count = 0
+    state.search_next_id = 1
+    state.search_case_sensitive = 0
+    state.search_boundary = 0
+    state.search_regex = 0
+    state.search_visible = 0
 
     let main = Gui:split_horizontal()
     let right = Gui:split_vertical()
-    let explorer = IDE:App:create_explorer(state)
+    state.main_split = main
+    state.right_split = right
+    state.sidebar_stack = Gui:stack()
+    state.explorer_pane = IDE:App:create_explorer(state)
+    state.history_pane = IDE:App:create_history_view(state)
+    state.search_pane = IDE:App:create_search_view(state)
+    Gui:stack_add(state.sidebar_stack, state.explorer_pane)
+    Gui:stack_add(state.sidebar_stack, state.history_pane)
+    Gui:stack_add(state.sidebar_stack, state.search_pane)
+    Gui:stack_select(state.sidebar_stack, state.explorer_pane)
     let editor = IDE:App:create_editor(state)
     let terminals = IDE:App:create_terminal_panel(state)
-    Gui:split_first(main, explorer, 0)
-    Gui:split_position(main, 300)
+    Gui:split_first(main, state.sidebar_stack, 0)
+    var main_position:i32 = 300
+    if state.restore_snapshot && state.restore_snapshot.main_split > 0 { main_position = cast(i32, state.restore_snapshot.main_split) }
+    Gui:split_position(main, main_position)
     Gui:split_first(right, editor, 1)
     Gui:split_second(right, terminals, 1)
-    Gui:split_position(right, 555)
+    var right_position:i32 = 555
+    if state.restore_snapshot && state.restore_snapshot.right_split > 0 { right_position = cast(i32, state.restore_snapshot.right_split) }
+    Gui:split_position(right, right_position)
     Gui:split_second(main, right, 1)
     Gui:append(state.root_box, main, 1, 0)
     Gui:append_end(state.root_box, IDE:App:create_status(state), 0, 0)
 
     IDE:App:scan_tree(state, host.root)
     if host.selected { IDE:App:open_path(state, host.selected) }
+    else if state.restore_snapshot && state.restore_snapshot.selected && IDE:file_exists(state.restore_snapshot.selected) { IDE:App:open_path(state, state.restore_snapshot.selected) }
     else if host.entry && IDE:file_exists(host.entry) { IDE:App:open_path(state, host.entry) }
     IDE:App:mount_terminals(state)
+    IDE:App:view_state_restore_controls(state)
     IDE:App:update_status(state)
 
     // This is the commit contract with ide.rli: all widgets are complete before
     // the root enters the hidden stack slot. The runtime decides when this root
     // becomes visible; project code never replaces the native window child.
     if !IDE:view_attach(host, state.root_box, cast(u8*, state)) {
+        IDE:App:search_clear_results(state)
         Gui:destroy(state.root_box)
         IDE:App:free_files(state)
         IDE:App:free_terminal_views(state)
         IDE:App:free_semantic_spans(state)
         IDE:App:free_semantic_styles(state)
+        if state.history_refresh_idle_source != 0 { Gui:source_remove(state.history_refresh_idle_source); state.history_refresh_idle_source = 0 }
+        IDE:App:history_close(state)
+        if state.find_query { free(state.find_query) }
+        IDE:App:view_state_snapshot_free(state.restore_snapshot)
+        state.restore_snapshot = cast(IDE:App:ViewSnapshot*, 0)
         free(cast(u8*, state))
+        return
+    }
+    if state.restore_snapshot {
+        state.restore_idle_source = Gui:idle(IDE:App:view_state_restore_idle, cast(u8*, state))
     }
 }
 
@@ -218,10 +317,17 @@ let IDE:App:unmount = fn (host:IDE:Host*) -> void {
     let state = IDE:App:state(host)
     if !state { return }
     if state.semantic_idle_source != 0 { Gui:source_remove(state.semantic_idle_source); state.semantic_idle_source = 0 }
+    if state.restore_idle_source != 0 { Gui:source_remove(state.restore_idle_source); state.restore_idle_source = 0 }
     IDE:App:free_files(state)
     IDE:App:free_terminal_views(state)
     IDE:App:free_semantic_spans(state)
     IDE:App:free_semantic_styles(state)
+    if state.history_refresh_idle_source != 0 { Gui:source_remove(state.history_refresh_idle_source); state.history_refresh_idle_source = 0 }
+    IDE:App:history_close(state)
+    IDE:App:search_free_results(state)
+    if state.find_query { free(state.find_query) }
+    IDE:App:view_state_snapshot_free(state.restore_snapshot)
+    state.restore_snapshot = cast(IDE:App:ViewSnapshot*, 0)
     free(cast(u8*, state))
 }
 
@@ -233,6 +339,9 @@ let IDE:App:reload_failed = fn (host:IDE:Host*) -> void {
 let IDE:App:runtime_ready = fn (host:IDE:Host*) -> void {
     let state = IDE:App:state(host)
     if !state { return }
+    // start_reload() calls runtime_ready on the still-visible generation after
+    // installing the reload worker. Capture exactly at that generation boundary.
+    if host.job && host.job.kind == 2 { IDE:App:view_state_capture(state) }
     if !host.terminals {
         let model = IDE:terminal_new(host)
         if model { IDE:App:add_terminal_view(state, model); Gui:show(state.notebook) }

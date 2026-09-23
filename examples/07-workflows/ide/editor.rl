@@ -2,11 +2,6 @@ let IDE:App:set_status = fn (state:IDE:App:State*, text:u8*) -> void {
     if state && state.status { Gui:label_text(state.status, text) }
 }
 
-let IDE:App:editor_text = fn (state:IDE:App:State*) -> u8* {
-    if !state || !state.editor { return cast(u8*, 0) }
-    return Gui:text_get(state.editor)
-}
-
 let IDE:App:free_semantic_spans = fn (state:IDE:App:State*) -> void {
     if !state { return }
     var span = state.semantic_spans
@@ -233,6 +228,14 @@ let IDE:App:schedule_semantics = fn (state:IDE:App:State*) -> void {
 
 let IDE:App:on_editor_changed = fn (buffer:u8*, data:u8*) -> void {
     let state = cast(IDE:App:State*, data)
+    if !state { return }
+    if state.history_replaying == 0 && state.history && state.host && state.host.selected {
+        let text = IDE:App:editor_text(state)
+        if text {
+            IDE:App:history_capture(state, text)
+            Gui:text_free(text)
+        }
+    }
     IDE:App:schedule_semantics(state)
 }
 
@@ -280,7 +283,17 @@ let IDE:App:open_path = fn (state:IDE:App:State*, path:u8*) -> void {
 
     if state.host.selected { free(state.host.selected) }
     state.host.selected = selected
-    Gui:text_set(state.editor, data)
+
+    let restored = IDE:App:history_open(state, selected, data)
+    state.history_replaying = 1
+    if restored { Gui:text_set(state.editor, restored) }
+    else { Gui:text_set(state.editor, data) }
+    state.history_replaying = 0
+    if restored { free(restored) }
+    state.history_needs_refresh = 1
+    if state.history_visible != 0 { IDE:App:history_refresh(state) }
+    IDE:App:find_reset_match(state)
+
     let relative = IDE:relative(state.host.root, selected)
     if relative { Gui:label_text(state.file_label, relative); free(relative) }
     IDE:App:schedule_semantics(state)
@@ -292,6 +305,7 @@ let IDE:App:on_save = fn (widget:u8*, data:u8*) -> void {
     let text = IDE:App:editor_text(state)
     if !text { IDE:App:set_status(state, "cannot read editor buffer"); return }
     let ok = IDE:write_file(state.host.selected, text)
+    if ok { IDE:App:history_mark_saved(state, text) }
     Gui:text_free(text)
     if ok {
         if IDE:view_reload_mode(state.host) == IDE:Reload:Hot() { IDE:App:set_status(state, "saved | hot reload pending") }

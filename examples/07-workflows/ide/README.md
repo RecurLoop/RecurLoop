@@ -99,3 +99,48 @@ operations and persistent terminal/runtime state. Concrete controls and layout
 belong in this directory. Adding a button, replacing the file tree, changing
 the editor composition or redesigning the terminal panel is therefore a normal
 source edit followed by hot reload, not a library rebuild.
+
+## Find and persistent edit history
+
+`Ctrl+F` opens the project-local find bar. Plain search supports an independent
+case-sensitive toggle plus delimiter-boundary or whitespace-boundary modes; the
+regex toggle switches matching to GLib regular expressions. Previous/next
+buttons wrap through the current file and select/scroll to the match.
+
+Undo/redo is also project source. `Ctrl+Z`, `Ctrl+Y`, and `Ctrl+Shift+Z` operate
+on a branching per-file history stored below `<cache>/ide/history`. Each record
+stores the minimal text splice rather than a full source snapshot. Consecutive
+word-character insertions are coalesced into one logical history node, while
+backspace/delete edits intentionally remain separate nodes. Save, undo/redo and
+explicit history checkout end the current insertion group. A checkpoint is
+stored every 128 logical edits so checking out an arbitrary graph node does not
+need to replay an unbounded chain. The Explorer header switches to a History view;
+selecting a row checks out that node, and editing from there creates a branch.
+
+History is bounded at 20,000 edit records or 128 MiB of log data per file, with a
+512 MiB emergency cap for the workspace history directory. When the workspace
+cap is crossed, inactive history logs are discarded while the active file is
+kept. When a per-file limit would be crossed, the retained graph is compacted to the current buffer as one baseline before recording the new edit. Compaction never writes the source
+file, so an unsaved buffer stays unsaved. The on-disk source hash is recorded at
+save points; if another process changes the file, stale cached history is reset
+instead of being replayed onto unrelated contents.
+
+
+## Workspace search and replace
+
+`Ctrl+Shift+F` opens a third left-sidebar view beside Explorer and History. It
+walks the workspace iteratively and shows clickable `path:line` matches with a
+line preview. The workspace search has the same independent case-sensitive,
+delimiter-boundary, whitespace-boundary and regex modes as `Ctrl+F`.
+
+Both `Ctrl+F` and workspace search expose Replace and Replace All. Replacements
+in the currently open editor are normal buffer edits, so they participate in
+the persistent branching undo/redo history and remain unsaved until the user
+saves. Workspace replacements in other files are written directly to disk; if
+those files later have a stale cached editor history, the existing disk-hash
+check resets that history before opening them.
+
+Workspace walking uses the runtime directory policy (`.git`, `build`, `.cache`
+and `node_modules` are skipped), ignores files over 16 MiB and rejects files
+containing NUL bytes before search or replacement. Results are capped at 10,000
+entries per search to keep the tree and matching work bounded.
