@@ -18,7 +18,7 @@ Run the same command again later to update to the newest release. For a normal u
 
 ```text
 ~/.local/bin/recurloop
-~/.local/share/recurloop/libraries/{language-kit,shell,inferred,http}.rli
+~/.local/share/recurloop/libraries/{language-kit,shell,inferred,http,gui,ide,project,embed}.rli
 ```
 
 If `~/.local/bin` is not already in your `PATH`:
@@ -49,7 +49,7 @@ Check the installation:
 recurloop --version
 ```
 
-The release archive is checksum-verified by the installer. GitHub also publishes a stable latest-release asset name, so the download URL does not need a version number.
+The installer resolves the immutable versioned asset for the latest GitHub Release, verifies its published SHA-256 checksum and the package-internal file manifest before installation.
 
 ## First program
 
@@ -190,7 +190,7 @@ Install everything in one command without root access:
 make install PREFIX="$HOME/.local"
 ```
 
-That installs the executable, all standard `.rli` libraries, and project documentation. For a system-wide source installation, use:
+That installs the executable, private LLVM tools and native linking files, all standard `.rli` libraries, and project documentation. For a system-wide source installation, use:
 
 ```bash
 sudo make install
@@ -204,6 +204,7 @@ The default system layout is:
 /usr/local/share/recurloop/libraries/shell.rli
 /usr/local/share/recurloop/libraries/inferred.rli
 /usr/local/share/recurloop/libraries/http.rli
+/usr/local/share/recurloop/libraries/{gui,ide,project,embed}.rli
 /usr/local/share/doc/RecurLoop/{LICENSE,README.md,TRADEMARKS.md}
 ```
 
@@ -219,7 +220,16 @@ make verify      # full release verification
 make install     # pinned release + libraries + docs -> install prefix
 ```
 
-Development builds use `AUTO` toolchain selection: an already prepared pinned LLVM 22.1.8 toolchain is preferred, otherwise a compatible system LLVM 22.x is used. `make release`, `make verify`, and `make install` always use the exact pinned release toolchain.
+LLVM itself is never built by RecurLoop. Development uses `AUTO`: a compatible
+system LLVM 22.x is used when present, otherwise the official LLVM 22.1.8 binary
+archive is downloaded once and cached below `.cache/deps`. `make release`,
+`make verify`, and `make install` force that exact checksum-pinned archive.
+
+On Debian/Ubuntu, a system development setup is simply:
+
+```bash
+sudo apt install llvm-22 llvm-22-dev clang-22 lld-22
+```
 
 For C++ host debugging, use the dedicated Debug preset instead of the normal Make workflow:
 
@@ -230,7 +240,12 @@ cmake --build --preset debug --target Recurloop
 
 ## What is included in a release?
 
-A GitHub Release is built and tested with the pinned toolchain. The release package contains:
+The current GitHub binary release is Linux x86-64 with a glibc >= 2.35 ABI
+contract and is tested in clean containers. LLVM backend code is linked into
+`recurloop`; the package does not contain a private Clang/LLD or copied libc
+sysroot. `emit object` uses compatible LLD; `emit executable` uses compatible
+Clang/LLD from the host (`clang-22`/`lld-22` on Debian/Ubuntu). See
+[production builds and compatibility](docs/releases.md).
 
 ```text
 bin/recurloop
@@ -238,6 +253,8 @@ share/recurloop/libraries/language-kit.rli
 share/recurloop/libraries/shell.rli
 share/recurloop/libraries/inferred.rli
 share/recurloop/libraries/http.rli
+share/recurloop/libraries/{gui,ide,project,embed}.rli
+share/recurloop/{BUILD-COMPATIBILITY.txt,RELEASE-METADATA.txt,PACKAGE-MANIFEST.sha256}
 share/doc/RecurLoop/...
 ```
 
@@ -586,29 +603,38 @@ simulator, and a ray tracer.
 ## LLVM backend
 
 LLVM is disabled by default in direct CMake configurations. Normal optimized
-Make builds enable it. Development commands use `RECURLOOP_TOOLCHAIN_MODE=AUTO`:
-an already prepared pinned LLVM 22.1.8 is preferred, otherwise a compatible
-system LLVM 22.x is used. The release command always uses
-the exact pinned toolchain:
+Make builds enable it without compiling LLVM itself. Dependency selection is:
 
-```bash
-make release
+```text
+RECURLOOP_LLVM_PROVIDER=AUTO|SYSTEM|ARCHIVE
 ```
+
+`AUTO` prefers an installed LLVM 22.x and otherwise downloads the official
+LLVM 22.1.8 binary release. `SYSTEM` is useful for distro/Docker builds;
+`ARCHIVE` is the deterministic production mode and verifies a hard-coded
+SHA-256 before extraction.
+
+The production backend is native-only:
+
+```text
+RECURLOOP_LLVM_LINK_TARGETS=native
+```
+
+`RECURLOOP_LLVM_LINK_TARGETS=all` remains an explicit opt-in and links all
+backends present in the same downloaded/installed LLVM distribution; it does
+not trigger another LLVM build.
 
 With LLVM enabled, source-defined `fn` implementations, nested functions,
 phrase actions, and compiled phrase blocks can be lowered to LLVM IR and
-optimized for immediate execution and native output.
+optimized for immediate execution and native output. `emit object` uses compatible `ld.lld` on `PATH`; `emit executable` performs the final OS link through
+compatible Clang/LLD on `PATH`, keeping platform libc/sysroot policy outside
+the RecurLoop archive.
 
 Runtime compilation targets the host. LLVM object output can be configured
-with:
-
-- `RECURLOOP_LLVM_TARGET_TRIPLE`;
-- `RECURLOOP_LLVM_CPU`;
-- `RECURLOOP_LLVM_FEATURES`;
-- `RECURLOOP_LLVM_SYSROOT`.
-
-An `asm` block defines exact target instructions and is therefore preserved
-rather than semantically rewritten by LLVM.
+with `RECURLOOP_LLVM_TARGET_TRIPLE`, `RECURLOOP_LLVM_CPU`,
+`RECURLOOP_LLVM_FEATURES`, and `RECURLOOP_LLVM_SYSROOT`. An `asm` block defines
+exact target instructions and is preserved rather than semantically rewritten
+by LLVM.
 
 ## Engine images
 

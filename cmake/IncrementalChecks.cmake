@@ -32,8 +32,12 @@ file(GLOB RECURLOOP_CHECK_ASSEMBLER_FRONTEND_FILES CONFIGURE_DEPENDS
 set(RECURLOOP_CHECK_LLVM_FILES
     "${CMAKE_SOURCE_DIR}/source/recurloop/LlvmBackend.cpp"
     "${CMAKE_SOURCE_DIR}/source/recurloop/LlvmBackend.hpp"
+    "${CMAKE_SOURCE_DIR}/source/recurloop/LlvmTools.cpp"
+    "${CMAKE_SOURCE_DIR}/source/recurloop/LlvmTools.hpp"
+    "${CMAKE_SOURCE_DIR}/cmake/LLVMDistribution.cmake"
+    "${CMAKE_SOURCE_DIR}/cmake/LLVMArchive.cmake"
     "${CMAKE_SOURCE_DIR}/cmake/RecurLoopLLVM.cmake"
-    "${CMAKE_SOURCE_DIR}/cmake/PreparePinnedToolchain.cmake")
+    "${CMAKE_SOURCE_DIR}/cmake/PrepareLLVMArchive.cmake")
 
 # Everything in recurloop/ that is not backend/debugger-specific is the normal
 # language/runtime surface. New files enter this group automatically.

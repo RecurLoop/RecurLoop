@@ -6,8 +6,8 @@ if(NOT DEFINED PRESET OR PRESET STREQUAL "")
 endif()
 
 set(configure_command "${CMAKE_COMMAND}" --preset "${PRESET}")
-if(DEFINED TOOLCHAIN_MODE AND NOT TOOLCHAIN_MODE STREQUAL "")
-    list(APPEND configure_command "-DRECURLOOP_TOOLCHAIN_MODE=${TOOLCHAIN_MODE}")
+if(DEFINED LLVM_PROVIDER AND NOT LLVM_PROVIDER STREQUAL "")
+    list(APPEND configure_command "-DRECURLOOP_LLVM_PROVIDER=${LLVM_PROVIDER}")
 endif()
 if(DEFINED INSTALL_PREFIX AND NOT INSTALL_PREFIX STREQUAL "")
     list(APPEND configure_command "-DCMAKE_INSTALL_PREFIX=${INSTALL_PREFIX}")
@@ -17,9 +17,9 @@ else()
     # platform default instead of inheriting that cached packaging path.
     list(APPEND configure_command -U CMAKE_INSTALL_PREFIX)
 endif()
-# Keep configure output attached to the terminal. LLVM discovery and first-time
-# dependency configuration can take a while, so buffering stdout here makes a
-# healthy configure look like a hung build.
+# Keep configure output attached to the terminal. First-time ARCHIVE discovery
+# may download LLVM, so buffering stdout here makes a healthy configure look
+# like a hung build.
 execute_process(
     COMMAND ${configure_command}
     WORKING_DIRECTORY "${ROOT}"

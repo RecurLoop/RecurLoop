@@ -8,14 +8,16 @@ PREFIX ?=
 
 RELEASE_BUILD_FILE := build/Release/build.ninja
 
-.PHONY: help build release check test verify libraries graphics-libraries install run list-examples example examples bundle benchmark reconfigure clean
+.PHONY: help build release check test verify libraries graphics-libraries install run list-examples example examples bundle benchmark reconfigure clean package llvm toolchain
 
 help:
 	@echo 'RecurLoop'
 	@echo
 	@echo 'Build:'
-	@echo '  make              Build RecurLoop'
-	@echo '  make release      Build release with pinned dependencies'
+	@echo '  make              Build RecurLoop (system LLVM when available)'
+	@echo '  make release      Build with checksum-pinned official LLVM archive'
+	@echo '  make package      Build and verify a complete relocatable release archive'
+	@echo '  make llvm         Download/verify the official LLVM archive into .cache/deps'
 	@echo '  make libraries    Build standard .rli libraries'
 	@echo '  make graphics-libraries  Build optional shader/window/Vulkan .rli libraries'
 	@echo '  make clean        Remove build directories'
@@ -23,7 +25,7 @@ help:
 	@echo 'Test:'
 	@echo '  make check        Run affected tests and examples'
 	@echo '  make test         Run all tests'
-	@echo '  make verify       Run full release verification'
+	@echo '  make verify       Run full release verification using archived LLVM'
 	@echo
 	@echo 'Use:'
 	@echo '  make run          Run RecurLoop'
@@ -42,11 +44,11 @@ help:
 
 $(RELEASE_BUILD_FILE): Makefile CMakePresets.json cmake/Configure.cmake
 	@echo '[configure] Release'
-	@cmake -DPRESET=release -DTOOLCHAIN_MODE=AUTO -P cmake/Configure.cmake
+	@cmake -DPRESET=release -DLLVM_PROVIDER=AUTO -P cmake/Configure.cmake
 
 reconfigure:
 	@echo '[configure] Release'
-	@cmake -DPRESET=release -DTOOLCHAIN_MODE=AUTO -P cmake/Configure.cmake
+	@cmake -DPRESET=release -DLLVM_PROVIDER=AUTO -P cmake/Configure.cmake
 
 build: $(RELEASE_BUILD_FILE)
 	@echo '[build] RecurLoop'
@@ -55,10 +57,19 @@ build: $(RELEASE_BUILD_FILE)
 
 release:
 	@echo '[release] configure'
-	@cmake -DPRESET=release -DTOOLCHAIN_MODE=PINNED -P cmake/Configure.cmake
+	@cmake -DPRESET=release -DLLVM_PROVIDER=ARCHIVE -P cmake/Configure.cmake
 	@echo '[release] build'
 	@cmake --build --preset release --target Recurloop RecurloopLibraries
 	@echo '[release] ready'
+
+llvm:
+	@cmake -P cmake/PrepareLLVMArchive.cmake
+
+# Backward-compatible name: this now only fetches the official binary archive.
+toolchain: llvm
+
+package: release
+	@cmake -P cmake/Package.cmake
 
 check: $(RELEASE_BUILD_FILE)
 	@echo '[check] run'
@@ -86,7 +97,7 @@ graphics-libraries: $(RELEASE_BUILD_FILE)
 
 verify:
 	@echo '[verify] configure'
-	@cmake -DPRESET=release -DTOOLCHAIN_MODE=PINNED -P cmake/Configure.cmake
+	@cmake -DPRESET=release -DLLVM_PROVIDER=ARCHIVE -P cmake/Configure.cmake
 	@echo '[verify] build'
 	@cmake --build --preset release --target Recurloop RecurloopUnitTests
 	@echo '[verify] unit'
@@ -99,11 +110,13 @@ verify:
 	@tools/examples.sh all "$(abspath $(RECURLOOP))"
 	@echo '[verify] core workflow'
 	@libraries/recurloop/test-core.sh "$(abspath $(RECURLOOP))"
+	@echo '[verify] installed package'
+	@cmake -P cmake/Package.cmake
 	@echo '[verify] passed'
 
 install:
 	@echo '[install] configure'
-	@cmake -DPRESET=release -DTOOLCHAIN_MODE=PINNED $(if $(PREFIX),-DINSTALL_PREFIX="$(PREFIX)") -P cmake/Configure.cmake
+	@cmake -DPRESET=release -DLLVM_PROVIDER=ARCHIVE $(if $(PREFIX),-DINSTALL_PREFIX="$(PREFIX)") -P cmake/Configure.cmake
 	@echo '[install] build'
 	@cmake --build --preset release --target Recurloop RecurloopLibraries
 	@echo '[install] install'

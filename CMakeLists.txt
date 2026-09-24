@@ -46,9 +46,8 @@ set(RECURLOOP_DEPS_DIR "${CMAKE_CURRENT_SOURCE_DIR}/.cache/deps" CACHE PATH
     "Shared RecurLoop dependency cache")
 # FetchContent source/population state is deliberately shared by every preset.
 # GoogleTest and Google Benchmark keep configuration-specific build artifacts.
-# The pinned LLVM/zlib/zstd toolchain is prepared separately below .cache/deps
-# and imported into RecurLoop, so those third-party builds never become part of
-# the main RecurLoop Ninja graph.
+# LLVM is consumed from the host or an immutable official binary archive and
+# imported into RecurLoop. LLVM itself is never built by this project.
 set(FETCHCONTENT_BASE_DIR "${RECURLOOP_DEPS_DIR}" CACHE PATH
     "Shared FetchContent population directory" FORCE)
 message(STATUS "RecurLoop dependency cache: ${RECURLOOP_DEPS_DIR}")
@@ -178,6 +177,41 @@ if(RECURLOOP_ENABLE_LLVM)
     include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/RecurLoopLLVM.cmake")
 endif()
 
+# Record a package profile only where an explicit production contract exists.
+# Other hosts can still build RecurLoop without pretending to be this artifact.
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND CMAKE_SYSTEM_PROCESSOR MATCHES "^(x86_64|amd64)$")
+    include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/ReleasePlatform.cmake")
+    recurloop_release_platform("${CMAKE_SYSTEM_NAME}" "${CMAKE_SYSTEM_PROCESSOR}"
+        _recurloop_release_platform _recurloop_release_description)
+    set(RECURLOOP_RELEASE_PLATFORM "${_recurloop_release_platform}" CACHE INTERNAL
+        "Production package profile for this build" FORCE)
+    set(RECURLOOP_RELEASE_PLATFORM_DESCRIPTION "${_recurloop_release_description}" CACHE INTERNAL
+        "Production package ABI description" FORCE)
+else()
+    set(RECURLOOP_RELEASE_PLATFORM "" CACHE INTERNAL "No production package profile" FORCE)
+    set(RECURLOOP_RELEASE_PLATFORM_DESCRIPTION "" CACHE INTERNAL "No production package profile" FORCE)
+endif()
+
+# ARCHIVE builds are release/provenance builds. Normalize checkout and build
+# roots at the compiler boundary so __FILE__, diagnostics and optional debug
+# metadata cannot make otherwise identical artifacts depend on local paths.
+if(RECURLOOP_ENABLE_LLVM AND RECURLOOP_LLVM_SELECTED_PROVIDER STREQUAL "ARCHIVE" AND
+   CMAKE_SYSTEM_NAME STREQUAL "Linux" AND
+   CMAKE_C_COMPILER_ID MATCHES "GNU|Clang" AND CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    add_compile_options(
+        "-ffile-prefix-map=${CMAKE_BINARY_DIR}=/usr/src/recurloop-build"
+        "-fmacro-prefix-map=${CMAKE_BINARY_DIR}=/usr/src/recurloop-build"
+        "-fdebug-prefix-map=${CMAKE_BINARY_DIR}=/usr/src/recurloop-build"
+        "-ffile-prefix-map=${CMAKE_CURRENT_SOURCE_DIR}=/usr/src/recurloop"
+        "-fmacro-prefix-map=${CMAKE_CURRENT_SOURCE_DIR}=/usr/src/recurloop"
+        "-fdebug-prefix-map=${CMAKE_CURRENT_SOURCE_DIR}=/usr/src/recurloop")
+endif()
+
+option(RECURLOOP_STATIC_CXX_RUNTIME "Link the host C++ runtime statically" ${RECURLOOP_ENABLE_LLVM})
+if(RECURLOOP_STATIC_CXX_RUNTIME AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
+    add_link_options(-static-libstdc++ -static-libgcc)
+endif()
+
 add_compile_definitions(PROJECT_VERSION="${PROJECT_VERSION}")
 
 # Release-like host builds use glibc/compiler object-size checks where they can
@@ -284,12 +318,17 @@ add_custom_command(
     COMMENT "[core] build stage-0 seed.rli"
     VERBATIM)
 
+file(RELATIVE_PATH RECURLOOP_CORE_SOURCE_ARGUMENT_1
+    "${RECURLOOP_SOURCE_DIR_1}" "${CMAKE_CURRENT_SOURCE_DIR}/libraries/recurloop/core.rl")
+file(RELATIVE_PATH RECURLOOP_CORE_SOURCE_ARGUMENT_2
+    "${RECURLOOP_SOURCE_DIR_2}" "${CMAKE_CURRENT_SOURCE_DIR}/libraries/recurloop/core.rl")
+
 add_custom_command(
     OUTPUT "${RECURLOOP_SOURCE_IMAGE}"
     COMMAND "${CMAKE_COMMAND}" -E rm -f "${RECURLOOP_SOURCE_IMAGE}"
     COMMAND "$<TARGET_FILE:RecurloopCoreRunner>"
             "${RECURLOOP_SEED_IMAGE}"
-            "${CMAKE_CURRENT_SOURCE_DIR}/libraries/recurloop/core.rl"
+            "${RECURLOOP_CORE_SOURCE_ARGUMENT_1}"
     WORKING_DIRECTORY "${RECURLOOP_SOURCE_DIR_1}"
     DEPENDS RecurloopCoreRunner "${RECURLOOP_SEED_IMAGE}" ${RECURLOOP_CORE_SOURCES}
     COMMENT "[core] build core.rli from seed + semantic core.rl"
@@ -300,7 +339,7 @@ add_custom_command(
     COMMAND "${CMAKE_COMMAND}" -E rm -f "${RECURLOOP_SOURCE_IMAGE_2}"
     COMMAND "$<TARGET_FILE:RecurloopCoreRunner>"
             "${RECURLOOP_SOURCE_IMAGE}"
-            "${CMAKE_CURRENT_SOURCE_DIR}/libraries/recurloop/core.rl"
+            "${RECURLOOP_CORE_SOURCE_ARGUMENT_2}"
     WORKING_DIRECTORY "${RECURLOOP_SOURCE_DIR_2}"
     DEPENDS RecurloopCoreRunner "${RECURLOOP_SOURCE_IMAGE}" ${RECURLOOP_CORE_SOURCES}
     COMMENT "[verify] build second self-hosted core.rli"
@@ -420,7 +459,7 @@ add_custom_command(
     COMMAND "${CMAKE_COMMAND}" -E make_directory "${RECURLOOP_LIBRARY_OUTPUT_DIR}"
     COMMAND "${CMAKE_COMMAND}" -E rm -f "${RECURLOOP_LANGUAGE_KIT_IMAGE}"
     COMMAND "$<TARGET_FILE:Recurloop>"
-            --file "${CMAKE_CURRENT_SOURCE_DIR}/libraries/language-kit/library.rl"
+            --file "libraries/language-kit/library.rl"
             -- "${RECURLOOP_LANGUAGE_KIT_IMAGE}"
     DEPENDS Recurloop ${RECURLOOP_LANGUAGE_KIT_SOURCES} ${RECURLOOP_LIBRARY_BUILD_SOURCES}
     WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
@@ -429,6 +468,7 @@ add_custom_command(
 
 function(recurloop_add_language_library name source output)
     get_filename_component(source_directory "${source}" DIRECTORY)
+    file(RELATIVE_PATH source_argument "${CMAKE_CURRENT_SOURCE_DIR}" "${source}")
     if(source_directory STREQUAL "${CMAKE_CURRENT_SOURCE_DIR}/libraries")
         set(library_sources "${source}")
         if(IS_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/libraries/${name}")
@@ -453,7 +493,7 @@ function(recurloop_add_language_library name source output)
         COMMAND "$<TARGET_FILE:Recurloop>"
                 --library-path "${RECURLOOP_LIBRARY_OUTPUT_DIR}"
                 ${import_arguments}
-                --file "${source}"
+                --file "${source_argument}"
                 -- "${output}"
         DEPENDS Recurloop ${import_dependencies}
                 ${library_sources} ${RECURLOOP_LIBRARY_BUILD_SOURCES}
@@ -492,7 +532,7 @@ add_custom_command(
             --library language-kit
             --library gui
             --library ide
-            --file "${CMAKE_CURRENT_SOURCE_DIR}/libraries/project/library.rl"
+            --file "libraries/project/library.rl"
             -- "${RECURLOOP_PROJECT_IMAGE}"
     DEPENDS Recurloop "${RECURLOOP_IDE_IMAGE}"
             ${RECURLOOP_PROJECT_LIBRARY_SOURCES}
@@ -549,9 +589,14 @@ install(FILES
     "${RECURLOOP_EMBED_IMAGE}"
     DESTINATION "${RECURLOOP_INSTALL_LIBRARY_DIR}"
     COMPONENT Libraries)
-install(FILES LICENSE README.md TRADEMARKS.md
+install(FILES LICENSE README.md TRADEMARKS.md THIRD-PARTY.md docs/releases.md
     DESTINATION "${CMAKE_INSTALL_DOCDIR}"
     COMPONENT Documentation)
+if(RECURLOOP_ENABLE_LLVM AND EXISTS "${RECURLOOP_LLVM_ROOT}/LICENSE.TXT")
+    install(FILES "${RECURLOOP_LLVM_ROOT}/LICENSE.TXT"
+        DESTINATION "${CMAKE_INSTALL_DOCDIR}/third-party/llvm"
+        COMPONENT Documentation)
+endif()
 if(RECURLOOP_USE_CORE_CACHE)
     add_custom_command(TARGET Recurloop POST_BUILD
         COMMAND "${CMAKE_COMMAND}"
@@ -577,10 +622,9 @@ if(RECURLOOP_ENABLE_LLVM)
         RECURLOOP_LLVM_FEATURES="${RECURLOOP_LLVM_FEATURES}"
         RECURLOOP_LLVM_SYSROOT="${RECURLOOP_LLVM_SYSROOT}"
         RECURLOOP_LLVM_OPT_LEVEL=${RECURLOOP_LLVM_OPT_LEVEL}
-        RECURLOOP_LLVM_INITIALIZE_ALL_TARGETS=${RECURLOOP_LLVM_INITIALIZE_ALL_TARGETS}
-        RECURLOOP_LLVM_CLANG="${RECURLOOP_LLVM_CLANG}"
-        RECURLOOP_LLVM_LLD="${RECURLOOP_LLVM_LLD}")
-    target_include_directories(RecurloopLib SYSTEM PRIVATE ${LLVM_INCLUDE_DIRS})
+        RECURLOOP_LLVM_INITIALIZE_ALL_TARGETS=${RECURLOOP_LLVM_INITIALIZE_ALL_TARGETS})
+    target_include_directories(RecurloopLib SYSTEM PRIVATE ${RECURLOOP_LLVM_INCLUDE_DIRS})
+    target_compile_options(RecurloopLib PRIVATE ${RECURLOOP_LLVM_COMPILE_OPTIONS})
     target_link_libraries(RecurloopLib PRIVATE ${RECURLOOP_LLVM_LIBRARIES})
 endif()
 

@@ -14,10 +14,9 @@ Start with `README.md`, `docs/architecture.md`, and `docs/language.md`.
 
 ## Build and test
 
-RecurLoop's current runtime/native output targets Linux, while the build
-orchestration uses CMake presets so it can be reused on other hosts as runtime
-backends are ported. Development requires CMake 3.25+, Ninja, Clang, and a C++23
-standard library. Python is not part of the build/check/package toolchain.
+RecurLoop uses CMake presets. Development requires CMake 3.25+, Ninja, Clang,
+and a C++23 standard library. LLVM is a binary dependency and is never built
+from source by RecurLoop.
 
 Normal command-line work uses optimized hosts:
 
@@ -26,25 +25,23 @@ make build
 make check
 ```
 
-`make build` and `make check` use the same optimized `build/Release` tree with
-LLVM enabled. Their toolchain policy is `AUTO`: prefer the already prepared
-pinned LLVM/zlib/zstd toolchain, otherwise use a compatible system LLVM and
-system compression libraries. Incremental check selection is expressed in the
-CMake/Ninja graph itself: unit stamps depend on unit executables and feature /
-example stamps use explicit CMake `DEPENDS` inputs. Do not add filename, git-diff,
-or test-timing heuristics to `make check`. Do not replace it with a Debug build:
-running `.rl` workloads on an `-O0` host is intentionally avoided.
+`make build`/`make check` use `RECURLOOP_LLVM_PROVIDER=AUTO`: an installed LLVM
+22.x is preferred, otherwise the checksum-pinned official LLVM 22.1.8 archive
+is downloaded once below `.cache/deps/`. Debian/Ubuntu developers can install
+`llvm-22 llvm-22-dev clang-22 lld-22` and stay entirely on the SYSTEM path.
+Do not add an LLVM source build back to the ordinary CMake/Ninja graph.
 
-C++ debugging is separate from Make. VS Code/CMake Tools uses the `debug` preset
-(`build/Debug`, LLVM off) together with LLDB. The portable equivalent is:
+C++ debugging uses the `debug` preset (`build/Debug`, LLVM off):
 
 ```bash
 cmake --preset debug
 cmake --build --preset debug --target Recurloop
 ```
 
-Production verification uses Release + LLVM. `make release` and `make verify`
-force the exact pinned LLVM 22.1.8, zlib 1.3.1, and zstd 1.5.7 toolchain:
+Production verification uses `RECURLOOP_LLVM_PROVIDER=ARCHIVE`, exact LLVM
+22.1.8 release URL/SHA-256 and native-only backend linking. `make package`
+stages and tests the Linux x86-64 glibc artifact. Graphics extras remain
+opt-in. See `docs/releases.md` for platform contracts and container strategy.
 
 | Change | Verification |
 |---|---|
@@ -53,20 +50,14 @@ force the exact pinned LLVM 22.1.8, zlib 1.3.1, and zstd 1.5.7 toolchain:
 | libraries/examples/core/bootstrap or broad integration | `make verify` |
 | standard-library images only | `make libraries` |
 
-`make libraries` writes `language-kit.rli`, `shell.rli`, `inferred.rli`, and
-`http.rli` below `build/Release/libraries/`. `make install` installs the Release
-binary and those compiled images using normal CMake/GNUInstallDirs semantics;
-`PREFIX=/usr DESTDIR=/tmp/pkg` is the packaging/staging form.
+`make libraries` produces `language-kit`, `shell`, `inferred`, `http`, `gui`,
+`ide`, `project`, and `embed`. `make install` installs the host and those images;
+Clang/LLD are not bundled. The linked LLVM JIT/backend is in-process; native object/executable file output
+intentionally uses host LLD/Clang rather than bundling a platform toolchain.
 
-Dependency sources are cached once below `.cache/deps/` and shared by all
-presets. Pinned LLVM is an upstream prebuilt archive; pinned zlib/zstd are built
-once in a separate helper build below `.cache/deps/` and imported into the main
-project, so they do not appear in RecurLoop's normal Ninja graph. AUTO builds
-prefer that cache and fall back to compatible system packages.
-GoogleTest/Benchmark keep configuration-local build artifacts while reusing the
-same downloaded sources. Google Benchmark is opt-in through `make benchmark`.
-`make bundle` creates a compact review zip without `.git`, build trees, caches,
-or debug output and includes a source-matched cached core image when available.
+GoogleTest/Benchmark sources are cached below `.cache/deps/`. `make bundle`
+creates a review zip without build trees/caches/debug output.
+
 ## Source layout
 
 The static-library dependency order is:

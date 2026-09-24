@@ -61,11 +61,15 @@ int main(int argc, char **argv) {
   }
   try {
     const std::filesystem::path imagePath = std::filesystem::absolute(argv[1]).lexically_normal();
-    const std::filesystem::path sourcePath = std::filesystem::absolute(argv[2]).lexically_normal();
+    const std::filesystem::path sourceArgument = std::filesystem::path(argv[2]).lexically_normal();
+    const std::filesystem::path sourcePath = std::filesystem::absolute(sourceArgument).lexically_normal();
     const auto image = readBytes(imagePath);
     CoreBuildRuntime runtime;
     runtime.initializeBuildImage(image);
-    recurloop::executeSource(runtime.getContext(), readText(sourcePath), sourcePath.string(), 1);
+    // Keep the path persisted into core.rli stable across checkout roots. The
+    // physical source is resolved above; includes still resolve correctly from
+    // this runner's working directory through the same relative argument.
+    recurloop::executeSource(runtime.getContext(), readText(sourcePath), sourceArgument.generic_string(), 1);
     return 0;
   } catch (const std::exception &error) {
     std::cerr << "recurloop-core-runner: " << error.what() << '\n';

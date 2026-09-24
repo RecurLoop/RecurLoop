@@ -196,6 +196,11 @@ if(ENABLE_TESTS_FEATURE)
         set(recurloop_feature_check_outputs "${recurloop_feature_check_outputs}" PARENT_SCOPE)
     endfunction()
 
+    if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+        recurloop_add_feature_test(packaging/audit.cmake
+            DEPENDS "${CMAKE_SOURCE_DIR}/cmake/AuditLinuxPackage.cmake")
+    endif()
+
     # CLI behavior depends on the normal runtime/language surface.
     recurloop_add_feature_test(recurloop/cli/error_locations.cmake
         DEPENDS

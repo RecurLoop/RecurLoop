@@ -1,10 +1,6 @@
 {
   "version": 6,
-  "cmakeMinimumRequired": {
-    "major": 3,
-    "minor": 25,
-    "patch": 0
-  },
+  "cmakeMinimumRequired": { "major": 3, "minor": 25, "patch": 0 },
   "configurePresets": [
     {
       "name": "debug",
@@ -36,7 +32,7 @@
         "RECURLOOP_ENABLE_LLVM": "ON",
         "RECURLOOP_LLVM_LINK_TARGETS": "native",
         "RECURLOOP_USE_CORE_CACHE": "ON",
-        "RECURLOOP_TOOLCHAIN_MODE": "AUTO"
+        "RECURLOOP_LLVM_PROVIDER": "AUTO"
       }
     },
     {
@@ -69,27 +65,15 @@
         "RECURLOOP_ENABLE_LLVM": "ON",
         "RECURLOOP_LLVM_LINK_TARGETS": "native",
         "RECURLOOP_USE_CORE_CACHE": "ON",
-        "RECURLOOP_TOOLCHAIN_MODE": "PINNED"
+        "RECURLOOP_LLVM_PROVIDER": "ARCHIVE"
       }
     }
   ],
   "buildPresets": [
-    {
-      "name": "debug",
-      "configurePreset": "debug"
-    },
-    {
-      "name": "release",
-      "configurePreset": "release"
-    },
-    {
-      "name": "benchmark",
-      "configurePreset": "benchmark"
-    },
-    {
-      "name": "ci",
-      "configurePreset": "ci"
-    }
+    { "name": "debug", "configurePreset": "debug" },
+    { "name": "release", "configurePreset": "release" },
+    { "name": "benchmark", "configurePreset": "benchmark" },
+    { "name": "ci", "configurePreset": "ci" }
   ],
   "testPresets": [
     {

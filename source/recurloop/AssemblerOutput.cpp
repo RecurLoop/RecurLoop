@@ -4,6 +4,7 @@
 #include <compiler/ElfReader.hpp>
 #ifdef RECURLOOP_ENABLE_LLVM
   #include "LlvmBackend.hpp"
+  #include "LlvmTools.hpp"
 #endif
 
 #include <memory>
@@ -554,7 +555,7 @@ namespace recurloop {
                       << RECURLOOP_LLVM_TARGET_TRIPLE << "' or provide a target-compatible object")
         TemporaryLinkObject object;
         write_file(object.get(), compiler::ElfWriter::write(module), "LLVM assembler input");
-        std::vector<std::string> arguments = {RECURLOOP_LLVM_LLD, "-r", "-O" + std::to_string(RECURLOOP_LLVM_OPT_LEVEL),
+        std::vector<std::string> arguments = {llvm_tools::linker(), "-r", "-O" + std::to_string(RECURLOOP_LLVM_OPT_LEVEL),
                                               object.get()};
         LlvmLinkFiles linkFiles(context);
         linkFiles.append(arguments);
@@ -593,16 +594,15 @@ namespace recurloop {
         }
         TemporaryLinkObject object;
         write_file(object.get(), compiler::ElfWriter::write(module), "LLVM assembler input");
-        std::vector<std::string> arguments = {RECURLOOP_LLVM_CLANG, "--target=" RECURLOOP_LLVM_TARGET_TRIPLE,
-                                              "-fuse-ld=" RECURLOOP_LLVM_LLD,
+        std::vector<std::string> arguments = {llvm_tools::clang(), "--target=" RECURLOOP_LLVM_TARGET_TRIPLE,
+                                              "-fuse-ld=" + llvm_tools::linker(),
                                               "-Wl,-O" + std::to_string(RECURLOOP_LLVM_OPT_LEVEL)};
         append_executable_link_options(arguments, outputData.debug);
         arguments.push_back(object.get());
         LlvmLinkFiles linkFiles(context);
         linkFiles.append(arguments);
         arguments.insert(arguments.end(), {"-o", path});
-        if (std::string_view(RECURLOOP_LLVM_SYSROOT).size() != 0)
-          arguments.push_back("--sysroot=" RECURLOOP_LLVM_SYSROOT);
+        llvm_tools::appendSysroot(arguments);
         for (const std::string &searchPath : context.language().linkerSearchPaths())
           arguments.push_back("-L" + searchPath);
         append_shared_library_options(arguments, context);
@@ -1018,22 +1018,21 @@ namespace recurloop {
     std::vector<std::string> arguments;
     assembler_internal::LlvmLinkFiles linkFiles(context);
     if (request->kind == NativeFileKind::Object) {
-      arguments = {RECURLOOP_LLVM_LLD, "-r", "-O" + std::to_string(RECURLOOP_LLVM_OPT_LEVEL)};
+      arguments = {llvm_tools::linker(), "-r", "-O" + std::to_string(RECURLOOP_LLVM_OPT_LEVEL)};
       arguments.insert(arguments.end(), llvmPaths.begin(), llvmPaths.end());
       if (hasDependencies) arguments.push_back(dependencyObject.get());
       linkFiles.append(arguments);
       arguments.insert(arguments.end(), {"-o", request->path});
       assembler_internal::run_llvm_linker(arguments, request->path, "LLVM object");
     } else {
-      arguments = {RECURLOOP_LLVM_CLANG, "--target=" RECURLOOP_LLVM_TARGET_TRIPLE, "-fuse-ld=" RECURLOOP_LLVM_LLD,
+      arguments = {llvm_tools::clang(), "--target=" RECURLOOP_LLVM_TARGET_TRIPLE, "-fuse-ld=" + llvm_tools::linker(),
                    "-Wl,-O" + std::to_string(RECURLOOP_LLVM_OPT_LEVEL)};
       assembler_internal::append_executable_link_options(arguments, request->debug);
       arguments.insert(arguments.end(), llvmPaths.begin(), llvmPaths.end());
       if (hasDependencies) arguments.push_back(dependencyObject.get());
       linkFiles.append(arguments);
       arguments.insert(arguments.end(), {"-o", request->path});
-      if (std::string_view(RECURLOOP_LLVM_SYSROOT).size() != 0)
-        arguments.push_back("--sysroot=" RECURLOOP_LLVM_SYSROOT);
+      llvm_tools::appendSysroot(arguments);
       for (const std::string &path : context.language().linkerSearchPaths()) arguments.push_back("-L" + path);
       assembler_internal::append_shared_library_options(arguments, context);
       assembler_internal::run_llvm_linker(arguments, request->path, "LLVM executable");

@@ -1,6 +1,7 @@
 #if !defined(__RECURLOOP_RECURLOOP_CPP)
   #define __RECURLOOP_RECURLOOP_CPP
   #include <recurloop/Recurloop.hpp>
+  #include <utilities/ExecutablePath.hpp>
   #include <recurloop/Assembler.hpp>
   #include <recurloop/Blocks.hpp>
   #include <recurloop/Debugger.hpp>
@@ -492,6 +493,11 @@ namespace recurloop {
 
       std::vector<fs::path> paths = explicitPaths;
       appendLibraryPathList(paths, std::getenv("RECURLOOP_LIBRARY_PATH"));
+
+      const auto executablePath = utilities::executablePath();
+      if (!executablePath.empty()) {
+        paths.push_back(executablePath.parent_path() / "../share/recurloop/libraries");
+      }
 
       if (context.exec.args.ptr != nullptr && context.exec.args.count > 0 && context.exec.args.ptr[0] != nullptr) {
         fs::path executable(context.exec.args.ptr[0]);

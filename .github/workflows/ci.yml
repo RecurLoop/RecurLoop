@@ -3,178 +3,99 @@ name: CI and Release
 on:
   pull_request:
   push:
-    branches:
-      - main
-    tags:
-      - "v*.*.*"
+    branches: [main]
+    tags: ["v*.*.*"]
   workflow_dispatch:
 
-# Branch/PR runs only need read access.
-# The release job below gets write access separately.
 permissions:
   contents: read
-
 concurrency:
   group: "${{ github.workflow }}-${{ github.ref }}"
-  # Never cancel a tagged release build halfway through.
   cancel-in-progress: ${{ github.ref_type != 'tag' }}
 
 jobs:
   ci:
-    name: Release build and tests
-    runs-on: ubuntu-24.04
-
+    name: Build and verify Linux x86-64 release
+    runs-on: ubuntu-22.04
     steps:
-      - name: Check out repository
-        uses: actions/checkout@v7
-
-      - name: Install build dependencies
+      - uses: actions/checkout@v7
+      - name: Restore official LLVM archive cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            .cache/linux-release-deps/llvm/22.1.8
+            .cache/linux-release-deps/downloads/LLVM-22.1.8-Linux-X64.tar.xz
+          key: llvm-22.1.8-linux-x64-${{ hashFiles('cmake/LLVMDistribution.cmake') }}
+      - name: Verify build tools
         run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            clang \
-            lld \
-            ninja-build
-
-      - name: Verify compatibility test runners are executable
-        run: |
-          test -x examples/07-workflows/amber-language/run-tests.sh
-          test -x examples/07-workflows/prolog-language/run-tests.sh
-          test -x examples/07-workflows/haskell-language/run-tests.sh
-          test -x examples/07-workflows/erlang-language/run-tests.sh
-
-      - name: Configure CI Release with LLVM
-        run: cmake --preset ci
-
-      - name: Build Release with LLVM, unit tests and libraries
-        run: cmake --build --preset ci --target Recurloop RecurloopUnitTests RecurloopLibraries
-
-      - name: Run unit tests
-        run: ctest --preset ci-unit
-
-      - name: Run feature tests
-        run: ctest --preset ci-feature
-
-      - name: Run all examples
-        run: tools/examples.sh all "$PWD/build/CI/bin/recurloop"
-
-      - name: Verify bootstrap/core fixed point
-        run: cmake --build --preset ci --target RecurloopCoreVerify
-
-      - name: Verify source-core self reproduction
-        run: libraries/recurloop/test-core.sh "$PWD/build/CI/bin/recurloop"
-
-      - name: Show built version
-        run: build/CI/bin/recurloop --version
-
-      # A GitHub Release is created only from a semantic version tag.
-      # The tag must match the version compiled into Recurloop.
-      - name: Validate release tag and package binary
+          cmake --version
+          ninja --version
+          git --version
+      - name: Build, test, stage and audit release
+        run: tools/release-linux.sh
+      - name: Validate release version
         if: github.ref_type == 'tag'
         env:
           TAG: ${{ github.ref_name }}
         shell: bash
         run: |
           set -euo pipefail
-
-          if [[ ! "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            echo "Release tag must have the form vMAJOR.MINOR.PATCH, e.g. v0.1.0" >&2
-            exit 1
-          fi
-
-          VERSION="${TAG#v}"
-          BINARY_VERSION="$(
-            build/CI/bin/recurloop --version |
-            sed -n 's/^Recurloop v//p'
-          )"
-
-          if [[ -z "$BINARY_VERSION" ]]; then
-            echo "Could not read the RecurLoop version from the built binary." >&2
-            exit 1
-          fi
-
-          if [[ "$BINARY_VERSION" != "$VERSION" ]]; then
-            echo "Tag/version mismatch:" >&2
-            echo "  tag:    $TAG" >&2
-            echo "  binary: v$BINARY_VERSION" >&2
-            echo "Update project(... VERSION ...) in CMakeLists.txt before tagging." >&2
-            exit 1
-          fi
-
-          PACKAGE="recurloop-${VERSION}-linux-x86_64"
-          STABLE_ARCHIVE="recurloop-linux-x86_64.tar.gz"
-          rm -rf "dist/$PACKAGE"
-          mkdir -p dist
-
-          cmake --install build/CI --prefix "$PWD/dist/$PACKAGE"
-
-          # A release is the complete runtime: binary, standard .rli libraries,
-          # and the installed documentation. Verify the staged tree before
-          # publishing anything.
-          test -x "dist/$PACKAGE/bin/recurloop"
-          for library in language-kit shell inferred http; do
-            test -s "dist/$PACKAGE/share/recurloop/libraries/${library}.rli"
-          done
-          test -s "dist/$PACKAGE/share/doc/RecurLoop/README.md"
-
-          # Also prove that the installed binary can resolve libraries from the
-          # relocated package prefix rather than from the build tree.
-          "dist/$PACKAGE/bin/recurloop" \
-            --library shell \
-            --library inferred \
-            --string 'assert 6 * 7 == 42'
-
-          tar -C dist -czf "dist/${PACKAGE}.tar.gz" "$PACKAGE"
-          cp "dist/${PACKAGE}.tar.gz" "dist/${STABLE_ARCHIVE}"
-
-          (
-            cd dist
-            sha256sum "${PACKAGE}.tar.gz" > "${PACKAGE}.tar.gz.sha256"
-            sha256sum "${STABLE_ARCHIVE}" > "${STABLE_ARCHIVE}.sha256"
-          )
-
-          rm -rf "dist/$PACKAGE"
-
-          echo "Created release assets:"
-          ls -lh dist/
-
-      - name: Upload release assets for publish job
-        if: github.ref_type == 'tag'
-        uses: actions/upload-artifact@v6
+          [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          test "$(build/CI/bin/recurloop --version | sed -n 's/^Recurloop v//p')" = "${TAG#v}"
+      - uses: actions/upload-artifact@v6
         with:
           name: release-assets
           path: dist/*
           if-no-files-found: error
           retention-days: 7
 
-  release:
-    name: Publish GitHub Release
+  compatibility:
+    name: Clean runtime on ${{ matrix.image }}
     needs: ci
-    if: github.ref_type == 'tag'
     runs-on: ubuntu-24.04
-
-    permissions:
-      contents: write
-
+    strategy:
+      fail-fast: false
+      matrix:
+        image: [debian:12-slim, debian:13-slim, ubuntu:22.04, ubuntu:24.04, ubuntu:26.04, fedora:44]
     steps:
-      - name: Check out repository
-        uses: actions/checkout@v7
-        with:
-          fetch-depth: 0
-
-      - name: Download tested release assets
-        uses: actions/download-artifact@v7
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v7
         with:
           name: release-assets
           path: dist
+      - name: Exercise relocated package without compiler, network or dependency cache
+        shell: bash
+        run: |
+          set -euo pipefail
+          mapfile -t archives < <(find dist -maxdepth 1 -type f -name 'recurloop-*-linux-x86_64.tar.gz' -print | sort)
+          test "${#archives[@]}" -eq 1
+          archive="${archives[0]}"
+          package_root="$(tar -tzf "$archive" | sed -n '1{s,/.*,,;p;q;}')"
+          test -n "$package_root"
+          mkdir -p 'relocated package'
+          tar -xzf "$archive" -C 'relocated package'
+          docker run --rm --network none \
+            -v "$PWD/relocated package:/opt/relocated package:ro" \
+            -v "$PWD/tools/smoke-installed.sh:/smoke.sh:ro" \
+            '${{ matrix.image }}' sh /smoke.sh "/opt/relocated package/$package_root"
 
+  release:
+    name: Publish verified GitHub Release
+    needs: [ci, compatibility]
+    if: github.ref_type == 'tag'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v7
+        with:
+          name: release-assets
+          path: dist
       - name: Publish release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "${GITHUB_REF_NAME}" \
-            dist/* \
-            --repo "${GITHUB_REPOSITORY}" \
-            --verify-tag \
-            --title "RecurLoop ${GITHUB_REF_NAME}" \
-            --generate-notes
+          gh release create "${GITHUB_REF_NAME}" dist/* \
+            --repo "${GITHUB_REPOSITORY}" --verify-tag \
+            --title "RecurLoop ${GITHUB_REF_NAME}" --generate-notes
