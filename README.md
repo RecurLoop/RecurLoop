@@ -220,9 +220,10 @@ make verify      # full release verification
 make install     # pinned release + libraries + docs -> install prefix
 ```
 
-LLVM itself is never built by RecurLoop. Development uses `AUTO`: a compatible
-system LLVM 22.x is used when present, otherwise the official LLVM 22.1.8 binary
-archive is downloaded once and cached below `.cache/deps`. `make release`,
+LLVM itself is never built by RecurLoop. Development uses `AUTO`: an already
+cached pinned LLVM 22.1.8 archive is preferred; otherwise a compatible system
+LLVM 22.x is used, and the pinned archive is downloaded only when neither is
+available. `make release`,
 `make verify`, and `make install` force that exact checksum-pinned archive.
 
 On Debian/Ubuntu, a system development setup is simply:
@@ -609,8 +610,9 @@ Make builds enable it without compiling LLVM itself. Dependency selection is:
 RECURLOOP_LLVM_PROVIDER=AUTO|SYSTEM|ARCHIVE
 ```
 
-`AUTO` prefers an installed LLVM 22.x and otherwise downloads the official
-LLVM 22.1.8 binary release. `SYSTEM` is useful for distro/Docker builds;
+`AUTO` prefers an already-cached pinned LLVM 22.1.8 archive, falls back to an
+installed LLVM 22.x, and downloads the pinned archive only when neither is
+available. `SYSTEM` is useful for distro/Docker builds;
 `ARCHIVE` is the deterministic production mode and verifies a hard-coded
 SHA-256 before extraction.
 

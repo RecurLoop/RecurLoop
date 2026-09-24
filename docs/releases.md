@@ -9,8 +9,9 @@ LLVM is selected by one variable:
 RECURLOOP_LLVM_PROVIDER=AUTO|SYSTEM|ARCHIVE
 ```
 
-- `AUTO` (development default): use a compatible installed LLVM 22.x; if none
-  is available, download the pinned official LLVM 22.1.8 binary archive.
+- `AUTO` (development default): use the exact pinned LLVM 22.1.8 archive when
+  it is already cached; otherwise use a compatible installed LLVM 22.x; if
+  neither is available, download and cache the pinned official archive.
 - `SYSTEM`: require an installed LLVM 22.x. On Debian/Ubuntu the intended setup
   is `apt install llvm-22 llvm-22-dev clang-22 lld-22`.
 - `ARCHIVE`: use only the official LLVM 22.1.8 binary release pinned by exact
@@ -38,8 +39,10 @@ make build
 make check
 ```
 
-With a distro LLVM 22 installation these commands never download LLVM. A
-strict system-only configuration is:
+On a fresh checkout with a distro LLVM 22 installation these commands use the
+system SDK without downloading anything. Once the pinned archive exists in the
+dependency cache, `AUTO` intentionally prefers it. A strict system-only
+configuration is:
 
 ```sh
 cmake --preset release -DRECURLOOP_LLVM_PROVIDER=SYSTEM

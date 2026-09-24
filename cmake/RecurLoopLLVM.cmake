@@ -70,28 +70,52 @@ set(_recurloop_llvm_config "")
 set(_recurloop_archive_url "")
 set(_recurloop_archive_sha "")
 
-if(_recurloop_llvm_provider STREQUAL "SYSTEM" OR _recurloop_llvm_provider STREQUAL "AUTO")
+# AUTO deliberately avoids network access when possible:
+#   1. exact pinned archive already present in the dependency cache,
+#   2. compatible system LLVM 22.x,
+#   3. download and cache the exact pinned archive.
+# This makes repeated builds deterministic once the pinned SDK has been fetched,
+# while keeping a fresh developer checkout fast when the distro already provides LLVM.
+if(_recurloop_llvm_provider STREQUAL "AUTO")
+    recurloop_find_cached_llvm_archive(_recurloop_cached_llvm_root _recurloop_cached_llvm_found)
+    if(_recurloop_cached_llvm_found)
+        set(_recurloop_llvm_root "${_recurloop_cached_llvm_root}")
+        set(_recurloop_llvm_selected_provider "ARCHIVE")
+        message(STATUS "RecurLoop LLVM AUTO: using cached pinned LLVM ${RECURLOOP_LLVM_VERSION}")
+    else()
+        recurloop_probe_system_llvm(_recurloop_system_llvm_config _recurloop_system_llvm_found)
+        if(_recurloop_system_llvm_found)
+            set(_recurloop_llvm_config "${_recurloop_system_llvm_config}")
+            set(_recurloop_llvm_selected_provider "SYSTEM")
+            message(STATUS "RecurLoop LLVM AUTO: pinned archive is not cached; using system LLVM 22.x")
+        else()
+            recurloop_prepare_llvm_archive(_recurloop_llvm_root)
+            set(_recurloop_llvm_selected_provider "ARCHIVE")
+            message(STATUS "RecurLoop LLVM AUTO: no compatible system LLVM; using downloaded pinned LLVM ${RECURLOOP_LLVM_VERSION}")
+        endif()
+    endif()
+elseif(_recurloop_llvm_provider STREQUAL "SYSTEM")
     recurloop_probe_system_llvm(_recurloop_system_llvm_config _recurloop_system_llvm_found)
-    if(_recurloop_system_llvm_found)
-        set(_recurloop_llvm_config "${_recurloop_system_llvm_config}")
-        set(_recurloop_llvm_selected_provider "SYSTEM")
-    elseif(_recurloop_llvm_provider STREQUAL "SYSTEM")
+    if(NOT _recurloop_system_llvm_found)
         message(FATAL_ERROR
             "SYSTEM provider requires LLVM 22.x. Debian/Ubuntu: "
             "apt install llvm-22 llvm-22-dev clang-22 lld-22, or set RECURLOOP_SYSTEM_LLVM_CONFIG.")
     endif()
+    set(_recurloop_llvm_config "${_recurloop_system_llvm_config}")
+    set(_recurloop_llvm_selected_provider "SYSTEM")
+else()
+    recurloop_prepare_llvm_archive(_recurloop_llvm_root)
+    set(_recurloop_llvm_selected_provider "ARCHIVE")
 endif()
 
-if(_recurloop_llvm_config STREQUAL "")
+if(_recurloop_llvm_selected_provider STREQUAL "ARCHIVE")
     recurloop_llvm_archive_metadata(_recurloop_archive_url _recurloop_archive_sha
         _recurloop_archive_id _recurloop_archive_filename)
-    recurloop_prepare_llvm_archive(_recurloop_llvm_root)
     if(WIN32)
         set(_recurloop_llvm_config "${_recurloop_llvm_root}/bin/llvm-config.exe")
     else()
         set(_recurloop_llvm_config "${_recurloop_llvm_root}/bin/llvm-config")
     endif()
-    set(_recurloop_llvm_selected_provider "ARCHIVE")
 endif()
 
 recurloop_llvm_query("${_recurloop_llvm_config}" LLVM_PACKAGE_VERSION --version)

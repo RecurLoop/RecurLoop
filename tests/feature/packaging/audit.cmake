@@ -19,6 +19,17 @@ if(NOT url MATCHES "llvmorg-22\\.1\\.8/LLVM-22\\.1\\.8-Linux-X64\\.tar\\.xz$")
     message(FATAL_ERROR "Pinned official LLVM URL is malformed: ${url}")
 endif()
 
+# AUTO must be able to probe the pinned cache without making unsupported hosts
+# fatal; those hosts can still fall back to a compatible SYSTEM LLVM.
+set(CMAKE_HOST_SYSTEM_NAME CustomOS)
+set(CMAKE_HOST_SYSTEM_PROCESSOR custom64)
+recurloop_try_llvm_archive_metadata(unsupported_url unsupported_sha unsupported_id unsupported_filename unsupported_found)
+if(unsupported_found)
+    message(FATAL_ERROR "Unexpected official LLVM archive for unsupported test host")
+endif()
+set(CMAKE_HOST_SYSTEM_NAME Linux)
+set(CMAKE_HOST_SYSTEM_PROCESSOR x86_64)
+
 set(work "${CMAKE_CURRENT_BINARY_DIR}/package-audit")
 file(MAKE_DIRECTORY "${work}/bin" "${work}/lib")
 file(WRITE "${work}/xml.c" "int xmlFake(void) { return 0; }\n")

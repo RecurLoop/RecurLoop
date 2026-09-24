@@ -25,10 +25,12 @@ make build
 make check
 ```
 
-`make build`/`make check` use `RECURLOOP_LLVM_PROVIDER=AUTO`: an installed LLVM
-22.x is preferred, otherwise the checksum-pinned official LLVM 22.1.8 archive
-is downloaded once below `.cache/deps/`. Debian/Ubuntu developers can install
-`llvm-22 llvm-22-dev clang-22 lld-22` and stay entirely on the SYSTEM path.
+`make build`/`make check` use `RECURLOOP_LLVM_PROVIDER=AUTO`: a valid cached
+checksum-pinned LLVM 22.1.8 archive is preferred, then a compatible installed
+LLVM 22.x, and only when neither is available is the pinned archive downloaded
+below `.cache/deps/`. Debian/Ubuntu developers can force the distro toolchain
+with `RECURLOOP_LLVM_PROVIDER=SYSTEM` after installing
+`llvm-22 llvm-22-dev clang-22 lld-22`.
 Do not add an LLVM source build back to the ordinary CMake/Ninja graph.
 
 C++ debugging uses the `debug` preset (`build/Debug`, LLVM off):
