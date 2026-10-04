@@ -124,7 +124,7 @@ namespace recurloop {
       // Install longer assignment markers before their shorter operator
       // prefixes. The radix lexicon can then represent `+` and `+=` as two
       // independent root phrases while both remain aliasable.
-      for (std::string_view key : {"=", "+=", "-=", "*=", "/=", "%="})
+      for (std::string_view key : {"=", "+=", "-=", "*=", "/=", "%=", "&=", "|=", "^=", "<<=", ">>="})
         LanguageGrammar::ensureMarker(root, key, key == "=" ? lexicon::Phrase{} : root);
 
       for (std::string_view symbol : {")", ","})
@@ -134,31 +134,37 @@ namespace recurloop {
             .setType(lexicon::phrase::type::getData(symbols))
             .save();
 
-      defineOperator(prefix, "+", prefixPositive, 7, ExpressionOperator::None, marker("+"));
-      defineOperator(prefix, "-", prefixNegative, 7, ExpressionOperator::None, marker("-"));
-      defineOperator(prefix, "!", prefixLogicalNot, 7, ExpressionOperator::None, marker("!"));
+      defineOperator(prefix, "+", prefixPositive, 11, ExpressionOperator::None, marker("+"));
+      defineOperator(prefix, "-", prefixNegative, 11, ExpressionOperator::None, marker("-"));
+      defineOperator(prefix, "!", prefixLogicalNot, 11, ExpressionOperator::None, marker("!"));
+      defineOperator(prefix, "~", prefixBitNot, 11, ExpressionOperator::None, marker("~"));
 
       defineOperator(infix, "||", infixLogicalOr, 1, ExpressionOperator::SkipRightWhenTrue, marker("||"));
       defineOperator(infix, "&&", infixLogicalAnd, 2, ExpressionOperator::SkipRightWhenFalse, marker("&&"));
-      defineOperator(infix, "==", infixEqual, 3, ExpressionOperator::None, marker("=="));
-      defineOperator(infix, "!=", infixNotEqual, 3, ExpressionOperator::None, marker("!="));
-      defineOperator(infix, "<", infixLess, 4, ExpressionOperator::None, marker("<"));
-      defineOperator(infix, "<=", infixLessEqual, 4, ExpressionOperator::None, marker("<="));
-      defineOperator(infix, ">", infixGreater, 4, ExpressionOperator::None, marker(">"));
-      defineOperator(infix, ">=", infixGreaterEqual, 4, ExpressionOperator::None, marker(">="));
-      defineOperator(infix, "+", infixAdd, 5, ExpressionOperator::None, marker("+"));
-      defineOperator(infix, "-", infixSubtract, 5, ExpressionOperator::None, marker("-"));
-      defineOperator(infix, "*", infixMultiply, 6, ExpressionOperator::None, marker("*"));
-      defineOperator(infix, "/", infixDivide, 6, ExpressionOperator::None, marker("/"));
-      defineOperator(infix, "%", infixModulo, 6, ExpressionOperator::None, marker("%"));
+      defineOperator(infix, "|", infixBitOr, 3, ExpressionOperator::None, marker("|"));
+      defineOperator(infix, "^", infixBitXor, 4, ExpressionOperator::None, marker("^"));
+      defineOperator(infix, "&", infixBitAnd, 5, ExpressionOperator::None, marker("&"));
+      defineOperator(infix, "==", infixEqual, 6, ExpressionOperator::None, marker("=="));
+      defineOperator(infix, "!=", infixNotEqual, 6, ExpressionOperator::None, marker("!="));
+      defineOperator(infix, "<", infixLess, 7, ExpressionOperator::None, marker("<"));
+      defineOperator(infix, "<=", infixLessEqual, 7, ExpressionOperator::None, marker("<="));
+      defineOperator(infix, ">", infixGreater, 7, ExpressionOperator::None, marker(">"));
+      defineOperator(infix, ">=", infixGreaterEqual, 7, ExpressionOperator::None, marker(">="));
+      defineOperator(infix, "<<", infixShiftLeft, 8, ExpressionOperator::None, marker("<<"));
+      defineOperator(infix, ">>", infixShiftRight, 8, ExpressionOperator::None, marker(">>"));
+      defineOperator(infix, "+", infixAdd, 9, ExpressionOperator::None, marker("+"));
+      defineOperator(infix, "-", infixSubtract, 9, ExpressionOperator::None, marker("-"));
+      defineOperator(infix, "*", infixMultiply, 10, ExpressionOperator::None, marker("*"));
+      defineOperator(infix, "/", infixDivide, 10, ExpressionOperator::None, marker("/"));
+      defineOperator(infix, "%", infixModulo, 10, ExpressionOperator::None, marker("%"));
 
       defineCallable(primary, "(", primaryGroup, marker("("));
       defineCallable(postfix, ":", postfixQualify, marker(":"));
       defineCallable(postfix, "(", postfixCall, marker("("));
       defineCallable(postfix, ".", postfixMember, marker("."));
 
-      for (std::string_view key : {"+=", "-=", "*=", "/=", "%="}) {
-        const std::string operatorKey(1, key.front());
+      for (std::string_view key : {"+=", "-=", "*=", "/=", "%=", "&=", "|=", "^=", "<<=", ">>="}) {
+        const std::string operatorKey(key.substr(0, key.size() - 1));
         LanguageGrammar::find(root, key).setPrototype(LanguageGrammar::find(infix, operatorKey)).save();
       }
 
@@ -189,7 +195,7 @@ namespace recurloop {
         draft.save().store(static_cast<std::uint8_t>(declaration)).save();
       };
       defineAssignment("=", {}, true);
-      for (std::string_view key : {"+", "-", "*", "/", "%"})
+      for (std::string_view key : {"+", "-", "*", "/", "%", "&", "|", "^", "<<", ">>"})
         defineAssignment(std::string(key) + "=", findPhrase(infix, key), false);
     }
 
@@ -294,6 +300,7 @@ namespace recurloop {
     context.actions().define("expressions.operator.prefix-positive", internal::prefixPositive);
     context.actions().define("expressions.operator.prefix-negative", internal::prefixNegative);
     context.actions().define("expressions.operator.prefix-not", internal::prefixLogicalNot);
+    context.actions().define("expressions.operator.prefix-bit-not", internal::prefixBitNot);
     context.actions().define("expressions.operator.infix-or", internal::infixLogicalOr);
     context.actions().define("expressions.operator.infix-and", internal::infixLogicalAnd);
     context.actions().define("expressions.operator.infix-equal", internal::infixEqual);
@@ -307,6 +314,11 @@ namespace recurloop {
     context.actions().define("expressions.operator.infix-multiply", internal::infixMultiply);
     context.actions().define("expressions.operator.infix-divide", internal::infixDivide);
     context.actions().define("expressions.operator.infix-modulo", internal::infixModulo);
+    context.actions().define("expressions.operator.infix-bit-and", internal::infixBitAnd);
+    context.actions().define("expressions.operator.infix-bit-or", internal::infixBitOr);
+    context.actions().define("expressions.operator.infix-bit-xor", internal::infixBitXor);
+    context.actions().define("expressions.operator.infix-shift-left", internal::infixShiftLeft);
+    context.actions().define("expressions.operator.infix-shift-right", internal::infixShiftRight);
     context.actions().define("expressions.builtin.str", internal::builtinStr);
     context.actions().define("expressions.builtin.type", internal::builtinType);
     context.actions().define("expressions.builtin.len", internal::builtinLen);

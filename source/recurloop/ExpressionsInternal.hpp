@@ -65,6 +65,7 @@ namespace recurloop {
     void prefixPositive(context::Context &context, lexicon::Phrase &);
     void prefixNegative(context::Context &context, lexicon::Phrase &);
     void prefixLogicalNot(context::Context &, lexicon::Phrase &);
+    void prefixBitNot(context::Context &, lexicon::Phrase &);
     void infixLogicalOr(context::Context &, lexicon::Phrase &);
     void infixLogicalAnd(context::Context &, lexicon::Phrase &);
     void infixEqual(context::Context &, lexicon::Phrase &);
@@ -78,6 +79,11 @@ namespace recurloop {
     void infixMultiply(context::Context &context, lexicon::Phrase &);
     void infixDivide(context::Context &context, lexicon::Phrase &);
     void infixModulo(context::Context &context, lexicon::Phrase &);
+    void infixBitAnd(context::Context &context, lexicon::Phrase &);
+    void infixBitOr(context::Context &context, lexicon::Phrase &);
+    void infixBitXor(context::Context &context, lexicon::Phrase &);
+    void infixShiftLeft(context::Context &context, lexicon::Phrase &);
+    void infixShiftRight(context::Context &context, lexicon::Phrase &);
 
     void builtinStr(context::Context &context, lexicon::Phrase &);
     void builtinType(context::Context &context, lexicon::Phrase &);

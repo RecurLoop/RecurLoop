@@ -11,6 +11,7 @@ these libraries are imported and combined; it is not their source of truth.
 - `gui/` — source-defined application GUI API: windows, layout, widgets, events, timers and shortcuts. GTK3 is currently a replaceable private backend.
 - `ide.rl` — GUI-independent IDE runtime: clean-process hot reload, Unix-runtime sessions, inotify and persistent terminal models. The concrete IDE UI lives in `examples/07-workflows/ide/*.rl`.
 - `embed/` — generic compile-time binary embedding built on native `bits` literals.
+- `bitwise/` — optional 64-bit bitwise functions implemented with RecurLoop `asm`.
 - `shaders/` — optional GLSL/HLSL -> SPIR-V + native SPIR-V builder.
 - `window/` — optional GLFW window/Vulkan-surface binding.
 - `vulkan/` — optional Vulkan subset used by the hello-triangle workflow.

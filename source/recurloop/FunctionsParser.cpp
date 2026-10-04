@@ -346,7 +346,9 @@ namespace recurloop {
       }
 
       std::unique_ptr<Expression> unary() {
-        lexicon::Phrase intrinsic = LanguageGrammar::resolve(context, intrinsics, lexer.current().text);
+        lexicon::Phrase intrinsic = lexer.current().kind == TokenKind::Symbol
+                                        ? LanguageGrammar::resolve(context, intrinsics, lexer.current().text)
+                                        : lexicon::Phrase{};
         lexicon::Phrase intrinsicMetadata = LanguageGrammar::metadata(intrinsic, sizeof(IntrinsicKind));
         if (!intrinsicMetadata.isNull()) {
           IntrinsicKind kind = IntrinsicKind::Cast;
@@ -362,7 +364,9 @@ namespace recurloop {
             return result;
           }
         }
-        lexicon::Phrase operationPhrase = Expressions::prefixOperator(context, lexer.current().text);
+        lexicon::Phrase operationPhrase = lexer.current().kind == TokenKind::Symbol
+                                              ? Expressions::prefixOperator(context, lexer.current().text)
+                                              : lexicon::Phrase{};
         if (!operationPhrase.isNull()) {
           Token operation = lexer.take();
           auto result = std::make_unique<Expression>();

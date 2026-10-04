@@ -2704,3 +2704,49 @@ phrase empty_equals_empty_empty = "" in lbracket_empty_equals_empty {
   type phrase_types_elaborate
   action host "dictionary.commit"
 }
+
+// Bitwise punctuation is matched through the ordinary phrase dictionary.
+phrase bit_pipe = "|" in root {
+  type phrase_types_data
+}
+
+phrase bit_caret = "^" in root {
+  type phrase_types_data
+}
+
+phrase bit_tilde = "~" in root {
+  type phrase_types_data
+}
+
+phrase bit_shift_left = "<<" in root {
+  type phrase_types_data
+}
+
+phrase bit_shift_right = ">>" in root {
+  type phrase_types_data
+}
+
+phrase bit_and_equals = "&=" in root {
+  prototype expressions_infix_bit_and
+  type phrase_types_data
+}
+
+phrase bit_or_equals = "|=" in root {
+  prototype expressions_infix_bit_or
+  type phrase_types_data
+}
+
+phrase bit_xor_equals = "^=" in root {
+  prototype expressions_infix_bit_xor
+  type phrase_types_data
+}
+
+phrase bit_shift_left_equals = "<<=" in root {
+  prototype expressions_infix_shift_left
+  type phrase_types_data
+}
+
+phrase bit_shift_right_equals = ">>=" in root {
+  prototype expressions_infix_shift_right
+  type phrase_types_data
+}
