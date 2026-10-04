@@ -92,6 +92,27 @@ WSL, open the project in a **Remote - WSL** window and install the extension in
 that WSL environment. See the [extension guide](tools/vscode-recurloop/README.md)
 for executable project configuration and debugging.
 
+The extension uses `recurloop.project.rl` in each workspace folder as the project
+entry. It is executable RecurLoop source: the shared server loads it and
+publishes the resulting environment for project analysis, tasks, and new console
+sessions. Use `include` and engine imports to define the project's source graph
+and language dependencies. Opening a workspace containing this file activates
+the extension and starts its runtime; opening a project console connects a
+separate session to that server.
+
+To expose Tasks and Run and Debug targets, define `VSCode:describe project` to
+print JSON with a `targets` array. Each target specifies a `name`, a `command`
+containing one line of RecurLoop source, and optional target `dependencies`.
+See this repository's [project entry](recurloop.project.rl) for build, run,
+debug, and check targets. Set `recurloop.projectFile` to use another entry path;
+without a project entry, the extension analyzes files independently.
+
+Saved changes to `.rl` and `.rli` files reload and republish the project using
+the module cache under `.cache/recurloop-vscode`. Existing consoles keep their
+session state; run `:refresh` to adopt the published environment. After replacing
+the host or installed libraries, use **RecurLoop: Restart Language Runtime**
+and reopen the consoles.
+
 From a source checkout, build and install the extension with Node.js 22+, npm
 and the VS Code `code` command on `PATH`:
 
