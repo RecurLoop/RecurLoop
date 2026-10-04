@@ -2750,3 +2750,23 @@ phrase bit_shift_right_equals = ">>=" in root {
   prototype expressions_infix_shift_right
   type phrase_types_data
 }
+
+phrase debug_terminal = "terminal" in debug {
+  type phrase_types_scoped_callable
+  action host "debugger.terminal"
+}
+
+phrase debug_stack = "stack" in debug {
+  type phrase_types_scoped_callable
+  action host "debugger.stack"
+}
+
+phrase debug_frame = "frame" in debug {
+  type phrase_types_scoped_callable
+  action host "debugger.frame"
+}
+
+phrase debug_set = "set" in debug {
+  type phrase_types_scoped_callable
+  action host "debugger.set"
+}

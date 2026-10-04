@@ -73,6 +73,10 @@ namespace recurloop {
     static void evaluate(context::Context &context, lexicon::Phrase &invoked);
     static void runExecutable(context::Context &context, lexicon::Phrase &invoked);
     static void locals(context::Context &context, lexicon::Phrase &invoked);
+    static void terminal(context::Context &context, lexicon::Phrase &invoked);
+    static void stack(context::Context &context, lexicon::Phrase &invoked);
+    static void frame(context::Context &context, lexicon::Phrase &invoked);
+    static void set(context::Context &context, lexicon::Phrase &invoked);
     static void registers(context::Context &context, lexicon::Phrase &invoked);
 
   private:

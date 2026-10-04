@@ -13,11 +13,23 @@
         "editor.defaultFormatter": "llvm-vs-code-extensions.vscode-clangd"
     },
     "files.associations": {
-        "*.rl": "swift",
-        "*.rl.example": "swift"
+        "*.rl": "recurloop",
+        "*.rl.example": "recurloop"
     },
     "[swift]": {
         "editor.semanticHighlighting.enabled": false,
         "editor.formatOnSave": false
-    }
+    },
+    "terminal.integrated.profiles.linux": {
+        "RecurLoop": {
+            "extensionIdentifier": "recurloop.recurloop-vscode",
+            "id": "recurloop.console",
+            "title": "RecurLoop"
+        }
+    },
+    "terminal.integrated.defaultProfile.linux": "RecurLoop",
+    "recurloop.terminal.libraries": [
+        "shell",
+        "inferred"
+    ]
 }

@@ -108,6 +108,7 @@ namespace recurloop {
     // build. Cached source images are transparent accelerators: an unchanged
     // branch can be restored from its .rli, while the branch that contains the
     // currently edited source is replayed until that source is reached.
+    std::vector<std::string> processingSources() const;
     bool inspectionRoot(std::string_view source, std::string &root) const noexcept;
     bool inspectionModuleContains(std::string_view module, std::string_view source) const noexcept;
     bool restoreInspectionModule(context::Context &context, std::string_view source) const noexcept;

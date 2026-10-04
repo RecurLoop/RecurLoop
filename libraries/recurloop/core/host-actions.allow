@@ -36,11 +36,15 @@ debugger.delete
 debugger.evaluate
 debugger.executable-run
 debugger.finish
+debugger.frame
 debugger.locals
 debugger.next
 debugger.registers
 debugger.run
+debugger.set
+debugger.stack
 debugger.step
+debugger.terminal
 debugger.trace
 debugger.where
 dictionary.commit

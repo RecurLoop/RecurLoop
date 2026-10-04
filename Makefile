@@ -5,10 +5,11 @@ EXAMPLE ?=
 ARGS ?= --file program.rl.example
 BUNDLE ?= recurloop-work.zip
 PREFIX ?=
+VSCODE_EXTENSION_DIR := tools/vscode-recurloop
 
 RELEASE_BUILD_FILE := build/Release/build.ninja
 
-.PHONY: help build release check test verify libraries graphics-libraries install run list-examples example examples bundle benchmark reconfigure clean package llvm toolchain
+.PHONY: help build release check test verify libraries graphics-libraries install vscode-extension install-vscode-extension run list-examples example examples bundle benchmark reconfigure clean package llvm toolchain
 
 help:
 	@echo 'RecurLoop'
@@ -19,6 +20,7 @@ help:
 	@echo '  make package      Build and verify a complete relocatable release archive'
 	@echo '  make llvm         Download/verify the official LLVM archive into .cache/deps'
 	@echo '  make libraries    Build standard .rli libraries'
+	@echo '  make vscode-extension  Build the VS Code extension (.vsix; Node.js 22+)'
 	@echo '  make graphics-libraries  Build optional shader/window/Vulkan .rli libraries'
 	@echo '  make clean        Remove build directories'
 	@echo
@@ -36,6 +38,7 @@ help:
 	@echo 'Install:'
 	@echo '  sudo make install'
 	@echo '  make install PREFIX=$$HOME/.local'
+	@echo '  make install-vscode-extension  Build and install the VS Code extension'
 	@echo
 	@echo 'Other:'
 	@echo '  make reconfigure  Reconfigure the Release build'
@@ -122,6 +125,17 @@ install:
 	@echo '[install] install'
 	@DESTDIR="$(DESTDIR)" cmake --install build/Release $(if $(PREFIX),--prefix "$(PREFIX)")
 	@echo '[install] done'
+
+# Read the package version at recipe execution, keeping Node optional for host builds.
+vscode-extension:
+	@echo '[vscode] install locked build dependencies'
+	@npm ci --prefix "$(VSCODE_EXTENSION_DIR)"
+	@npm run check --prefix "$(VSCODE_EXTENSION_DIR)"
+	@npm run package --prefix "$(VSCODE_EXTENSION_DIR)"
+
+install-vscode-extension: vscode-extension
+	@code --install-extension "$(VSCODE_EXTENSION_DIR)/recurloop-vscode-$$(node -p "require('./$(VSCODE_EXTENSION_DIR)/package.json').version").vsix" --force
+	@echo '[vscode] installed; reload the VS Code window'
 
 run: build
 	@"$(RECURLOOP)" $(ARGS)

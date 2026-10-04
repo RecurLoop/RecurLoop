@@ -1,0 +1,238 @@
+{
+  "name": "recurloop-vscode",
+  "displayName": "RecurLoop",
+  "description": "Language intelligence and debugging for RecurLoop.",
+  "version": "0.1.0",
+  "publisher": "recurloop",
+  "license": "Apache-2.0",
+  "engines": {
+    "vscode": "^1.96.0"
+  },
+  "categories": [
+    "Programming Languages",
+    "Debuggers"
+  ],
+  "keywords": [
+    "recurloop",
+    "language",
+    "debugger",
+    "intellisense"
+  ],
+  "extensionKind": [
+    "workspace"
+  ],
+  "activationEvents": [
+    "onLanguage:recurloop",
+    "onDebug:recurloop",
+    "workspaceContains:recurloop.project.rl",
+    "onTaskType:recurloop",
+    "onTerminalProfile:recurloop.console"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "languages": [
+      {
+        "id": "recurloop",
+        "aliases": [
+          "RecurLoop",
+          "recurloop"
+        ],
+        "extensions": [
+          ".rl",
+          ".rl.example"
+        ],
+        "filenames": [
+          "program.rl.example"
+        ],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "recurloop",
+        "scopeName": "source.recurloop",
+        "path": "./syntaxes/recurloop.tmLanguage.json"
+      }
+    ],
+    "snippets": [
+      {
+        "language": "recurloop",
+        "path": "./snippets/recurloop.json"
+      }
+    ],
+    "commands": [
+      {
+        "command": "recurloop.runCurrentFile",
+        "title": "RecurLoop: Run Current File"
+      },
+      {
+        "command": "recurloop.debugCurrentFile",
+        "title": "RecurLoop: Debug Current File"
+      },
+      {
+        "command": "recurloop.restartLanguageRuntime",
+        "title": "RecurLoop: Restart Language Runtime"
+      },
+      {
+        "command": "recurloop.showRuntimeInfo",
+        "title": "RecurLoop: Show Runtime Info"
+      },
+      {
+        "command": "recurloop.openConsole",
+        "title": "RecurLoop: Open Project Console"
+      }
+    ],
+    "configuration": {
+      "title": "RecurLoop",
+      "properties": {
+        "recurloop.executablePath": {
+          "type": "string",
+          "default": "${workspaceFolder}/build/Release/bin/recurloop",
+          "description": "Path to the RecurLoop executable. ${workspaceFolder} is expanded by the extension."
+        },
+        "recurloop.analysis.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Use the RecurLoop runtime inspection protocol for diagnostics, hover, completion and semantic colors."
+        },
+        "recurloop.analysis.debounceMs": {
+          "type": "number",
+          "default": 180,
+          "minimum": 0,
+          "maximum": 5000,
+          "description": "Delay before re-inspecting a changed document."
+        },
+        "recurloop.analysis.timeoutMs": {
+          "type": "number",
+          "default": 5000,
+          "minimum": 500,
+          "maximum": 30000,
+          "description": "Timeout for a semantic inspection request."
+        },
+        "recurloop.projectFile": {
+          "type": "string",
+          "default": "recurloop.project.rl",
+          "description": "Executable RecurLoop project entry, relative to the workspace folder."
+        },
+        "recurloop.terminal.libraries": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "uniqueItems": true,
+          "default": [
+            "shell",
+            "inferred"
+          ],
+          "description": "Libraries automatically imported into the shared project runtime and its terminal sessions, in order. Changes restart the runtime."
+        }
+      }
+    },
+    "debuggers": [
+      {
+        "type": "recurloop",
+        "label": "RecurLoop",
+        "languages": [
+          "recurloop"
+        ],
+        "configurationAttributes": {
+          "launch": {
+            "required": [],
+            "properties": {
+              "program": {
+                "type": "string",
+                "description": "RecurLoop source file to debug."
+              },
+              "cwd": {
+                "type": "string",
+                "description": "Working directory for the debuggee."
+              },
+              "recurloop": {
+                "type": "string",
+                "description": "Optional path to the RecurLoop executable; overrides recurloop.executablePath."
+              },
+              "stopOnEntry": {
+                "type": "boolean",
+                "default": false,
+                "description": "Stop on the first likely executable source line."
+              },
+              "target": {
+                "type": "string",
+                "description": "Project target returned by VSCode:describe project; accepts program as an alternative."
+              },
+              "executable": {
+                "type": "string",
+                "description": "Native executable emitted with emit executable debug; application IO uses a separate terminal."
+              }
+            }
+          }
+        },
+        "initialConfigurations": [
+          {
+            "type": "recurloop",
+            "request": "launch",
+            "name": "RecurLoop: Project target",
+            "target": "run"
+          },
+          {
+            "type": "recurloop",
+            "request": "launch",
+            "name": "RecurLoop: Debug current file",
+            "program": "${file}",
+            "cwd": "${workspaceFolder}"
+          }
+        ]
+      }
+    ],
+    "taskDefinitions": [
+      {
+        "type": "recurloop",
+        "required": [
+          "target"
+        ],
+        "properties": {
+          "target": {
+            "type": "string",
+            "description": "Target name returned by VSCode:describe project in the project entry."
+          }
+        }
+      }
+    ],
+    "terminal": {
+      "profiles": [
+        {
+          "id": "recurloop.console",
+          "title": "RecurLoop",
+          "icon": "terminal"
+        }
+      ]
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "check": "tsc -p ./ --noEmit",
+    "package": "vsce package --no-dependencies",
+    "publish": "vsce publish --no-dependencies",
+    "test": "npm run compile && node tests/runtime.cjs && node tests/editor.cjs"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.0",
+    "@types/vscode": "^1.96.0",
+    "@vscode/vsce": "^3.6.1",
+    "typescript": "^5.8.3"
+  },
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": false,
+      "description": "Project source executes in the RecurLoop runtime."
+    }
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/RecurLoop/RecurLoop.git",
+    "directory": "tools/vscode-recurloop"
+  }
+}

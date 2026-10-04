@@ -350,6 +350,7 @@ namespace recurloop {
             (void)stamp;
             dependencies.push_back(path);
           }
+          if (dependencies.empty()) dependencies = project_->processingSources();
           std::sort(dependencies.begin(), dependencies.end());
           for (const std::string &path : dependencies) *requestOut << path << '\n';
           break;

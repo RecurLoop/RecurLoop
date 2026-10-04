@@ -5,7 +5,9 @@
             "type": "cmake",
             "label": "Build Recurloop",
             "command": "build",
-            "targets": ["Recurloop"],
+            "targets": [
+                "Recurloop"
+            ],
             "group": {
                 "kind": "build",
                 "isDefault": true
@@ -15,6 +17,45 @@
             "type": "cmake",
             "label": "Run all tests",
             "command": "test",
+            "problemMatcher": []
+        },
+        {
+            "label": "Build RecurLoop VS Code Extension",
+            "type": "shell",
+            "command": "npm run compile",
+            "options": {
+                "cwd": "${workspaceFolder}/tools/vscode-recurloop"
+            },
+            "problemMatcher": [
+                "$tsc"
+            ],
+            "presentation": {
+                "reveal": "silent",
+                "panel": "dedicated"
+            }
+        },
+        {
+            "type": "recurloop",
+            "target": "build-release",
+            "label": "RecurLoop: build-release",
+            "problemMatcher": []
+        },
+        {
+            "type": "recurloop",
+            "target": "build-debug",
+            "label": "RecurLoop: build-debug",
+            "problemMatcher": []
+        },
+        {
+            "type": "recurloop",
+            "target": "run",
+            "label": "RecurLoop: run",
+            "problemMatcher": []
+        },
+        {
+            "type": "recurloop",
+            "target": "check",
+            "label": "RecurLoop: check",
             "problemMatcher": []
         }
     ]

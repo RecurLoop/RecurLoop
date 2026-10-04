@@ -1,4 +1,5 @@
 #include <recurloop/ContextApi.hpp>
+#include <recurloop/ProcessControl.hpp>
 #include <recurloop/BitString.hpp>
 #include <recurloop/Blocks.hpp>
 #include <recurloop/Expressions.hpp>
@@ -805,6 +806,16 @@ namespace recurloop {
         }
         return total;
       });
+    }
+
+    extern "C" std::uint64_t contextProcessActive() noexcept {
+      return ProcessControl::active();
+    }
+    extern "C" void contextProcessTrack(std::uint64_t pid) {
+      ProcessControl::track(static_cast<pid_t>(pid));
+    }
+    extern "C" void contextProcessRelease(std::uint64_t pid) {
+      ProcessControl::release(static_cast<pid_t>(pid));
     }
 
     extern "C" std::uint64_t contextIoWrite(context::Context *context, const std::uint8_t *text) noexcept {
@@ -2161,7 +2172,13 @@ namespace recurloop {
                         reinterpret_cast<std::uintptr_t>(&contextDiagnosticErrorAt));
     declareHostFunction(context, ActionBindRoot, "context:actions:bind-root", {contextPointer, u64}, u64,
                         reinterpret_cast<std::uintptr_t>(&contextActionsBindRoot));
-    declareHostFunction(context, IoWrite, "context:io:write", {contextPointer, bytePointer}, u64,
+    declareHostFunction(context, "context:process:active", "context:process:active", {}, u64,
+                          reinterpret_cast<std::uintptr_t>(&contextProcessActive));
+      declareHostFunction(context, "context:process:track", "context:process:track", {u64}, voidType,
+                          reinterpret_cast<std::uintptr_t>(&contextProcessTrack));
+      declareHostFunction(context, "context:process:release", "context:process:release", {u64}, voidType,
+                          reinterpret_cast<std::uintptr_t>(&contextProcessRelease));
+      declareHostFunction(context, IoWrite, "context:io:write", {contextPointer, bytePointer}, u64,
                         reinterpret_cast<std::uintptr_t>(&contextIoWrite));
     declareHostFunction(context, MemoryAllocate, "context:memory:allocate", {contextPointer, u64}, bytePointer,
                         reinterpret_cast<std::uintptr_t>(&contextMemoryAllocate));

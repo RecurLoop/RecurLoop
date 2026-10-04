@@ -10,6 +10,7 @@
 #include <utilities/Exception.hpp>
 
 #include <elf.h>
+#include <fcntl.h>
 #include <sys/ptrace.h>
 #include <sys/types.h>
 #include <sys/user.h>
@@ -69,11 +70,14 @@ namespace recurloop {
       std::optional<std::size_t> currentPoint;
       int pendingSignal = 0;
       std::uintptr_t instruction = 0;
+      std::uintptr_t selectedFrame = 0;
+      std::optional<std::size_t> selectedPoint;
     };
 
     struct DebugRuntime {
       DebuggerState state;
       ExecutableState executable;
+      std::string terminal;
     };
 
     struct DebuggerStates {
@@ -196,7 +200,9 @@ namespace recurloop {
 
     bool samePath(std::string_view left, std::string_view right) {
       if (left == right) return true;
-      return std::filesystem::path(left).filename() == std::filesystem::path(right).filename();
+      const std::filesystem::path a(left), b(right);
+      if (!a.has_parent_path() || !b.has_parent_path()) return a.filename() == b.filename();
+      return std::filesystem::absolute(a).lexically_normal() == std::filesystem::absolute(b).lexically_normal();
     }
 
     std::string hexText(std::string_view value) {
@@ -362,17 +368,20 @@ namespace recurloop {
     }
 
     void printExecutablePoint(context::Context &context, std::string_view reason) {
-      const ExecutableState &target = executableState(context);
+      ExecutableState &target = executableState(context);
+      target.selectedFrame = 0;
+      target.selectedPoint.reset();
       if (!target.currentPoint) {
         *context.io.out << "[debug] executable " << reason << " " << target.path.string() << " rip 0x" << std::hex
                         << target.instruction << std::dec << "\n";
+        if (reason != "at") *context.io.out << "[debug-event]\tstop\t" << reason << "\t\t0\t0\t\t\n";
         return;
       }
       const compiler::DebugPoint &point = target.points[*target.currentPoint];
       const std::string_view path = point.path.empty() ? std::string_view{"<input>"} : std::string_view{point.path};
-      *context.io.out << "[debug] " << reason << " " << path << ":" << point.line << ":" << point.column
-                      << " phrase \"" << point.phrase << "\" function \"" << point.function << "\" rip 0x"
-                      << std::hex << point.address << std::dec << "\n";
+      *context.io.out << "[debug] " << reason << " " << path << ":" << point.line << ":" << point.column << " phrase \""
+                      << point.phrase << "\" function \"" << point.function << "\" rip 0x" << std::hex << point.address
+                      << std::dec << "\n";
       // Stable machine-readable execution-stop event for debugger clients. Text
       // fields are hex encoded so paths/phrases never need delimiter escaping.
       // `where` is an inspection command, not a new execution stop.
@@ -563,18 +572,20 @@ namespace recurloop {
 
     const compiler::DebugPoint &currentExecutablePoint(context::Context &context) {
       const ExecutableState &target = executableState(context);
-      if (target.pid <= 0 || !target.currentPoint) THROW(, "executable is not stopped at a RecurLoop statement")
-      return target.points[*target.currentPoint];
+      const auto point = target.selectedPoint ? target.selectedPoint : target.currentPoint;
+      if (target.pid <= 0 || !point) THROW(, "executable is not stopped at a RecurLoop statement")
+      return target.points[*point];
     }
 
     std::uint64_t readLocalValue(const ExecutableState &target, const compiler::DebugLocal &local) {
       if (local.size == 0 || local.size > sizeof(long))
         THROW(, "debugger cannot read local '" << local.name << "' with size " << local.size)
       const user_regs_struct registers = registersOf(target);
-      if (registers.rbp < local.frameOffset) THROW(, "invalid frame offset for local '" << local.name << "'")
+      const std::uintptr_t base = target.selectedFrame ? target.selectedFrame : registers.rbp;
+      if (base < local.frameOffset) THROW(, "invalid frame offset for local '" << local.name << "'")
       errno = 0;
       const long word =
-          ptrace(PTRACE_PEEKDATA, target.pid, reinterpret_cast<void *>(registers.rbp - local.frameOffset), nullptr);
+          ptrace(PTRACE_PEEKDATA, target.pid, reinterpret_cast<void *>(base - local.frameOffset), nullptr);
       if (word == -1 && errno != 0) ptraceFailure("read local");
       std::uint64_t value = static_cast<std::uint64_t>(word);
       if (local.size < sizeof(value)) value &= (std::uint64_t{1} << (local.size * 8)) - 1;
@@ -582,6 +593,10 @@ namespace recurloop {
     }
 
     void printLocal(context::Context &context, const compiler::DebugLocal &local) {
+      if (local.size == 0 || local.size > sizeof(long)) {
+        *context.io.out << "[debug] " << local.name << ":" << local.type << " = <" << local.size << " bytes>\n";
+        return;
+      }
       const std::uint64_t bits = readLocalValue(executableState(context), local);
       *context.io.out << "[debug] " << local.name << ":" << local.type << " = ";
       const auto kind = static_cast<compiler::TypeKind>(local.kind);
@@ -602,6 +617,73 @@ namespace recurloop {
         *context.io.out << bits;
       }
       *context.io.out << "\n";
+    }
+
+    struct NativeFrame {
+      std::uintptr_t base;
+      std::size_t point;
+    };
+
+    std::vector<NativeFrame> nativeFrames(const ExecutableState &target) {
+      std::vector<NativeFrame> frames;
+      if (target.pid <= 0) return frames;
+      auto registers = registersOf(target);
+      if (target.currentPoint) frames.push_back({registers.rbp, *target.currentPoint});
+      std::uintptr_t base = registers.rbp;
+      for (unsigned depth = 0; base && depth < 128; ++depth) {
+        errno = 0;
+        const long parent = ptrace(PTRACE_PEEKDATA, target.pid, reinterpret_cast<void *>(base), nullptr);
+        if (parent == -1 && errno) break;
+        errno = 0;
+        const long address =
+            ptrace(PTRACE_PEEKDATA, target.pid, reinterpret_cast<void *>(base + sizeof(long)), nullptr);
+        if (address == -1 && errno) break;
+        if (static_cast<std::uintptr_t>(parent) <= base ||
+            static_cast<std::uintptr_t>(parent) - base > 16 * 1024 * 1024)
+          break;
+        base = static_cast<std::uintptr_t>(parent);
+        const auto next = std::lower_bound(
+            target.points.begin(), target.points.end(), static_cast<std::uintptr_t>(address),
+            [](const compiler::DebugPoint &point, std::uintptr_t value) { return point.address < value; });
+        if (next == target.points.begin()) break;
+        const auto point = std::prev(next);
+        // Do not mislabel a libc/runtime frame using the final application point.
+        if (static_cast<std::uintptr_t>(address) - point->address > 4096) break;
+        frames.push_back({base, static_cast<std::size_t>(point - target.points.begin())});
+      }
+      return frames;
+    }
+
+    context::Value evaluateNative(context::Context &context, const std::string &expression) {
+      auto values = context.values();
+      values.pushScope();
+      try {
+        for (const auto &local : currentExecutablePoint(context).locals) {
+          if (local.size == 0 || local.size > sizeof(long)) continue;
+          const auto bits = readLocalValue(executableState(context), local);
+          const auto kind = static_cast<compiler::TypeKind>(local.kind);
+          if (kind == compiler::TypeKind::FloatingPoint && local.size == 4)
+            values.define(local.name,
+                          context::Value(static_cast<double>(std::bit_cast<float>(static_cast<std::uint32_t>(bits)))));
+          else if (kind == compiler::TypeKind::FloatingPoint && local.size == 8)
+            values.define(local.name, context::Value(std::bit_cast<double>(bits)));
+          else if (local.type == "bool")
+            values.define(local.name, context::Value(bits != 0));
+          else {
+            const unsigned width = local.size * 8;
+            const auto value = local.signedValue && width < 64
+                                   ? static_cast<std::int64_t>(bits << (64 - width)) >> (64 - width)
+                                   : static_cast<std::int64_t>(bits);
+            values.define(local.name, context::Value(value));
+          }
+        }
+        auto result = Expressions::evaluate(context, expression);
+        values.popScope();
+        return result;
+      } catch (...) {
+        values.popScope();
+        throw;
+      }
     }
 
     void terminateExecutable(ExecutableState &target) {
@@ -691,6 +773,10 @@ namespace recurloop {
     actions.define("debugger.executable-run", runExecutable);
     actions.define("debugger.locals", locals);
     actions.define("debugger.registers", registers);
+    actions.define("debugger.terminal", terminal);
+    actions.define("debugger.stack", stack);
+    actions.define("debugger.frame", frame);
+    actions.define("debugger.set", set);
   }
 
   void Debugger::setup(context::Context &context, lexicon::Phrase debug) {
@@ -934,11 +1020,8 @@ namespace recurloop {
     const std::string expression = readLine(context);
     if (expression.empty()) THROW(, "debug eval requires an expression")
     if (state(context).target == DebuggerState::Target::Executable) {
-      const compiler::DebugPoint &point = currentExecutablePoint(context);
-      const auto found = std::find_if(point.locals.begin(), point.locals.end(),
-                                      [&](const compiler::DebugLocal &local) { return local.name == expression; });
-      if (found == point.locals.end()) THROW(, "local '" << expression << "' is not visible here")
-      printLocal(context, *found);
+      const auto value = evaluateNative(context, expression);
+      *context.io.out << "[debug] " << value.typeName() << " " << value.format() << "\n";
       return;
     }
     const context::Value value = Expressions::evaluate(context, expression);
@@ -969,6 +1052,14 @@ namespace recurloop {
     const pid_t pid = fork();
     if (pid == -1) THROW(, "debug executable run cannot fork: " << std::strerror(errno))
     if (pid == 0) {
+      const auto &terminal = debugRuntime(context).terminal;
+      if (!terminal.empty()) {
+        const int fd = open(terminal.c_str(), O_RDWR | O_NOCTTY);
+        if (fd < 0) _exit(125);
+        for (int standard = 0; standard < 3; ++standard)
+          if (dup2(fd, standard) < 0) _exit(125);
+        if (fd > 2) close(fd);
+      }
       if (ptrace(PTRACE_TRACEME, 0, nullptr, nullptr) == -1) _exit(126);
       execl(path.c_str(), path.c_str(), static_cast<char *>(nullptr));
       _exit(127);
@@ -1024,6 +1115,70 @@ namespace recurloop {
       return;
     }
     for (const compiler::DebugLocal &local : point.locals) printLocal(context, local);
+  }
+
+  void Debugger::terminal(context::Context &context, lexicon::Phrase &) {
+    const auto path = stringArgument(context, "debug terminal");
+    const int fd = open(path.c_str(), O_RDWR | O_NOCTTY);
+    if (fd < 0 || !isatty(fd)) {
+      if (fd >= 0) close(fd);
+      THROW(, "debug terminal requires a writable TTY")
+    }
+    close(fd);
+    debugRuntime(context).terminal = path;
+  }
+
+  void Debugger::stack(context::Context &context, lexicon::Phrase &) {
+    const auto &target = executableState(context);
+    const auto frames = nativeFrames(target);
+    for (std::size_t id = 0; id < frames.size(); ++id) {
+      const auto &point = target.points[frames[id].point];
+      *context.io.out << "[debug-frame]\t" << id << "\t" << hexText(point.path) << "\t" << point.line << "\t"
+                      << point.column << "\t" << hexText(point.function) << "\n";
+    }
+  }
+
+  void Debugger::frame(context::Context &context, lexicon::Phrase &) {
+    const auto text = trim(readLine(context));
+    std::size_t id = 0;
+    const auto parsed = std::from_chars(text.data(), text.data() + text.size(), id);
+    auto &target = executableState(context);
+    const auto frames = nativeFrames(target);
+    if (parsed.ec != std::errc{} || parsed.ptr != text.data() + text.size() || id >= frames.size())
+      THROW(, "invalid debug frame")
+    target.selectedFrame = frames[id].base;
+    target.selectedPoint = frames[id].point;
+  }
+
+  void Debugger::set(context::Context &context, lexicon::Phrase &) {
+    const auto text = readLine(context);
+    const auto separator = text.find('=');
+    if (separator == std::string::npos) THROW(, "debug set requires name = expression")
+    const auto name = trim(text.substr(0, separator));
+    const auto &point = currentExecutablePoint(context);
+    const auto found =
+        std::find_if(point.locals.begin(), point.locals.end(), [&](const auto &local) { return local.name == name; });
+    if (found == point.locals.end() || found->size == 0 || found->size > sizeof(long)) THROW(, "local is not writable")
+    const auto value = evaluateNative(context, text.substr(separator + 1));
+    std::uint64_t bits;
+    if (static_cast<compiler::TypeKind>(found->kind) == compiler::TypeKind::FloatingPoint)
+      bits = found->size == 4 ? std::bit_cast<std::uint32_t>(static_cast<float>(value.asReal()))
+                              : std::bit_cast<std::uint64_t>(value.asReal());
+    else
+      bits = value.isBoolean() ? value.asBoolean() : value.asInteger();
+    auto &target = executableState(context);
+    const auto base = target.selectedFrame ? target.selectedFrame : registersOf(target).rbp;
+    if (base < found->frameOffset) THROW(, "invalid local frame offset")
+    const auto address = base - found->frameOffset;
+    errno = 0;
+    auto word =
+        static_cast<std::uint64_t>(ptrace(PTRACE_PEEKDATA, target.pid, reinterpret_cast<void *>(address), nullptr));
+    if (errno) ptraceFailure("read local for assignment");
+    const auto mask = found->size == 8 ? ~std::uint64_t{0} : (std::uint64_t{1} << (found->size * 8)) - 1;
+    word = (word & ~mask) | (bits & mask);
+    if (ptrace(PTRACE_POKEDATA, target.pid, reinterpret_cast<void *>(address), reinterpret_cast<void *>(word)) == -1)
+      ptraceFailure("write local");
+    printLocal(context, *found);
   }
 
   void Debugger::registers(context::Context &context, lexicon::Phrase &) {

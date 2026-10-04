@@ -51,6 +51,60 @@ recurloop --version
 
 The installer resolves the immutable versioned asset for the latest GitHub Release, verifies its published SHA-256 checksum and the package-internal file manifest before installation.
 
+## VS Code extension
+
+Download `recurloop-vscode-*.vsix` from the assets of the
+[latest GitHub Release](https://github.com/RecurLoop/RecurLoop/releases/latest).
+In VS Code, open **Extensions**, choose **... → Install from VSIX...**, select
+that downloaded file, then reload the window. You can also install it from the
+command line (use the filename you downloaded):
+
+```bash
+code --install-extension ./recurloop-vscode-0.1.0.vsix --force
+```
+
+For a command-line download of the latest release with GitHub CLI:
+
+```bash
+extension_dir="$(mktemp -d)"
+gh release download --repo RecurLoop/RecurLoop \
+  --pattern 'recurloop-vscode-*.vsix' --dir "$extension_dir"
+code --install-extension "$extension_dir"/recurloop-vscode-*.vsix --force
+```
+
+Install the runtime using the instructions above, and select it in VS Code's
+user or workspace settings:
+
+```json
+{
+  "recurloop.executablePath": "recurloop",
+  "recurloop.terminal.libraries": ["shell", "inferred"]
+}
+```
+
+The extension provides semantic highlighting, project targets in Tasks and Run
+and Debug, and a RecurLoop terminal. The project `debug` target launches the
+emitted Debug executable with application IO in its own terminal, while Debug
+Console handles debugger messages and expressions. It provides breakpoints,
+stepping, a call stack, local variables and Watches. Go to Definition, Find
+References, type/implementation navigation and Rename use the project server. The runtime currently runs on Linux; for
+WSL, open the project in a **Remote - WSL** window and install the extension in
+that WSL environment. See the [extension guide](tools/vscode-recurloop/README.md)
+for executable project configuration and debugging.
+
+From a source checkout, build and install the extension with Node.js 22+, npm
+and the VS Code `code` command on `PATH`:
+
+```bash
+make install-vscode-extension
+```
+
+`make vscode-extension` builds the VSIX without installing it. GitHub CI builds
+and packages the extension alongside the runtime; tagged releases publish the
+VSIX and its SHA-256 checksum as separate release assets. The extension version
+comes from `tools/vscode-recurloop/package.json` and is independent of the host
+release version.
+
 ## First program
 
 Create `hello.rl`:

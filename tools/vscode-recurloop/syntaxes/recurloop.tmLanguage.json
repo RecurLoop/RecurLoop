@@ -1,0 +1,74 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "RecurLoop",
+  "scopeName": "source.recurloop",
+  "patterns": [
+    {"include": "#comments"},
+    {"include": "#strings"},
+    {"include": "#numbers"},
+    {"include": "#declarations"},
+    {"include": "#keywords"},
+    {"include": "#types"},
+    {"include": "#operators"}
+  ],
+  "repository": {
+    "comments": {
+      "patterns": [
+        {"name": "comment.line.double-slash.recurloop", "begin": "//", "end": "$"},
+        {"name": "comment.block.recurloop", "begin": "/\\*", "end": "\\*/"}
+      ]
+    },
+    "strings": {
+      "name": "string.quoted.double.recurloop",
+      "begin": "\"",
+      "end": "\"",
+      "patterns": [
+        {"name": "constant.character.escape.recurloop", "match": "\\\\(?:[\\\\\"nrt0]|x[0-9A-Fa-f]{2}|u[0-9A-Fa-f]{4})"}
+      ]
+    },
+    "numbers": {
+      "patterns": [
+        {"name": "constant.numeric.hex.recurloop", "match": "\\b0[xX][0-9A-Fa-f]+\\b"},
+        {"name": "constant.numeric.float.recurloop", "match": "\\b[0-9]+\\.[0-9]+(?:[eE][+-]?[0-9]+)?\\b"},
+        {"name": "constant.numeric.integer.recurloop", "match": "\\b[0-9]+\\b"}
+      ]
+    },
+    "declarations": {
+      "patterns": [
+        {
+          "match": "\\b(fn)\\s+([A-Za-z_][A-Za-z0-9_:]*)",
+          "captures": {
+            "1": {"name": "storage.type.function.recurloop"},
+            "2": {"name": "entity.name.function.recurloop"}
+          }
+        },
+        {
+          "match": "\\b(record|type|dictionary)\\s+([A-Za-z_][A-Za-z0-9_:]*)",
+          "captures": {
+            "1": {"name": "storage.type.recurloop"},
+            "2": {"name": "entity.name.type.recurloop"}
+          }
+        },
+        {
+          "match": "\\b(let|var|const)\\s+([A-Za-z_][A-Za-z0-9_:]*)",
+          "captures": {
+            "1": {"name": "storage.modifier.recurloop"},
+            "2": {"name": "variable.other.definition.recurloop"}
+          }
+        }
+      ]
+    },
+    "keywords": {
+      "name": "keyword.control.recurloop",
+      "match": "\\b(?:let|var|const|fn|record|type|dictionary|phrase|in|return|if|else|while|for|break|continue|module|engine|import|include|emit|executable|extern|symbol|params|result|abi|imported|true|false|null)\\b"
+    },
+    "types": {
+      "name": "storage.type.builtin.recurloop",
+      "match": "\\b(?:void|bool|u8|u16|u32|u64|i8|i16|i32|i64|f32|f64)\\b"
+    },
+    "operators": {
+      "name": "keyword.operator.recurloop",
+      "match": "(?:->|==|!=|<=|>=|&&|\\|\\||\\+=|-=|\\*=|/=|%=|<<|>>|[+\\-*/%<>=!&|^~])"
+    }
+  }
+}

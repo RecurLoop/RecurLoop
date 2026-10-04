@@ -7,7 +7,10 @@
             "name": "Recurloop: program.rl.example",
             "program": "${command:cmake.launchTargetPath}",
             "cwd": "${workspaceFolder}",
-            "args": ["--file", "program.rl.example"],
+            "args": [
+                "--file",
+                "program.rl.example"
+            ],
             "preLaunchTask": "Build Recurloop"
         },
         {
@@ -18,6 +21,31 @@
             "cwd": "${workspaceFolder}",
             "args": [],
             "preLaunchTask": "Build Recurloop"
+        },
+        {
+            "name": "RecurLoop: Extension Development Host",
+            "type": "extensionHost",
+            "request": "launch",
+            "args": [
+                "--extensionDevelopmentPath=${workspaceFolder}/tools/vscode-recurloop"
+            ],
+            "outFiles": [
+                "${workspaceFolder}/tools/vscode-recurloop/out/**/*.js"
+            ],
+            "preLaunchTask": "Build RecurLoop VS Code Extension"
+        },
+        {
+            "type": "recurloop",
+            "request": "launch",
+            "name": "RecurLoop: Project run",
+            "target": "run",
+            "noDebug": true
+        },
+        {
+            "type": "recurloop",
+            "request": "launch",
+            "name": "RecurLoop: Project debug",
+            "target": "debug"
         }
     ]
 }

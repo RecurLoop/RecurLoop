@@ -1,0 +1,25 @@
+{
+  "Function": {
+    "prefix": "fn",
+    "body": [
+      "fn ${1:name}(${2}) -> ${3:void} {",
+      "    ${0}",
+      "}"
+    ],
+    "description": "RecurLoop function"
+  },
+  "Record": {
+    "prefix": "record",
+    "body": [
+      "record ${1:Name} {",
+      "    ${2:field}:${3:i64}",
+      "}"
+    ],
+    "description": "RecurLoop record"
+  },
+  "Variable": {
+    "prefix": "var",
+    "body": "var ${1:name}:${2:i64} = ${0:0}",
+    "description": "Typed mutable variable"
+  }
+}

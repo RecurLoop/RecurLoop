@@ -1,4 +1,8 @@
 #include <recurloop/Server.hpp>
+#include <recurloop/ProcessControl.hpp>
+#include <poll.h>
+#include <future>
+#include <chrono>
 #include <utilities/LineEditor.hpp>
 #include <utilities/Prompt.hpp>
 
@@ -19,7 +23,7 @@ namespace recurloop {
     class IgnoreInteractiveInterrupt {
     public:
       IgnoreInteractiveInterrupt() {
-        struct sigaction ignored {};
+        struct sigaction ignored{};
         ignored.sa_handler = SIG_IGN;
         sigemptyset(&ignored.sa_mask);
         active_ = sigaction(SIGINT, &ignored, &previous_) == 0;
@@ -30,7 +34,7 @@ namespace recurloop {
       }
 
     private:
-      struct sigaction previous_ {};
+      struct sigaction previous_{};
       bool active_ = false;
     };
 
@@ -126,13 +130,14 @@ namespace recurloop {
                  line.starts_with(inspectFilePrefix) || line.starts_with(traceFilePrefix)) {
         const bool standalone = line.starts_with(inspectFilePrefix) || line.starts_with(traceFilePrefix);
         const bool trace = line.starts_with(tracePrefix) || line.starts_with(traceFilePrefix);
-        const std::string_view prefix = standalone ? (trace ? traceFilePrefix : inspectFilePrefix)
-                                                   : (trace ? tracePrefix : inspectPrefix);
+        const std::string_view prefix =
+            standalone ? (trace ? traceFilePrefix : inspectFilePrefix) : (trace ? tracePrefix : inspectPrefix);
         const std::string_view payload = line.substr(prefix.size());
         const std::size_t separator = payload.find('\t');
-        if (separator == std::string_view::npos) return {"inspect requires path and source payloads\nstatus=1\n", false, 1};
-        response = session.inspect(unhex(payload.substr(separator + 1)), unhex(payload.substr(0, separator)),
-                                   trace, standalone);
+        if (separator == std::string_view::npos)
+          return {"inspect requires path and source payloads\nstatus=1\n", false, 1};
+        response = session.inspect(unhex(payload.substr(separator + 1)), unhex(payload.substr(0, separator)), trace,
+                                   standalone);
       } else {
         // Line readers strip Enter's newline. Preserve that source boundary so
         // line-oriented language grammars can finish and execute the command.
@@ -229,6 +234,7 @@ namespace recurloop {
 
     char chunk[4096];
     bool done = false;
+    bool interruptBuffered = false;
     while (!done) {
       const ssize_t bytes = recv(fd, chunk, sizeof(chunk), 0);
       if (bytes < 0) {
@@ -236,7 +242,13 @@ namespace recurloop {
         break;
       }
       if (bytes == 0) break;
-      buffer.append(chunk, static_cast<std::size_t>(bytes));
+      for (ssize_t i = 0; i < bytes; ++i) {
+        if (chunk[i] == '\x03') {
+          if (buffer.find('\n') != std::string::npos) interruptBuffered = true;
+        } else {
+          buffer.push_back(chunk[i]);
+        }
+      }
 
       while (true) {
         const std::size_t newline = buffer.find('\n');
@@ -244,7 +256,41 @@ namespace recurloop {
         const std::string line = trimLine(buffer.substr(0, newline + 1));
         buffer.erase(0, newline + 1);
 
-        CommandResult result = handle(*session, line);
+        ProcessControl processes;
+        if (interruptBuffered) {
+          processes.interrupt();
+          interruptBuffered = false;
+        }
+        auto request = std::async(std::launch::async, [&] {
+          ProcessControl::Scope scope(processes);
+          return handle(*session, line);
+        });
+        while (request.wait_for(std::chrono::milliseconds(0)) != std::future_status::ready) {
+          pollfd input{fd, POLLIN, 0};
+          const int ready = poll(&input, 1, 20);
+          if (ready < 0 && errno == EINTR) continue;
+          if (ready < 0 || (ready > 0 && (input.revents & (POLLERR | POLLHUP | POLLNVAL)))) {
+            processes.interrupt();
+            done = true;
+            break;
+          }
+          if (ready > 0 && (input.revents & POLLIN)) {
+            const ssize_t count = recv(fd, chunk, sizeof(chunk), 0);
+            if (count <= 0) {
+              processes.interrupt();
+              done = true;
+              break;
+            }
+            for (ssize_t i = 0; i < count; ++i) {
+              if (chunk[i] == '\x03')
+                processes.interrupt();
+              else
+                buffer.push_back(chunk[i]);
+            }
+          }
+        }
+        CommandResult result = request.get();
+        if (done) break;
         if (!result.text.empty() && !writeAll(fd, result.text)) {
           done = true;
           break;
@@ -362,6 +408,9 @@ namespace recurloop {
   }
 
   int Server::connectUnix(const std::string &path) {
+    // Raw-mode Ctrl+C is forwarded below; don't let a signal in a terminal-mode
+    // transition terminate the console client.
+    IgnoreInteractiveInterrupt interrupt;
     const int fd = socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0);
     if (fd < 0) THROW(, "cannot create unix client socket: " << std::strerror(errno))
     if (!connectSocket(fd, path)) {
@@ -405,7 +454,43 @@ namespace recurloop {
       if (!writeAll(fd, request)) break;
 
       std::string response;
-      if (!receiveUntilPrompt(fd, response)) {
+      bool received = false;
+      {
+        utilities::TerminalMode terminal(STDIN_FILENO);
+        if (!terminal) {
+          received = receiveUntilPrompt(fd, response);
+        } else {
+          while (true) {
+            pollfd inputs[] = {{fd, POLLIN, 0}, {STDIN_FILENO, POLLIN, 0}};
+            const int ready = poll(inputs, 2, -1);
+            if (ready < 0 && errno == EINTR) continue;
+            if (ready < 0) break;
+            if (inputs[1].revents & POLLIN) {
+              char bytes[256];
+              const ssize_t count = read(STDIN_FILENO, bytes, sizeof(bytes));
+              for (ssize_t i = 0; i < count; ++i) {
+                if (bytes[i] == '\x03') {
+                  writeAll(fd, std::string_view("\x03", 1));
+                  utilities::LineEditor::writeDescriptor(STDOUT_FILENO, "^C\n");
+                }
+              }
+            }
+            if (inputs[0].revents & POLLIN) {
+              char bytes[4096];
+              const ssize_t count = recv(fd, bytes, sizeof(bytes), 0);
+              if (count <= 0) break;
+              response.append(bytes, static_cast<std::size_t>(count));
+              if (std::string_view(response).ends_with(utilities::prompt::Default)) {
+                response.resize(response.size() - utilities::prompt::Default.size());
+                received = true;
+                break;
+              }
+            } else if (inputs[0].revents & (POLLERR | POLLHUP | POLLNVAL))
+              break;
+          }
+        }
+      }
+      if (!received) {
         if (!response.empty()) utilities::LineEditor::writeDescriptor(STDOUT_FILENO, response);
         break;
       }

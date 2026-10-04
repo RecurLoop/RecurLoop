@@ -672,6 +672,21 @@ namespace recurloop {
     state.modules.clear();
   }
 
+  std::vector<std::string> Project::processingSources() const {
+    std::string root;
+    { std::lock_guard lock(cacheGraphMutex_); root = cacheEntrySource_; }
+    if (root.empty()) return {};
+    Manifest manifest;
+    if (!readManifest(cacheModuleManifestPath(root), manifest) || manifest.baseline != baselineHash()) return {};
+    std::vector<std::string> result{root};
+    for (const auto &[path, stamp] : manifest.dependencies) {
+      (void)stamp;
+      if (path != root && endsWith(path, ".rl")) result.push_back(path);
+    }
+    std::sort(result.begin(), result.end());
+    return result;
+  }
+
   bool Project::inspectionRoot(std::string_view source, std::string &root) const noexcept {
     namespace fs = std::filesystem;
     root.clear();

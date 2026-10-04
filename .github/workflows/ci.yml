@@ -15,7 +15,7 @@ concurrency:
 
 jobs:
   ci:
-    name: Build and verify Linux x86-64 release
+    name: Build and verify runtime and VS Code extension
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v7
@@ -42,6 +42,31 @@ jobs:
           set -euo pipefail
           [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
           test "$(build/CI/bin/recurloop --version | sed -n 's/^Recurloop v//p')" = "${TAG#v}"
+      - name: Set up Node.js for the VS Code extension
+        uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: tools/vscode-recurloop/package-lock.json
+      - name: Build and stage the VS Code release asset
+        shell: bash
+        run: |
+          set -euo pipefail
+          make vscode-extension
+          extension_version="$(node -p "require('./tools/vscode-recurloop/package.json').version")"
+          asset="recurloop-vscode-${extension_version}.vsix"
+          cp "tools/vscode-recurloop/$asset" dist/
+          (cd dist && sha256sum "$asset" > "$asset.sha256")
+      - name: Verify extension runtime, navigation and debugger integration
+        env:
+          RECURLOOP_TEST_PROGRAM: ${{ github.workspace }}/build/CI/bin/recurloop
+          RECURLOOP_TEST_LIBRARIES: ${{ github.workspace }}/build/CI/libraries
+        shell: bash
+        run: |
+          set -euo pipefail
+          llvm_sdk="$(cat .cache/linux-release-deps/llvm-sdk-path.txt)"
+          export PATH="$llvm_sdk/bin:$PATH"
+          npm test --prefix tools/vscode-recurloop
       - uses: actions/upload-artifact@v6
         with:
           name: release-assets

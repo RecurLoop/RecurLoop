@@ -128,8 +128,8 @@ let IDE:Analysis:Test:run = fn () -> i64 {
     free(implementations)
 
     // UTF-8 character positions are independent of byte offsets.
-    if IDE:Analysis:byte_offset("ąb", 1) != 2 { return 14 }
-    if IDE:Analysis:byte_offset("ąb", 2) != 3 { return 15 }
+    if LanguageKit:Analysis:byte_offset("ąb", 1) != 2 { return 14 }
+    if LanguageKit:Analysis:byte_offset("ąb", 2) != 3 { return 15 }
 
     // An unsaved erroneous buffer can never propose a workspace rename.
     let broken = LanguageKit:Text:new()
@@ -139,7 +139,7 @@ let IDE:Analysis:Test:run = fn () -> i64 {
     if !invalid || !IDE:text_contains(invalid, "E\t") { return 16 }
     free(invalid); broken.destroy()
 
-    IDE:Analysis:destroy(cast(IDE:Analysis:Index*, state.intelligence_index))
+    LanguageKit:Analysis:destroy(cast(LanguageKit:Analysis:Index*, state.intelligence_index))
     IDE:free_terminals(host)
     paths.destroy()
     free(cast(u8*, state)); free(cast(u8*, host))

@@ -378,7 +378,7 @@ let IDE:App:unmount = fn (host:IDE:Host*) -> void {
     if state.history_refresh_idle_source != 0 { Gui:source_remove(state.history_refresh_idle_source); state.history_refresh_idle_source = 0 }
     IDE:App:history_close(state)
     IDE:App:search_free_results(state)
-    IDE:Analysis:destroy(cast(IDE:Analysis:Index*, state.intelligence_index))
+    LanguageKit:Analysis:destroy(cast(LanguageKit:Analysis:Index*, state.intelligence_index))
     state.intelligence_index = cast(u8*, 0)
     IDE:App:intelligence_release_results(state)
     if state.find_query { free(state.find_query) }

@@ -75,6 +75,7 @@ extern fopen(path:u8*, mode:u8*) -> u8* abi sysv-amd64
 extern fclose(stream:u8*) -> i64 abi sysv-amd64
 extern fread(pointer:u8*, size:u64, count:u64, stream:u8*) -> u64 abi sysv-amd64
 
+extern setpgid(pid:i32, group:i32) -> i32 abi sysv-amd64
 extern fork() -> i32 abi sysv-amd64
 extern pipe(fds:i32*) -> i32 abi sysv-amd64
 extern dup2(oldfd:i32, newfd:i32) -> i32 abi sysv-amd64
@@ -713,10 +714,10 @@ let Shell:run_builtin = fn (pipeline:Shell:Pipeline*) -> i64 {
     return 0
 }
 
-let Shell:Invocation:start = fn (
-    pipeline:Shell:Pipeline*, want_output:i64
+let Shell:Invocation:start_impl = fn (
+    pipeline:Shell:Pipeline*, want_output:i64, managed:i64
 ) -> Shell:Invocation* {
-    if !pipeline || pipeline.count <= 0 || (want_output && pipeline.output_path) {
+    if !pipeline || pipeline.count <= 0 || (want_output == 1 && pipeline.output_path) {
         return cast(Shell:Invocation*, 0)
     }
 
@@ -781,11 +782,12 @@ let Shell:Invocation:start = fn (
             } else if pid == 0 {
                 // The interactive host ignores SIGINT while executing a line.
                 // Pipeline children must receive Ctrl+C normally.
+                if managed { setpgid(cast(i32, 0), cast(i32, 0)) }
                 signal(cast(i32, 2), cast(u8*, 0))
                 if previous_read >= 0 { dup2(cast(i32, previous_read), cast(i32, 0)) }
                 if next_fds {
                     dup2(next_fds[1], cast(i32, 1))
-                } else if want_output {
+                } else if want_output && !pipeline.output_path {
                     dup2(capture_fds[1], cast(i32, 1))
                 } else if pipeline.output_path {
                     let output_fd = Shell:open_output(pipeline)
@@ -794,6 +796,7 @@ let Shell:Invocation:start = fn (
                     close(output_fd)
                 }
 
+                if want_output == 2 { dup2(capture_fds[1], cast(i32, 2)) }
                 if previous_read >= 0 { close(cast(i32, previous_read)) }
                 if next_fds {
                     close(next_fds[0])
@@ -811,6 +814,9 @@ let Shell:Invocation:start = fn (
                 perror(command.argv[0])
                 _exit(cast(i32, 127))
             } else {
+                if managed {
+                    setpgid(pid, pid)
+                }
                 invocation.pids[invocation.count] = pid
                 invocation.count += 1
                 if previous_read >= 0 { close(cast(i32, previous_read)) }
@@ -833,6 +839,11 @@ let Shell:Invocation:start = fn (
         free(cast(u8*, capture_fds))
     }
     return invocation
+}
+
+// Ordinary/programmatic pipelines remain standalone-native compatible.
+let Shell:Invocation:start = fn (pipeline:Shell:Pipeline*, want_output:i64) -> Shell:Invocation* {
+    return Shell:Invocation:start_impl(pipeline, want_output, 0)
 }
 
 let Shell:Invocation:await = fn (self:Shell:Invocation*) -> i64 {
@@ -891,6 +902,32 @@ let Shell:Invocation:destroy = fn (self:Shell:Invocation*) -> void {
     self.await()
     if self.output { free(self.output) }
     free(cast(u8*, self))
+}
+
+// Only phrase execution in a managed request calls host process-control APIs.
+// Keep these APIs outside the ordinary pipeline graph used by emit executable.
+let Shell:managed_invocation = fn (pipeline:Shell:Pipeline*, want_output:i64) -> Shell:Invocation* {
+    let invocation = Shell:Invocation:start_impl(pipeline, want_output, 1)
+    if !invocation { return cast(Shell:Invocation*, 0) }
+    var index = 0
+    while index < invocation.count {
+        context:process:track(cast(u64, invocation.pids[index]))
+        index += 1
+    }
+    if invocation.capture_fd >= 0 {
+        invocation.output = Shell:read_all(cast(i32, invocation.capture_fd))
+        close(cast(i32, invocation.capture_fd))
+        invocation.capture_fd = -1
+    }
+    index = 0
+    while index < invocation.count {
+        // Unregister while the exited child is still a zombie, before await
+        // reaps it and the OS can reuse its process-group identifier.
+        context:process:release(cast(u64, invocation.pids[index]))
+        index += 1
+    }
+    invocation.await()
+    return invocation
 }
 
 // Compatibility result used by the programmatic capture_pipeline API.
@@ -1644,7 +1681,18 @@ let Shell:finish_top_command = fn (state:Context*) -> void {
         if Shell:active_parallel(state) {
             context:diagnostic:error(state, "capture is not available inside parallel")
         } else {
-            let result = Shell:capture_pipeline(pipeline)
+            var result = cast(Shell:Capture*, 0)
+            if context:process:active() {
+                let invocation = Shell:managed_invocation(pipeline, 1)
+                if invocation {
+                    result = alloc(Shell:Capture)
+                    if result {
+                        result.output = Shell:copy_text(invocation.stdout())
+                        result.exit_code = invocation.exit_code()
+                    }
+                    invocation.destroy()
+                }
+            } else { result = Shell:capture_pipeline(pipeline) }
             if !result {
                 context:diagnostic:error(state, "shell capture could not start the pipeline")
             } else {
@@ -1669,7 +1717,14 @@ let Shell:finish_top_command = fn (state:Context*) -> void {
                 context:diagnostic:error(state, "parallel could not spawn a shell pipeline")
             }
         } else {
-            status = Shell:run_pipeline(pipeline)
+            if context:process:active() {
+                let invocation = Shell:managed_invocation(pipeline, 2)
+                if invocation {
+                    context:io:write(state, invocation.stdout())
+                    status = invocation.exit_code()
+                    invocation.destroy()
+                } else { status = 126 }
+            } else { status = Shell:run_pipeline(pipeline) }
         }
         Shell:store_status(state, status)
         state.exec.status = status
@@ -2066,6 +2121,7 @@ set fflush.serializable = false
 set fopen.serializable = false
 set fclose.serializable = false
 set fread.serializable = false
+set setpgid.serializable = false
 set fork.serializable = false
 set pipe.serializable = false
 set dup2.serializable = false
