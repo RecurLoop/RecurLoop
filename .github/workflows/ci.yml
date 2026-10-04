@@ -70,7 +70,7 @@ jobs:
           mapfile -t archives < <(find dist -maxdepth 1 -type f -name 'recurloop-*-linux-x86_64.tar.gz' -print | sort)
           test "${#archives[@]}" -eq 1
           archive="${archives[0]}"
-          package_root="$(tar -tzf "$archive" | sed -n '1{s,/.*,,;p;q;}')"
+          package_root="$(tar -tzf "$archive" | sed -n '1{s,/.*,,;p;}')"
           test -n "$package_root"
           mkdir -p 'relocated package'
           tar -xzf "$archive" -C 'relocated package'
