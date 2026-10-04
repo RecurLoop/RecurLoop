@@ -27,6 +27,144 @@ namespace recurloop {
              << " request=" << generation.request;
       return output.str();
     }
+
+    std::string hexText(std::string_view value) {
+      static constexpr char digits[] = "0123456789abcdef";
+      std::string result;
+      result.reserve(value.size() * 2);
+      for (const unsigned char byte : value) {
+        result.push_back(digits[byte >> 4]);
+        result.push_back(digits[byte & 0x0f]);
+      }
+      return result;
+    }
+
+    void stopCurrentSource(context::Context &context) noexcept {
+      context.source.buffer.bits = 0;
+      context.source.more = false;
+    }
+
+    struct InspectionReplayState {
+      std::shared_ptr<Project> project;
+      std::string targetPath;
+      std::string targetSource;
+      bool cacheBacked = false;
+      bool insideTarget = false;
+      bool reached = false;
+      std::string diagnostic;
+      std::unique_ptr<Semantic::InspectionScope> inspection;
+    };
+
+    std::string absolutePath(std::string_view path) {
+      if (path.empty() || path.front() == '<') return std::string(path);
+      namespace fs = std::filesystem;
+      std::error_code error;
+      const std::string absolute = fs::absolute(fs::path(path), error).lexically_normal().string();
+      return error ? std::string(path) : absolute;
+    }
+
+    bool replayInspectionSource(context::Context &context, InspectionReplayState &state, std::string_view root, bool direct) {
+      const auto executeTarget = [&](context::Context &targetContext) {
+        state.inspection = std::make_unique<Semantic::InspectionScope>(targetContext, state.targetSource, state.targetPath);
+        state.insideTarget = true;
+        try {
+          executeSource(targetContext, state.targetSource, state.targetPath, 1, 1);
+        } catch (const Exception &error) {
+          state.diagnostic = describe(error);
+        } catch (const std::exception &error) {
+          state.diagnostic = std::string("<inspection>:1:1: ") + error.what();
+        } catch (...) {
+          state.diagnostic = "<inspection>:1:1: unknown internal error";
+        }
+        state.insideTarget = false;
+        state.reached = true;
+      };
+
+      if (!state.cacheBacked) {
+        // Standalone inspection processes includes/imports against the current
+        // session state, using the same rollback boundary as other source.
+        executeTarget(context);
+        return true;
+      }
+
+      // Includes inside the inspected buffer still use the ordinary .rl -> .rli
+      // cache. This matters especially for root files with many dependencies: replaying
+      // every included source on every request would throw away most of the
+      // project cache benefit even though the target entry itself is prepared.
+      SourceObserverScope observer(
+          &state,
+          [](void *user, context::Context &sourceContext, std::string_view) {
+            auto *state = static_cast<InspectionReplayState *>(user);
+            if (state->reached && !state->insideTarget) stopCurrentSource(sourceContext);
+          },
+          [](void *user, context::Context &nestedContext, std::string_view nestedSource) {
+            auto *state = static_cast<InspectionReplayState *>(user);
+            const std::string nestedPath = absolutePath(nestedSource);
+
+            if (state->insideTarget) {
+              if (state->project->restoreInspectionModule(nestedContext, nestedPath)) {
+                Semantic::markInspectionMetadataDirty(nestedContext);
+                return true;
+              }
+              return false;
+            }
+            if (state->reached) return true;
+            if (nestedPath == state->targetPath) {
+              state->inspection = std::make_unique<Semantic::InspectionScope>(nestedContext, state->targetSource,
+                                                                               state->targetPath);
+              state->insideTarget = true;
+              try {
+                executeSource(nestedContext, state->targetSource, state->targetPath, 1, 1);
+              } catch (const Exception &error) {
+                state->diagnostic = describe(error);
+              } catch (const std::exception &error) {
+                state->diagnostic = std::string("<inspection>:1:1: ") + error.what();
+              } catch (...) {
+                state->diagnostic = "<inspection>:1:1: unknown internal error";
+              }
+              state->insideTarget = false;
+              state->reached = true;
+              stopCurrentSource(nestedContext);
+              return true;
+            }
+
+            // Only replay branches that lead to the target. Every other
+            // unchanged include is restored from its ordinary module .rli.
+            if (state->project->inspectionModuleContains(nestedPath, state->targetPath)) return false;
+            if (state->project->restoreInspectionModule(nestedContext, nestedPath)) return true;
+            return false;
+          },
+          nullptr);
+
+      // Fast path: Project restored the exact state at source entry from the
+      // ordinary .rl -> .rli cache. The target buffer is the only source that
+      // must be elaborated; nested includes are handled by the observer above
+      // and normally become cheap image loads. RequestGeneration rolls all of
+      // this back to the prepared entry state after the request.
+      if (direct) {
+        executeTarget(context);
+        return true;
+      }
+
+      const std::string rootPath = absolutePath(root);
+      if (rootPath == state.targetPath) {
+        executeTarget(context);
+        return true;
+      }
+
+      std::ifstream input(rootPath, std::ios::binary);
+      if (!input.is_open()) return false;
+      try {
+        executeStream(context, input, rootPath, 1, 1);
+      } catch (const Exception &error) {
+        if (!state.reached) state.diagnostic = std::string("project replay failed before source: ") + describe(error);
+      } catch (const std::exception &error) {
+        if (!state.reached) state.diagnostic = std::string("project replay failed before source: ") + error.what();
+      } catch (...) {
+        if (!state.reached) state.diagnostic = "project replay failed before source";
+      }
+      return state.reached && state.inspection != nullptr;
+    }
   } // namespace
 
   Session::Session(std::shared_ptr<Project> project, std::shared_ptr<const ProjectGeneration> base,
@@ -44,6 +182,43 @@ namespace recurloop {
     contextGeneration_ = std::make_unique<ContextGeneration>(projectGeneration_->lexicon, project_->config(),
                                                              project_->actions(), project_->arguments(),
                                                              projectGeneration_->id, contextId, sessionGeneration);
+    inspectionContextGeneration_.reset();
+    standaloneInspectionContextGeneration_.reset();
+    inspectionProjectGeneration_.reset();
+    inspectionPreparedPath_.clear();
+    inspectionPreparedRoot_.clear();
+    inspectionPreparedRevision_ = 0;
+    inspectionPreparedDirect_ = false;
+  }
+
+  bool Session::prepareInspectionReplay(std::string_view path, std::string &root, bool &direct) {
+    root.clear();
+    direct = false;
+    if (!project_->cacheEnabled()) return true;
+
+    const std::string pathCopy = absolutePath(path);
+    const std::uint64_t revision = project_->cacheRevision();
+    if (!project_->inspectionRoot(pathCopy, root)) return false;
+    if (inspectionPreparedRevision_ == revision && inspectionPreparedPath_ == pathCopy &&
+        inspectionPreparedRoot_ == root) {
+      root = inspectionPreparedRoot_;
+      direct = inspectionPreparedDirect_;
+      return true;
+    }
+
+    auto base = project_->baseline();
+    if (!base || !base->lexicon) return false;
+    inspectionProjectGeneration_ = base;
+    inspectionContextGeneration_ =
+        std::make_unique<ContextGeneration>(base->lexicon, project_->config(), project_->actions(),
+                                            project_->arguments(), base->id, project_->nextId(), project_->nextId());
+
+    direct = project_->restoreInspectionEntry(inspectionContextGeneration_->context(), pathCopy);
+    inspectionPreparedPath_ = pathCopy;
+    inspectionPreparedRoot_ = root;
+    inspectionPreparedRevision_ = revision;
+    inspectionPreparedDirect_ = direct;
+    return true;
   }
 
   SessionResponse Session::failure(int status, std::string error) const {
@@ -217,20 +392,39 @@ namespace recurloop {
     return runRequest([&](context::Context &context) { executeSource(context, sourceCopy, pathCopy, 1, 1); });
   }
 
-  SessionResponse Session::inspect(std::string_view source, std::string_view path) {
+  SessionResponse Session::inspect(std::string_view source, std::string_view path, bool trace, bool standalone) {
     std::lock_guard lock(mutex_);
     const std::string sourceCopy(source);
-    const std::string pathCopy(path.empty() ? "<ide>" : path);
+    const std::string pathCopy = absolutePath(path.empty() ? "<inspection>" : path);
+    std::string root;
+    bool direct = false;
 
-    // Source intelligence follows the newest published project generation
-    // without depending on an IDE-side :refresh race. Reattach only when the
-    // project actually changed; ordinary keystrokes reuse the same private COW
-    // context and RequestGeneration restores it after every inspection.
-    std::shared_ptr<const ProjectGeneration> current = project_->current();
-    if (!projectGeneration_ || !current || projectGeneration_->id != current->id) attach(std::move(current));
-    context::Context &context = contextGeneration_->context();
+    if (!standalone && !prepareInspectionReplay(pathCopy, root, direct)) {
+      SessionResponse response;
+      response.status = 0;
+      response.output = "O\t\nE\t" + hexText("source is outside the current project processing graph; semantic analysis is unavailable") + "\n";
+      response.generations = contextGeneration_->generations();
+      return response;
+    }
+
+    if (standalone) {
+      const auto base = project_->baseline();
+      // RequestGeneration restores this context after every inspection. Keep
+      // its mappings/workspace across keystrokes, but recreate it whenever the
+      // immutable baseline changes; no analyzed buffer becomes cached state.
+      if (!standaloneInspectionContextGeneration_ ||
+          standaloneInspectionContextGeneration_->lexiconGeneration() != base->lexicon) {
+        standaloneInspectionContextGeneration_ = std::make_unique<ContextGeneration>(
+            base->lexicon, project_->config(), project_->actions(), project_->arguments(),
+            base->id, project_->nextId(), project_->nextId());
+      }
+    }
+    ContextGeneration &inspectionGeneration =
+        standalone ? *standaloneInspectionContextGeneration_
+                   : (project_->cacheEnabled() ? *inspectionContextGeneration_ : *contextGeneration_);
+    context::Context &context = inspectionGeneration.context();
     const GenerationId requestId = project_->nextId();
-    Generations &generations = contextGeneration_->generations();
+    Generations &generations = inspectionGeneration.generations();
     RequestGeneration request(context, generations, requestId, rollbackBuffer_);
     SessionRequestState sessionRequest;
     SessionRequestScope requestScope(sessionRequest);
@@ -239,26 +433,34 @@ namespace recurloop {
     const context::IOStreams previousIo = context.io;
     context.io = {nullptr, &discardedOutput, &discardedErrors};
     context.exec.status = 0;
+    struct RestoreRequestIO {
+      context::Context &context;
+      context::IOStreams previous;
+      ~RestoreRequestIO() {
+        context.io = previous;
+        context.exec.status = 0;
+      }
+    } restoreIO{context, previousIo};
 
-    Semantic::InspectionScope inspection(context, sourceCopy, pathCopy);
-    std::string diagnostic;
-    try {
-      executeSource(context, sourceCopy, pathCopy, 1, 1);
-    } catch (const Exception &error) {
-      diagnostic = describe(error);
-    } catch (const std::exception &error) {
-      diagnostic = std::string("<ide>:1:1: ") + error.what();
-    } catch (...) {
-      diagnostic = "<ide>:1:1: unknown internal error";
-    }
+    InspectionReplayState replay{project_, pathCopy, sourceCopy, !standalone && project_->cacheEnabled()};
+    const bool available = replayInspectionSource(context, replay, root, direct);
 
     SessionResponse response;
-    response.output = inspection.encode(diagnostic);
+    if (!available || !replay.inspection) {
+      const std::string message = replay.diagnostic.empty()
+                                      ? "source is outside the current project processing graph; semantic analysis is unavailable"
+                                      : replay.diagnostic;
+      response.output = "O\t\nE\t" + hexText(message) + "\n";
+    } else {
+      response.output = replay.inspection->encode(replay.diagnostic);
+      if (trace) response.output += replay.inspection->trace();
+    }
+    replay.inspection.reset();
     request.rollback();
     context.io = previousIo;
     context.exec.status = 0;
     response.status = 0;
-    response.generations = contextGeneration_->generations();
+    response.generations = inspectionGeneration.generations();
     return response;
   }
 

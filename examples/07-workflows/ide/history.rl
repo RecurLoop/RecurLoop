@@ -1077,6 +1077,7 @@ let IDE:App:show_history = fn (state:IDE:App:State*) -> void {
     if !state || !state.sidebar_stack || !state.history_pane { return }
     state.history_visible = 1
     state.search_visible = 0
+    state.intelligence_visible = 0
     if state.history_needs_refresh != 0 { IDE:App:history_refresh(state) }
     else { IDE:App:history_status(state) }
     Gui:stack_select(state.sidebar_stack, state.history_pane)
@@ -1086,6 +1087,7 @@ let IDE:App:show_explorer = fn (state:IDE:App:State*) -> void {
     if !state || !state.sidebar_stack || !state.explorer_pane { return }
     state.history_visible = 0
     state.search_visible = 0
+    state.intelligence_visible = 0
     Gui:stack_select(state.sidebar_stack, state.explorer_pane)
 }
 
@@ -1103,6 +1105,8 @@ let IDE:App:create_history_view = fn (state:IDE:App:State*) -> u8* {
 
     let header = Gui:row(0)
     Gui:class_add(header, "explorer-header")
+    Gui:align_top(header)
+    Gui:expand_x(header, 1)
     let title = Gui:label("HISTORY")
     Gui:label_align(title, cast(f32, 0.0))
     Gui:class_add(title, "explorer-title")

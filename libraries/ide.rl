@@ -33,6 +33,9 @@ extern inotify_init1(flags:i32) -> i32 abi sysv-amd64
 extern inotify_add_watch(fd:i32, path:u8*, mask:u32) -> i32 abi sysv-amd64
 extern inotify_rm_watch(fd:i32, wd:i32) -> i32 abi sysv-amd64
 extern read(fd:i32, target:u8*, bytes:u64) -> i64 abi sysv-amd64
+extern dprintf(fd:i32, format:u8*, ...) -> i32 abi sysv-amd64
+extern pipe(fds:i32*) -> i32 abi sysv-amd64
+extern dup2(old_fd:i32, new_fd:i32) -> i32 abi sysv-amd64
 extern clock_gettime(clock:i32, time:u8*) -> i32 abi sysv-amd64
 extern snprintf(buffer:u8*, size:u64, format:u8*, ...) -> i32 abi sysv-amd64
 extern fork() -> i32 abi sysv-amd64
@@ -126,6 +129,7 @@ record IDE:RuntimeSession {
     last_status:i32
     last_output:u8*
     last_error:u8*
+    trace_terminal:u8*
 }
 
 // Runtime/transcript survive view hot reload.  GTK widgets never live here;
@@ -133,7 +137,9 @@ record IDE:RuntimeSession {
 record IDE:Terminal {
     runtime:IDE:RuntimeSession*
     transcript:u8*
+    title:u8*
     number:i64
+    internal:i64
     next:IDE:Terminal*
 }
 
@@ -147,6 +153,39 @@ record IDE:Job {
     epoch:u64
     source_path:u8*
     result_path:u8*
+}
+
+// Application/debugger state belongs to the stable host, not to a hot-reloaded
+// view. Breakpoints therefore survive IDE view replacement and never target the
+// IDE process itself: the debugger always controls a separately emitted ELF.
+record IDE:Breakpoint {
+    path:u8*
+    line:u64
+    debug_id:u64
+    next:IDE:Breakpoint*
+}
+
+record IDE:Application {
+    pid:i32
+    target_pid:i32
+    stdin_fd:i32
+    output_fd:i32
+    output_watch:u32
+    child_watch:u32
+    notify_source:u32
+    kind:i64
+    state:i64
+    last_status:i32
+    transcript:u8*
+    parser:u8*
+    next_debug_id:u64
+    revision:u64
+    stop_path:u8*
+    stop_phrase:u8*
+    stop_function:u8*
+    stop_line:u64
+    stop_column:u64
+    stop_revision:u64
 }
 
 // Stable application host. The native window and render surface outlive every
@@ -169,6 +208,7 @@ record IDE:Host {
     candidate_title:u8*
     terminals:IDE:Terminal*
     intelligence:IDE:RuntimeSession*
+    intelligence_terminal:IDE:Terminal*
     watcher:IDE:Watcher*
     selected:u8*
     pending_since:i64
@@ -189,6 +229,8 @@ record IDE:Host {
     source_epoch:u64
     job:IDE:Job*
     job_watch:IDE:ChildWatch
+    application:IDE:Application*
+    breakpoints:IDE:Breakpoint*
     window_title:u8*
     window_width:i64
     window_height:i64
@@ -208,6 +250,7 @@ record IDE:Config {
     title_text:u8*
     window_width:i64
     window_height:i64
+    window_maximized:i64
     view_lifecycle:IDE:Lifecycle
 }
 
@@ -548,6 +591,13 @@ let IDE:rename_path = fn (old_path:u8*, new_path:u8*) -> i64 {
     return rename(old_path, new_path) == 0
 }
 
+// Atomic replacement helper for prepared workspace edits. POSIX rename()
+// replaces an existing regular-file destination on the same filesystem.
+let IDE:replace_path = fn (old_path:u8*, new_path:u8*) -> i64 {
+    if !old_path || !new_path { return 0 }
+    return rename(old_path, new_path) == 0
+}
+
 let IDE:remove_path = fn (path:u8*) -> i64 {
     if !path { return 0 }
     if !IDE:is_directory(path) { return unlink(path) == 0 }
@@ -732,6 +782,74 @@ let IDE:receive_response = fn (fd:i32) -> u8* {
     return cast(u8*, 0)
 }
 
+let IDE:Terminal:append = fn (self:IDE:Terminal*, text:u8*) -> void {
+    if !self || !text { return }
+    let out = LanguageKit:Text:new()
+    if !out { return }
+    defer out.destroy()
+
+    // Worker traces can contain full source buffers and semantic responses.
+    // Keep the terminal useful without letting a background inspection grow an
+    // unbounded GUI string. The newest 256 KiB are sufficient for diagnostics.
+    let limit:i64 = 262144
+    let incoming:i64 = cast(i64, strlen(text))
+    var existing:i64 = 0
+    if self.transcript { existing = cast(i64, strlen(self.transcript)) }
+    if incoming >= limit {
+        IDE:append_bytes(out, &text[incoming - limit], limit)
+    } else {
+        let keep = limit - incoming
+        if self.transcript && existing > keep { IDE:append_bytes(out, &self.transcript[existing - keep], keep) }
+        else if self.transcript { out.append(self.transcript) }
+        out.append(text)
+    }
+    let next = out.take()
+    if !next { return }
+    if self.transcript { free(self.transcript) }
+    self.transcript = next
+}
+
+let IDE:RuntimeSession:trace_payload = fn (self:IDE:RuntimeSession*, prefix:u8*, text:u8*) -> void {
+    if !self || !self.trace_terminal || !text { return }
+    let terminal = cast(IDE:Terminal*, self.trace_terminal)
+    if !terminal { return }
+    if prefix { terminal.append(prefix) }
+    let bytes:i64 = cast(i64, strlen(text))
+    let edge:i64 = 4096
+    if bytes <= edge * 2 {
+        terminal.append(text)
+    } else {
+        let clipped = LanguageKit:Text:new()
+        if clipped {
+            IDE:append_bytes(clipped, text, edge)
+            clipped.append("\n... <")
+            IDE:append_u64(clipped, cast(u64, bytes - edge * 2))
+            clipped.append(" bytes omitted> ...\n")
+            IDE:append_bytes(clipped, &text[bytes - edge], edge)
+            terminal.append(clipped.data)
+            clipped.destroy()
+        }
+    }
+    terminal.append("\n")
+}
+
+let IDE:terminal_attach = fn (host:IDE:Host*, runtime:IDE:RuntimeSession*, title:u8*, internal:i64) -> IDE:Terminal* {
+    if !host || !runtime { return cast(IDE:Terminal*, 0) }
+    let terminal = alloc(IDE:Terminal)
+    if !terminal { return cast(IDE:Terminal*, 0) }
+    terminal.runtime = runtime
+    terminal.transcript = IDE:copy("")
+    terminal.title = IDE:copy(title)
+    terminal.internal = internal
+    if internal == 0 {
+        host.terminal_number += 1
+        terminal.number = host.terminal_number
+    } else { terminal.number = 0 }
+    terminal.next = host.terminals
+    host.terminals = terminal
+    return terminal
+}
+
 let IDE:RuntimeSession:clear = fn (self:IDE:RuntimeSession*) -> void {
     if !self { return }
     if self.last_output { free(self.last_output) }
@@ -744,17 +862,21 @@ let IDE:RuntimeSession:clear = fn (self:IDE:RuntimeSession*) -> void {
 let IDE:RuntimeSession:request = fn (self:IDE:RuntimeSession*, command:u8*) -> i32 {
     if !self || self.fd < 0 || !command { return 1 }
     self.clear()
+    self.trace_payload("> ", command)
     if !IDE:send_all(self.fd, command, cast(i64, strlen(command))) || !IDE:send_all(self.fd, "\n", 1) {
         self.last_status = 1
         self.last_error = IDE:copy("runtime connection failed")
+        self.trace_payload("! ", self.last_error)
         return 1
     }
     let response = IDE:receive_response(self.fd)
     if !response {
         self.last_status = 1
         self.last_error = IDE:copy("runtime connection closed")
+        self.trace_payload("! ", self.last_error)
         return 1
     }
+    self.trace_payload("< ", response)
     let response_bytes = strlen(response)
     let status_line = response_bytes >= 7 && response[0] == 115 && response[1] == 116 && response[2] == 97 &&
                       response[3] == 116 && response[4] == 117 && response[5] == 115 && response[6] == 61
@@ -847,6 +969,7 @@ let IDE:RuntimeSession:new = fn (runner:IDE:Runner*) -> IDE:RuntimeSession* {
     self.last_status = 0
     self.last_output = cast(u8*, 0)
     self.last_error = cast(u8*, 0)
+    self.trace_terminal = cast(u8*, 0)
     return self
 }
 
@@ -857,9 +980,9 @@ let IDE:RuntimeSession:destroy = fn (self:IDE:RuntimeSession*) -> void {
     free(cast(u8*, self))
 }
 
-// One persistent, non-terminal client is reserved for source inspection. It
-// speaks to the same project server/generation as terminals but requests a
-// rollback-only elaboration trace instead of executing a user command.
+// One persistent client is reserved for source inspection. It is also exposed
+// as the read/write "IDE Intelligence Worker" terminal so the exact protocol
+// traffic can be inspected and the same session can be queried manually.
 let IDE:append_hex = fn (out:LanguageKit:Text*, text:u8*) -> i64 {
     if !out || !text { return 0 }
     let digits = "0123456789abcdef"
@@ -875,7 +998,18 @@ let IDE:append_hex = fn (out:LanguageKit:Text*, text:u8*) -> i64 {
 
 let IDE:intelligence_session = fn (host:IDE:Host*) -> IDE:RuntimeSession* {
     if !host || !host.runner { return cast(IDE:RuntimeSession*, 0) }
-    if !host.intelligence { host.intelligence = IDE:RuntimeSession:new(host.runner) }
+    if !host.intelligence {
+        host.intelligence = IDE:RuntimeSession:new(host.runner)
+        if host.intelligence {
+            if !host.intelligence_terminal {
+                host.intelligence_terminal = IDE:terminal_attach(host, host.intelligence, "IDE Intelligence Worker", 1)
+            }
+            if host.intelligence_terminal {
+                host.intelligence_terminal.runtime = host.intelligence
+                host.intelligence.trace_terminal = cast(u8*, host.intelligence_terminal)
+            }
+        }
+    }
     return host.intelligence
 }
 
@@ -884,25 +1018,45 @@ let IDE:intelligence_refresh = fn (host:IDE:Host*) -> i64 {
     let runtime = IDE:intelligence_session(host)
     if !runtime { return 0 }
     if runtime.request(":refresh") == 0 { return 1 }
+    runtime.trace_terminal = cast(u8*, 0)
     runtime.destroy()
     host.intelligence = IDE:RuntimeSession:new(host.runner)
-    if !host.intelligence { return 0 }
+    if !host.intelligence {
+        if host.intelligence_terminal { host.intelligence_terminal.runtime = cast(IDE:RuntimeSession*, 0) }
+        return 0
+    }
+    if host.intelligence_terminal {
+        host.intelligence_terminal.runtime = host.intelligence
+        host.intelligence.trace_terminal = cast(u8*, host.intelligence_terminal)
+    }
     return host.intelligence.request(":refresh") == 0
 }
 
-let IDE:intelligence_analyze = fn (host:IDE:Host*, path:u8*, source:u8*) -> u8* {
+// Highlighting and source indexing share transport and target selection. The
+// caller selects whether it also needs the dictionary/source-match catalog.
+let IDE:intelligence_inspect = fn (host:IDE:Host*, path:u8*, source:u8*, trace:i64) -> u8* {
     if !host || !path || !source { return cast(u8*, 0) }
     let runtime = IDE:intelligence_session(host)
     if !runtime { return cast(u8*, 0) }
     let request = LanguageKit:Text:new()
     if !request { return cast(u8*, 0) }
     defer request.destroy()
-    request.append(":inspect\t")
+    let application_root = IDE:join(host.root, "application")
+    let standalone = application_root && IDE:path_is_inside(path, application_root)
+    if application_root { free(application_root) }
+    if trace != 0 { request.append(":trace") }
+    else { request.append(":inspect") }
+    if standalone { request.append("-file") }
+    request.append("\t")
     if !IDE:append_hex(request, path) { return cast(u8*, 0) }
     request.append("\t")
     if !IDE:append_hex(request, source) { return cast(u8*, 0) }
     if runtime.request(request.data) != 0 { return cast(u8*, 0) }
     return IDE:copy(runtime.last_output)
+}
+
+let IDE:intelligence_analyze = fn (host:IDE:Host*, path:u8*, source:u8*) -> u8* {
+    return IDE:intelligence_inspect(host, path, source, 0)
 }
 
 let IDE:process_success = fn (pid:i32) -> i64 {
@@ -913,6 +1067,706 @@ let IDE:process_success = fn (pid:i32) -> i64 {
     status[0] = 0
     if waitpid(pid, status, 0) != pid { return 0 }
     return status[0] == 0
+}
+
+// -----------------------------------------------------------------------------
+// Project application runner/debugger.
+//
+// The IDE itself is never attached to ptrace. Debug mode starts a separate
+// RecurLoop controller process; that process launches the emitted application
+// through the existing executable debugger. stdin/stdout pipes make the
+// debugger interactive without blocking GTK or the persistent Project runtime.
+// -----------------------------------------------------------------------------
+
+let IDE:ApplicationKind = phrase { dictionary = true permanent = true }
+let IDE:ApplicationKind:BuildDebug = fn () -> i64 { return 1 }
+let IDE:ApplicationKind:BuildRelease = fn () -> i64 { return 2 }
+let IDE:ApplicationKind:Debug = fn () -> i64 { return 3 }
+let IDE:ApplicationKind:Release = fn () -> i64 { return 4 }
+
+let IDE:ApplicationState = phrase { dictionary = true permanent = true }
+let IDE:ApplicationState:Idle = fn () -> i64 { return 0 }
+let IDE:ApplicationState:Running = fn () -> i64 { return 1 }
+let IDE:ApplicationState:Paused = fn () -> i64 { return 2 }
+let IDE:ApplicationState:Syncing = fn () -> i64 { return 3 }
+
+let IDE:text_starts_with = fn (text:u8*, prefix:u8*) -> i64 {
+    if !text || !prefix { return 0 }
+    var i = 0
+    while prefix[i] != 0 {
+        if text[i] != prefix[i] { return 0 }
+        i += 1
+    }
+    return 1
+}
+
+let IDE:parse_decimal_after = fn (text:u8*, prefix:u8*) -> u64 {
+    if !IDE:text_starts_with(text, prefix) { return 0 }
+    var at = cast(i64, strlen(prefix))
+    var value:u64 = 0
+    var any = 0
+    while text[at] >= 48 && text[at] <= 57 {
+        value = value * 10 + cast(u64, text[at] - 48)
+        any = 1
+        at += 1
+    }
+    if any == 0 { return 0 }
+    return value
+}
+
+let IDE:debug_field_end = fn (text:u8*, start:i64) -> i64 {
+    if !text || start < 0 { return start }
+    var at = start
+    while text[at] != 0 && text[at] != 9 { at += 1 }
+    return at
+}
+
+let IDE:debug_decimal = fn (text:u8*, start:i64, finish:i64) -> u64 {
+    if !text || start < 0 || finish <= start { return 0 }
+    var value:u64 = 0
+    var at = start
+    while at < finish {
+        if text[at] < 48 || text[at] > 57 { return 0 }
+        value = value * 10 + cast(u64, text[at] - 48)
+        at += 1
+    }
+    return value
+}
+
+let IDE:debug_hex_nibble = fn (value:u8) -> i64 {
+    if value >= 48 && value <= 57 { return value - 48 }
+    if value >= 97 && value <= 102 { return value - 97 + 10 }
+    if value >= 65 && value <= 70 { return value - 65 + 10 }
+    return -1
+}
+
+let IDE:debug_hex = fn (text:u8*, start:i64, finish:i64) -> u8* {
+    if !text || start < 0 || finish < start || ((finish - start) % 2) != 0 { return cast(u8*, 0) }
+    let out = LanguageKit:Text:new()
+    if !out { return cast(u8*, 0) }
+    var at = start
+    while at < finish {
+        let high = IDE:debug_hex_nibble(text[at])
+        let low = IDE:debug_hex_nibble(text[at + 1])
+        if high < 0 || low < 0 { out.destroy(); return cast(u8*, 0) }
+        if !out.append_byte(cast(u8, high * 16 + low)) { out.destroy(); return cast(u8*, 0) }
+        at += 2
+    }
+    let result = out.take()
+    out.destroy()
+    return result
+}
+
+let IDE:application_notify_idle = fn (data:u8*) -> i32 {
+    let host = cast(IDE:Host*, data)
+    if !host || !host.application { return 0 }
+    host.application.notify_source = 0
+    if !host.shell_lifecycle { return 0 }
+    let lifecycle = host.shell_lifecycle
+    lifecycle(6, cast(u8*, host))
+    return 0
+}
+
+let IDE:notify_application = fn (host:IDE:Host*) -> void {
+    if !host || !host.application || !host.shell_lifecycle { return }
+    // stdout, debugger protocol and child-watch callbacks may all become ready
+    // in one GLib turn. Render the hot-reloadable GTK view once after the
+    // burst instead of repeatedly replacing large text buffers mid-dispatch.
+    if host.application.notify_source == 0 {
+        host.application.notify_source = Gui:idle(IDE:application_notify_idle, cast(u8*, host))
+    }
+}
+
+let IDE:Application:new = fn () -> IDE:Application* {
+    let self = alloc(IDE:Application)
+    if !self { return cast(IDE:Application*, 0) }
+    self.pid = -1
+    self.target_pid = -1
+    self.stdin_fd = -1
+    self.output_fd = -1
+    self.output_watch = 0
+    self.child_watch = 0
+    self.notify_source = 0
+    self.kind = 0
+    self.state = IDE:ApplicationState:Idle()
+    self.last_status = 0
+    self.transcript = IDE:copy("")
+    self.parser = IDE:copy("")
+    self.next_debug_id = 1
+    self.revision = 0
+    self.stop_path = cast(u8*, 0)
+    self.stop_phrase = cast(u8*, 0)
+    self.stop_function = cast(u8*, 0)
+    self.stop_line = 0
+    self.stop_column = 0
+    self.stop_revision = 0
+    if !self.transcript || !self.parser {
+        if self.transcript { free(self.transcript) }
+        if self.parser { free(self.parser) }
+        free(cast(u8*, self))
+        return cast(IDE:Application*, 0)
+    }
+    return self
+}
+
+let IDE:Application:append = fn (self:IDE:Application*, data:u8*, bytes:i64) -> void {
+    if !self || !data || bytes <= 0 { return }
+    let text = LanguageKit:Text:new()
+    if !text { return }
+    // Keep debugger/application output bounded. Rebuilding an ever-growing GTK
+    // text buffer was the main source of UI stalls during noisy debug sessions.
+    let limit:i64 = 524288
+    var existing:i64 = 0
+    if self.transcript { existing = cast(i64, strlen(self.transcript)) }
+    if bytes >= limit {
+        IDE:append_bytes(text, &data[bytes - limit], limit)
+    } else {
+        let keep = limit - bytes
+        if self.transcript && existing > keep { IDE:append_bytes(text, &self.transcript[existing - keep], keep) }
+        else if self.transcript { text.append(self.transcript) }
+        IDE:append_bytes(text, data, bytes)
+    }
+    let replacement = text.take()
+    text.destroy()
+    if !replacement { return }
+    if self.transcript { free(self.transcript) }
+    self.transcript = replacement
+    self.revision += 1
+}
+
+let IDE:application_write_all = fn (fd:i32, data:u8*, bytes:i64) -> i64 {
+    if fd < 0 || !data || bytes < 0 || bytes > 2147483647 { return 0 }
+    return dprintf(fd, "%.*s", cast(i32, bytes), data) == cast(i32, bytes)
+}
+
+let IDE:application_send = fn (host:IDE:Host*, command:u8*) -> i64 {
+    if !host || !host.application || !command || host.application.stdin_fd < 0 { return 0 }
+    return IDE:application_write_all(host.application.stdin_fd, command, cast(i64, strlen(command)))
+}
+
+let IDE:breakpoint_find = fn (host:IDE:Host*, path:u8*, line:u64) -> IDE:Breakpoint* {
+    if !host || !path || line == 0 { return cast(IDE:Breakpoint*, 0) }
+    var item = host.breakpoints
+    while item {
+        if item.line == line && item.path && strcmp(item.path, path) == 0 { return item }
+        item = item.next
+    }
+    return cast(IDE:Breakpoint*, 0)
+}
+
+let IDE:breakpoint_has = fn (host:IDE:Host*, path:u8*, line:u64) -> i64 {
+    return IDE:breakpoint_find(host, path, line) != cast(IDE:Breakpoint*, 0)
+}
+
+let IDE:breakpoint_reset_debug_ids = fn (host:IDE:Host*) -> void {
+    if !host { return }
+    var item = host.breakpoints
+    while item { item.debug_id = 0; item = item.next }
+    if host.application { host.application.next_debug_id = 1 }
+}
+
+let IDE:application_break_add_command = fn (host:IDE:Host*, breakpoint:IDE:Breakpoint*) -> i64 {
+    if !host || !host.application || !breakpoint || !breakpoint.path { return 0 }
+    var id = breakpoint.debug_id
+    if id == 0 { id = host.application.next_debug_id }
+    let command = LanguageKit:Text:new()
+    if !command { return 0 }
+    defer command.destroy()
+    command.append("debug:break line ")
+    if !IDE:append_source_string(command, breakpoint.path) { return 0 }
+    command.append(":")
+    IDE:append_u64(command, breakpoint.line)
+    command.append("\n")
+    if !IDE:application_send(host, command.data) { return 0 }
+    if breakpoint.debug_id == 0 {
+        breakpoint.debug_id = id
+        host.application.next_debug_id = id + 1
+    }
+    return 1
+}
+
+let IDE:application_break_delete_command = fn (host:IDE:Host*, breakpoint:IDE:Breakpoint*) -> i64 {
+    if !host || !host.application || !breakpoint || breakpoint.debug_id == 0 { return 1 }
+    let command = LanguageKit:Text:new()
+    if !command { return 0 }
+    defer command.destroy()
+    command.append("debug:delete ")
+    IDE:append_u64(command, breakpoint.debug_id)
+    command.append("\n")
+    return IDE:application_send(host, command.data)
+}
+
+let IDE:application_continue_internal = fn (host:IDE:Host*) -> i64 {
+    if !host || !host.application { return 0 }
+    if !IDE:application_send(host, "debug:continue\n") { return 0 }
+    host.application.state = IDE:ApplicationState:Running()
+    IDE:notify_application(host)
+    return 1
+}
+
+let IDE:application_sync_initial_breakpoints = fn (host:IDE:Host*) -> void {
+    if !host || !host.application || host.application.kind != IDE:ApplicationKind:Debug() { return }
+    IDE:breakpoint_reset_debug_ids(host)
+    var item = host.breakpoints
+    while item {
+        if !IDE:application_break_add_command(host, item) { return }
+        item = item.next
+    }
+    IDE:application_continue_internal(host)
+}
+
+let IDE:Application:process_line = fn (self:IDE:Application*, host:IDE:Host*, line:u8*) -> void {
+    if !self || !host || !line { return }
+    // The debugger prompt has no trailing newline, so the next response often
+    // arrives as `debug> [debug] ...`. Normalize that transport detail before
+    // interpreting debugger state transitions.
+    var event = line
+    while IDE:text_starts_with(event, "debug> ") { event = &event[7] }
+    if IDE:text_starts_with(event, "[debug-event]\tstop\t") {
+        var at = cast(i64, strlen("[debug-event]\tstop\t"))
+        let reason_end = IDE:debug_field_end(event, at)
+        if event[reason_end] != 9 { return }
+        at = reason_end + 1
+        let path_end = IDE:debug_field_end(event, at)
+        if event[path_end] != 9 { return }
+        let path = IDE:debug_hex(event, at, path_end)
+        at = path_end + 1
+        let line_end = IDE:debug_field_end(event, at)
+        if event[line_end] != 9 { if path { free(path) }; return }
+        let source_line = IDE:debug_decimal(event, at, line_end)
+        at = line_end + 1
+        let column_end = IDE:debug_field_end(event, at)
+        if event[column_end] != 9 { if path { free(path) }; return }
+        let source_column = IDE:debug_decimal(event, at, column_end)
+        at = column_end + 1
+        let phrase_end = IDE:debug_field_end(event, at)
+        if event[phrase_end] != 9 { if path { free(path) }; return }
+        let phrase = IDE:debug_hex(event, at, phrase_end)
+        at = phrase_end + 1
+        let function_end = IDE:debug_field_end(event, at)
+        let function = IDE:debug_hex(event, at, function_end)
+        if self.state == IDE:ApplicationState:Syncing() {
+            if path { free(path) }
+            if phrase { free(phrase) }
+            if function { free(function) }
+            return
+        }
+        if path && source_line > 0 {
+            if self.stop_path { free(self.stop_path) }
+            if self.stop_phrase { free(self.stop_phrase) }
+            if self.stop_function { free(self.stop_function) }
+            self.stop_path = path
+            self.stop_phrase = phrase
+            self.stop_function = function
+            self.stop_line = source_line
+            self.stop_column = source_column
+            self.stop_revision += 1
+            self.state = IDE:ApplicationState:Paused()
+        } else {
+            if path { free(path) }
+            if phrase { free(phrase) }
+            if function { free(function) }
+        }
+        return
+    }
+    if IDE:text_starts_with(event, "[debug] executable started pid ") {
+        let pid = IDE:parse_decimal_after(event, "[debug] executable started pid ")
+        if pid > 0 {
+            self.target_pid = cast(i32, pid)
+            self.state = IDE:ApplicationState:Paused()
+            IDE:application_sync_initial_breakpoints(host)
+        }
+        return
+    }
+    if IDE:text_starts_with(event, "[debug] continue") || IDE:text_starts_with(event, "[debug] step") ||
+       IDE:text_starts_with(event, "[debug] next") || IDE:text_starts_with(event, "[debug] finish") {
+        self.state = IDE:ApplicationState:Running()
+        return
+    }
+    if IDE:text_starts_with(event, "[debug] stopped ") || IDE:text_starts_with(event, "[debug] signal ") {
+        // A synthetic SIGSTOP is used only to let the controller apply a
+        // breakpoint mutation while the tracee is running. Keep the short
+        // Syncing state until the already queued `debug:continue` is consumed.
+        if self.state != IDE:ApplicationState:Syncing() { self.state = IDE:ApplicationState:Paused() }
+        return
+    }
+    if IDE:text_starts_with(event, "[debug] breakpoint ") {
+        let at = cast(i64, strlen("[debug] breakpoint "))
+        // Breakpoint creation is "breakpoint <id> ...". A native stop begins
+        // directly with the source path, so only the latter pauses the UI.
+        if event[at] < 48 || event[at] > 57 { self.state = IDE:ApplicationState:Paused() }
+        return
+    }
+}
+
+let IDE:Application:parse = fn (self:IDE:Application*, host:IDE:Host*, data:u8*, bytes:i64) -> void {
+    if !self || !host || !data || bytes <= 0 { return }
+    let combined = LanguageKit:Text:new()
+    if !combined { return }
+    if self.parser { combined.append(self.parser) }
+    IDE:append_bytes(combined, data, bytes)
+
+    var start:i64 = 0
+    var at:i64 = 0
+    while at < cast(i64, combined.length) {
+        if combined.data[at] == 10 {
+            let line = LanguageKit:Text:new()
+            if line {
+                if at > start { IDE:append_bytes(line, &combined.data[start], at - start) }
+                self.process_line(host, line.data)
+                line.destroy()
+            }
+            start = at + 1
+        }
+        at += 1
+    }
+
+    let tail = LanguageKit:Text:new()
+    if tail && start < cast(i64, combined.length) {
+        IDE:append_bytes(tail, &combined.data[start], cast(i64, combined.length) - start)
+    }
+    var replacement = cast(u8*, 0)
+    if tail { replacement = tail.take(); tail.destroy() }
+    if !replacement { replacement = IDE:copy("") }
+    if self.parser { free(self.parser) }
+    self.parser = replacement
+    combined.destroy()
+}
+
+let IDE:application_output_ready = fn (fd:i32, condition:i32, data:u8*) -> i32 {
+    let host = cast(IDE:Host*, data)
+    if !host || !host.application || host.application.output_fd != fd { return 0 }
+    let buffer = malloc(8192)
+    if !buffer { return 0 }
+    let bytes = read(fd, buffer, 8192)
+    if bytes > 0 {
+        host.application.append(buffer, bytes)
+        host.application.parse(host, buffer, bytes)
+        free(buffer)
+        IDE:notify_application(host)
+        return 1
+    }
+    free(buffer)
+    close(fd)
+    host.application.output_fd = -1
+    host.application.output_watch = 0
+    return 0
+}
+
+let IDE:application_drain_output = fn (host:IDE:Host*) -> void {
+    if !host || !host.application || host.application.output_fd < 0 { return }
+    let fd = host.application.output_fd
+    let buffer = malloc(8192)
+    if !buffer { return }
+    var bytes = read(fd, buffer, 8192)
+    while bytes > 0 {
+        host.application.append(buffer, bytes)
+        host.application.parse(host, buffer, bytes)
+        bytes = read(fd, buffer, 8192)
+    }
+    free(buffer)
+    close(fd)
+    host.application.output_fd = -1
+}
+
+let IDE:application_done = fn (pid:i32, status:i32, data:u8*) -> void {
+    let host = cast(IDE:Host*, data)
+    if !host || !host.application || host.application.pid != pid { return }
+    IDE:application_drain_output(host)
+    if host.application.output_watch != 0 { Gui:source_remove(host.application.output_watch); host.application.output_watch = 0 }
+    if host.application.stdin_fd >= 0 { close(host.application.stdin_fd); host.application.stdin_fd = -1 }
+    host.application.child_watch = 0
+    host.application.pid = -1
+    host.application.target_pid = -1
+    host.application.state = IDE:ApplicationState:Idle()
+    host.application.last_status = status
+    IDE:breakpoint_reset_debug_ids(host)
+    if status == 0 {
+        let message = "\n[ide] process finished\n"
+        host.application.append(message, cast(i64, strlen(message)))
+    } else {
+        let message = "\n[ide] process failed or stopped\n"
+        host.application.append(message, cast(i64, strlen(message)))
+    }
+    IDE:notify_application(host)
+}
+
+let IDE:Application:clear_output = fn (self:IDE:Application*) -> void {
+    if !self { return }
+    if self.transcript { free(self.transcript) }
+    if self.parser { free(self.parser) }
+    if self.stop_path { free(self.stop_path); self.stop_path = cast(u8*, 0) }
+    if self.stop_phrase { free(self.stop_phrase); self.stop_phrase = cast(u8*, 0) }
+    if self.stop_function { free(self.stop_function); self.stop_function = cast(u8*, 0) }
+    self.stop_line = 0
+    self.stop_column = 0
+    self.transcript = IDE:copy("")
+    self.parser = IDE:copy("")
+    self.revision += 1
+}
+
+let IDE:Application:spawn = fn (self:IDE:Application*, host:IDE:Host*, program:u8*, argument1:u8*, argument2:u8*, kind:i64) -> i64 {
+    if !self || !host || !program || self.pid > 0 { return 0 }
+    self.clear_output()
+    self.kind = kind
+    self.state = IDE:ApplicationState:Running()
+    var heading = "[ide] running process\n"
+    if kind == IDE:ApplicationKind:BuildDebug() { heading = "[ide] building Debug application\n" }
+    else if kind == IDE:ApplicationKind:BuildRelease() { heading = "[ide] building Release application\n" }
+    else if kind == IDE:ApplicationKind:Debug() { heading = "[ide] starting Debug application\n" }
+    else if kind == IDE:ApplicationKind:Release() { heading = "[ide] running Release application\n" }
+    self.append(heading, cast(i64, strlen(heading)))
+    self.last_status = 0
+    self.target_pid = -1
+    IDE:breakpoint_reset_debug_ids(host)
+
+    let input = cast(i32*, malloc(2 * sizeof(i32)))
+    let output = cast(i32*, malloc(2 * sizeof(i32)))
+    if !input || !output {
+        if input { free(cast(u8*, input)) }
+        if output { free(cast(u8*, output)) }
+        self.state = IDE:ApplicationState:Idle()
+        return 0
+    }
+    if pipe(input) != 0 {
+        free(cast(u8*, input)); free(cast(u8*, output))
+        self.state = IDE:ApplicationState:Idle()
+        return 0
+    }
+    if pipe(output) != 0 {
+        close(input[0]); close(input[1])
+        free(cast(u8*, input)); free(cast(u8*, output))
+        self.state = IDE:ApplicationState:Idle()
+        return 0
+    }
+
+    let args = cast(u8**, malloc(4 * sizeof(u8*)))
+    if !args {
+        close(input[0]); close(input[1]); close(output[0]); close(output[1])
+        free(cast(u8*, input)); free(cast(u8*, output))
+        self.state = IDE:ApplicationState:Idle()
+        return 0
+    }
+    var count = 0
+    args[count] = program; count += 1
+    if argument1 { args[count] = argument1; count += 1 }
+    if argument2 { args[count] = argument2; count += 1 }
+    args[count] = cast(u8*, 0)
+
+    let pid = fork()
+    if pid < 0 {
+        free(cast(u8*, args))
+        close(input[0]); close(input[1]); close(output[0]); close(output[1])
+        free(cast(u8*, input)); free(cast(u8*, output))
+        self.state = IDE:ApplicationState:Idle()
+        return 0
+    }
+    if pid == 0 {
+        close(input[1])
+        close(output[0])
+        dup2(input[0], 0)
+        dup2(output[1], 1)
+        dup2(output[1], 2)
+        close(input[0])
+        close(output[1])
+        setenv("RECURLOOP_PROJECT_ROOT", host.root, 1)
+        execvp(program, args)
+        _exit(127)
+    }
+
+    free(cast(u8*, args))
+    close(input[0])
+    close(output[1])
+    self.pid = pid
+    self.stdin_fd = input[1]
+    self.output_fd = output[0]
+    free(cast(u8*, input))
+    free(cast(u8*, output))
+
+    self.output_watch = g_unix_fd_add(self.output_fd, 57, IDE:application_output_ready, cast(u8*, host))
+    self.child_watch = g_child_watch_add(pid, IDE:application_done, cast(u8*, host))
+    if self.output_watch == 0 || self.child_watch == 0 {
+        if self.output_watch != 0 { Gui:source_remove(self.output_watch); self.output_watch = 0 }
+        if self.child_watch != 0 { Gui:source_remove(self.child_watch); self.child_watch = 0 }
+        kill(pid, 15)
+        let raw = alloc(i32)
+        if raw { waitpid(pid, raw, 0); free(cast(u8*, raw)) }
+        if self.stdin_fd >= 0 { close(self.stdin_fd); self.stdin_fd = -1 }
+        if self.output_fd >= 0 { close(self.output_fd); self.output_fd = -1 }
+        self.pid = -1
+        self.state = IDE:ApplicationState:Idle()
+        return 0
+    }
+    IDE:notify_application(host)
+    return 1
+}
+
+let IDE:application_artifact = fn (host:IDE:Host*, name:u8*) -> u8* {
+    if !host || !host.runner || !host.runner.cache_directory || !name { return cast(u8*, 0) }
+    let directory = IDE:join(host.runner.cache_directory, "application")
+    if !directory { return cast(u8*, 0) }
+    if !IDE:ensure_directory_tree(directory) { free(directory); return cast(u8*, 0) }
+    let path = IDE:join(directory, name)
+    free(directory)
+    return path
+}
+
+let IDE:application_build = fn (host:IDE:Host*, source_path:u8*, entry:u8*, output_path:u8*, debug:i64) -> i64 {
+    if !host || !host.application || !host.runner || !source_path || !entry || !output_path { return 0 }
+    if host.application.pid > 0 { return 0 }
+    if !IDE:path_is_inside(source_path, host.root) { return 0 }
+    var driver_name = "build-release.rl"
+    var kind = IDE:ApplicationKind:BuildRelease()
+    if debug != 0 { driver_name = "build-debug.rl"; kind = IDE:ApplicationKind:BuildDebug() }
+    let driver = IDE:application_artifact(host, driver_name)
+    if !driver { return 0 }
+    defer free(driver)
+
+    let source = LanguageKit:Text:new()
+    if !source { return 0 }
+    defer source.destroy()
+    source.append("include ")
+    if !IDE:append_source_string(source, source_path) { return 0 }
+    source.append("\nmodule auto\nmodule clear\nemit executable ")
+    if debug != 0 { source.append("debug ") }
+    if !IDE:append_source_string(source, output_path) { return 0 }
+    source.append(" recurloop_ide_application_entry = fn () -> i64 {\n    return ")
+    source.append(entry)
+    source.append("()\n}\n")
+    if !IDE:write_file(driver, source.data) { return 0 }
+    unlink(output_path)
+    return host.application.spawn(host, host.runner.program, "--file", driver, kind)
+}
+
+let IDE:application_run = fn (host:IDE:Host*, executable:u8*) -> i64 {
+    if !host || !host.application || !executable || host.application.pid > 0 || !IDE:file_exists(executable) { return 0 }
+    return host.application.spawn(host, executable, cast(u8*, 0), cast(u8*, 0), IDE:ApplicationKind:Release())
+}
+
+let IDE:application_debug = fn (host:IDE:Host*, executable:u8*) -> i64 {
+    if !host || !host.application || !host.runner || !executable || host.application.pid > 0 || !IDE:file_exists(executable) { return 0 }
+    let driver = IDE:application_artifact(host, "debug-driver.rl")
+    if !driver { return 0 }
+    defer free(driver)
+    let source = LanguageKit:Text:new()
+    if !source { return 0 }
+    defer source.destroy()
+    source.append("debug:executable run ")
+    if !IDE:append_source_string(source, executable) { return 0 }
+    source.append("\n")
+    if !IDE:write_file(driver, source.data) { return 0 }
+    return host.application.spawn(host, host.runner.program, "--file", driver, IDE:ApplicationKind:Debug())
+}
+
+let IDE:application_stop = fn (host:IDE:Host*) -> i64 {
+    if !host || !host.application || host.application.pid <= 0 { return 0 }
+    kill(host.application.pid, 15)
+    return 1
+}
+
+let IDE:application_debug_command = fn (host:IDE:Host*, command:u8*) -> i64 {
+    if !host || !host.application || !command || command[0] == 0 || host.application.kind != IDE:ApplicationKind:Debug() ||
+       host.application.pid <= 0 || host.application.state != IDE:ApplicationState:Paused() { return 0 }
+    let text = LanguageKit:Text:new()
+    if !text { return 0 }
+    defer text.destroy()
+    var verb = command
+    if IDE:text_starts_with(command, "debug:") {
+        text.append(command)
+        verb = &command[6]
+    } else {
+        text.append("debug:")
+        text.append(command)
+    }
+    text.append("\n")
+    if !IDE:application_send(host, text.data) { return 0 }
+    if strcmp(verb, "continue") == 0 || strcmp(verb, "step") == 0 || strcmp(verb, "next") == 0 ||
+       strcmp(verb, "finish") == 0 { host.application.state = IDE:ApplicationState:Running() }
+    IDE:notify_application(host)
+    return 1
+}
+
+let IDE:breakpoint_toggle = fn (host:IDE:Host*, path:u8*, line:u64) -> i64 {
+    if !host || !path || line == 0 { return 0 }
+    // Do not queue a second live mutation behind the synthetic stop/continue
+    // pair. It would otherwise be applied only at an unrelated later stop.
+    if host.application && host.application.kind == IDE:ApplicationKind:Debug() &&
+       host.application.pid > 0 && host.application.state == IDE:ApplicationState:Syncing() { return 0 }
+    var previous = cast(IDE:Breakpoint*, 0)
+    var item = host.breakpoints
+    while item {
+        if item.line == line && item.path && strcmp(item.path, path) == 0 {
+            if host.application && host.application.kind == IDE:ApplicationKind:Debug() && host.application.pid > 0 && item.debug_id != 0 {
+                let was_running = host.application.state == IDE:ApplicationState:Running()
+                if !IDE:application_break_delete_command(host, item) { return 0 }
+                if was_running && host.application.target_pid > 0 {
+                    if !IDE:application_send(host, "debug:continue\n") { return 0 }
+                    host.application.state = IDE:ApplicationState:Syncing()
+                    kill(host.application.target_pid, 19)
+                }
+            }
+            if previous { previous.next = item.next } else { host.breakpoints = item.next }
+            if item.path { free(item.path) }
+            free(cast(u8*, item))
+            IDE:notify_application(host)
+            return 1
+        }
+        previous = item
+        item = item.next
+    }
+
+    let breakpoint = alloc(IDE:Breakpoint)
+    if !breakpoint { return 0 }
+    breakpoint.path = IDE:copy(path)
+    breakpoint.line = line
+    breakpoint.debug_id = 0
+    breakpoint.next = host.breakpoints
+    if !breakpoint.path { free(cast(u8*, breakpoint)); return 0 }
+    host.breakpoints = breakpoint
+
+    if host.application && host.application.kind == IDE:ApplicationKind:Debug() && host.application.pid > 0 && host.application.target_pid > 0 {
+        let was_running = host.application.state == IDE:ApplicationState:Running()
+        if !IDE:application_break_add_command(host, breakpoint) { return 1 }
+        if was_running {
+            if !IDE:application_send(host, "debug:continue\n") { return 1 }
+            host.application.state = IDE:ApplicationState:Syncing()
+            kill(host.application.target_pid, 19)
+        }
+    }
+    IDE:notify_application(host)
+    return 1
+}
+
+let IDE:free_breakpoints = fn (host:IDE:Host*) -> void {
+    if !host { return }
+    var item = host.breakpoints
+    while item {
+        let next = item.next
+        if item.path { free(item.path) }
+        free(cast(u8*, item))
+        item = next
+    }
+    host.breakpoints = cast(IDE:Breakpoint*, 0)
+}
+
+let IDE:Application:destroy = fn (self:IDE:Application*) -> void {
+    if !self { return }
+    if self.notify_source != 0 { Gui:source_remove(self.notify_source); self.notify_source = 0 }
+    if self.output_watch != 0 { Gui:source_remove(self.output_watch); self.output_watch = 0 }
+    if self.child_watch != 0 { Gui:source_remove(self.child_watch); self.child_watch = 0 }
+    if self.pid > 0 {
+        kill(self.pid, 15)
+        let raw = alloc(i32)
+        if raw { waitpid(self.pid, raw, 0); free(cast(u8*, raw)) }
+    }
+    if self.stdin_fd >= 0 { close(self.stdin_fd) }
+    if self.output_fd >= 0 { close(self.output_fd) }
+    if self.transcript { free(self.transcript) }
+    if self.parser { free(self.parser) }
+    if self.stop_path { free(self.stop_path) }
+    if self.stop_phrase { free(self.stop_phrase) }
+    if self.stop_function { free(self.stop_function) }
+    free(cast(u8*, self))
 }
 
 let IDE:Runner:stop = fn (self:IDE:Runner*) -> void {
@@ -1496,32 +2350,23 @@ let IDE:Runner:new = fn (program:u8*, root:u8*, application:u8*) -> IDE:Runner* 
     return self
 }
 
-let IDE:Terminal:append = fn (self:IDE:Terminal*, text:u8*) -> void {
-    if !self || !text { return }
-    let out = LanguageKit:Text:new()
-    if !out { return }
-    defer out.destroy()
-    if self.transcript { out.append(self.transcript) }
-    out.append(text)
-    let next = out.take()
-    if !next { return }
-    if self.transcript { free(self.transcript) }
-    self.transcript = next
-}
-
 let IDE:terminal_new = fn (host:IDE:Host*) -> IDE:Terminal* {
     if !host || !host.runner { return cast(IDE:Terminal*, 0) }
     let runtime = IDE:RuntimeSession:new(host.runner)
     if !runtime { return cast(IDE:Terminal*, 0) }
-    let terminal = alloc(IDE:Terminal)
+    let terminal = IDE:terminal_attach(host, runtime, cast(u8*, 0), 0)
     if !terminal { runtime.destroy(); return cast(IDE:Terminal*, 0) }
-    host.terminal_number += 1
-    terminal.runtime = runtime
-    terminal.transcript = IDE:copy("")
-    terminal.number = host.terminal_number
-    terminal.next = host.terminals
-    host.terminals = terminal
     return terminal
+}
+
+let IDE:terminal_has_user = fn (host:IDE:Host*) -> i64 {
+    if !host { return 0 }
+    var terminal = host.terminals
+    while terminal {
+        if terminal.internal == 0 { return 1 }
+        terminal = terminal.next
+    }
+    return 0
 }
 
 let IDE:free_terminals = fn (host:IDE:Host*) -> void {
@@ -1529,12 +2374,19 @@ let IDE:free_terminals = fn (host:IDE:Host*) -> void {
     var terminal = host.terminals
     while terminal {
         let next = terminal.next
-        if terminal.runtime { terminal.runtime.destroy() }
+        if terminal.runtime {
+            if terminal.runtime == host.intelligence { host.intelligence = cast(IDE:RuntimeSession*, 0) }
+            terminal.runtime.trace_terminal = cast(u8*, 0)
+            terminal.runtime.destroy()
+        }
         if terminal.transcript { free(terminal.transcript) }
+        if terminal.title { free(terminal.title) }
         free(cast(u8*, terminal))
         terminal = next
     }
     host.terminals = cast(IDE:Terminal*, 0)
+    host.intelligence_terminal = cast(IDE:Terminal*, 0)
+    if host.intelligence { host.intelligence.destroy(); host.intelligence = cast(IDE:RuntimeSession*, 0) }
 }
 
 let IDE:Watcher:find = fn (self:IDE:Watcher*, wd:i32) -> IDE:WatchDir* {
@@ -2134,6 +2986,16 @@ let IDE:watch_ready = fn (fd:i32, condition:i32, data:u8*) -> i32 {
 
 let IDE:on_destroy = fn (widget:u8*, data:u8*) -> void { Gui:quit() }
 
+// Apply requested startup maximization only after GTK has mapped the window.
+// This avoids the WSLg/Wayland initial maximized-geometry protocol failure.
+let IDE:on_initial_window_map = fn (widget:u8*, event:u8*, data:u8*) -> i32 {
+    let config = cast(IDE:Config*, data)
+    if !widget || !config || !config.window_maximized { return 0 }
+    config.window_maximized = 0
+    Gui:window_maximize(widget)
+    return 0
+}
+
 let IDE:free_host = fn (host:IDE:Host*) -> void {
     if !host { return }
     if host.job {
@@ -2144,8 +3006,9 @@ let IDE:free_host = fn (host:IDE:Host*) -> void {
         host.job = cast(IDE:Job*, 0)
         IDE:job_destroy(job)
     }
+    if host.application { host.application.destroy(); host.application = cast(IDE:Application*, 0) }
+    IDE:free_breakpoints(host)
     IDE:free_terminals(host)
-    if host.intelligence { host.intelligence.destroy(); host.intelligence = cast(IDE:RuntimeSession*, 0) }
     if host.watcher { host.watcher.destroy() }
     if host.candidate_title { free(host.candidate_title) }
     if host.selected { free(host.selected) }
@@ -2245,6 +3108,7 @@ let IDE:Config:new = fn () -> IDE:Config* {
     self.title_text = IDE:copy("RecurLoop IDE")
     self.window_width = 1360
     self.window_height = 860
+    self.window_maximized = 0
     self.view_lifecycle = cast(IDE:Lifecycle, 0)
     if !self.title_text {
         free(cast(u8*, self))
@@ -2267,6 +3131,12 @@ let IDE:Config:size = fn (self:IDE:Config*, width:i64, height:i64) -> IDE:Config
     if width <= 0 || height <= 0 || width > 2147483647 || height > 2147483647 { return self }
     self.window_width = width
     self.window_height = height
+    return self
+}
+
+let IDE:Config:maximized = fn (self:IDE:Config*, enabled:i64) -> IDE:Config* {
+    if !self { return self }
+    self.window_maximized = enabled != 0
     return self
 }
 
@@ -2332,6 +3202,23 @@ let IDE:resolve_workspace_path = fn (root:u8*, path:u8*) -> u8* {
     if !path || path[0] == 0 { return cast(u8*, 0) }
     if path[0] == 47 { return IDE:copy(path) }
     return IDE:join(root, path)
+}
+
+let IDE:prepare_wslg_cursor = fn () -> i64 {
+    let distro = getenv("WSL_DISTRO_NAME")
+    let wayland = getenv("WAYLAND_DISPLAY")
+    if !distro || distro[0] == 0 || !wayland || wayland[0] == 0 { return 0 }
+
+    let enabled = getenv("RECURLOOP_WSLG_CURSOR_FIX")
+    if enabled && (strcmp(enabled, "0") == 0 || strcmp(enabled, "off") == 0 || strcmp(enabled, "false") == 0) {
+        return 0
+    }
+
+    // Preserve an explicit user choice. WSLg normally exports XCURSOR_SIZE=16;
+    // WAYLAND_CURSOR_SIZE is added for toolkits/backends that consult it.
+    if !getenv("XCURSOR_SIZE") { setenv("XCURSOR_SIZE", "16", 0) }
+    if !getenv("WAYLAND_CURSOR_SIZE") { setenv("WAYLAND_CURSOR_SIZE", "16", 0) }
+    return 1
 }
 
 let IDE:Config:apply = fn (self:IDE:Config*, host:IDE:Host*) -> i64 {
@@ -2413,7 +3300,9 @@ let IDE:Config:open = fn (self:IDE:Config*) -> i64 {
     let program = IDE:resolve_host()
     if !program { return 1 }
     defer free(program)
+    let normalize_wslg_cursor = IDE:prepare_wslg_cursor()
     if !Gui:initialize() { return 1 }
+    if normalize_wslg_cursor { Gui:cursor_theme_size(16) }
 
     let host = alloc(IDE:Host)
     if !host { return 1 }
@@ -2431,6 +3320,7 @@ let IDE:Config:open = fn (self:IDE:Config*) -> i64 {
     host.candidate_title = cast(u8*, 0)
     host.terminals = cast(IDE:Terminal*, 0)
     host.intelligence = cast(IDE:RuntimeSession*, 0)
+    host.intelligence_terminal = cast(IDE:Terminal*, 0)
     host.watcher = cast(IDE:Watcher*, 0)
     host.selected = cast(u8*, 0)
     host.pending_since = 0
@@ -2451,12 +3341,14 @@ let IDE:Config:open = fn (self:IDE:Config*) -> i64 {
     host.source_epoch = 0
     host.job = cast(IDE:Job*, 0)
     host.job_watch = IDE:job_done
+    host.application = IDE:Application:new()
+    host.breakpoints = cast(IDE:Breakpoint*, 0)
     host.window_title = IDE:copy(self.title_text)
     host.window_width = self.window_width
     host.window_height = self.window_height
     host.candidate_window_width = self.window_width
     host.candidate_window_height = self.window_height
-    if !host.root || !host.entry || !host.watch_root || !host.config_source || !host.window_title { IDE:free_host(host); return 1 }
+    if !host.root || !host.entry || !host.watch_root || !host.config_source || !host.window_title || !host.application { IDE:free_host(host); return 1 }
 
     host.window = Gui:window(host.window_title, cast(i32, host.window_width), cast(i32, host.window_height))
     if !host.window { IDE:free_host(host); return 1 }
@@ -2476,6 +3368,7 @@ let IDE:Config:open = fn (self:IDE:Config*) -> i64 {
         IDE:free_host(host)
         return 1
     }
+    if self.window_maximized { Gui:on_map(host.window, IDE:on_initial_window_map, cast(u8*, self)) }
     Gui:show(host.window)
     host.pending_since = IDE:now_ms()
     Gui:timer(20, IDE:startup_tick, cast(u8*, host))

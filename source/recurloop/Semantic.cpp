@@ -10,11 +10,13 @@
 #include <utilities/Exception.hpp>
 
 #include <algorithm>
+#include <array>
 #include <cstddef>
 #include <cctype>
 #include <cstdint>
 #include <cstring>
 #include <optional>
+#include <set>
 #include <sstream>
 #include <unordered_map>
 #include <unordered_set>
@@ -68,6 +70,7 @@ namespace recurloop {
       std::string docs;
       std::uint64_t group = 0;
       std::string ownerKey;
+      bool fallback = false;
     };
 
     struct TraceState {
@@ -75,6 +78,7 @@ namespace recurloop {
       std::string source;
       std::string path;
       std::unordered_map<Size, OwnMetadata> metadata;
+      bool metadataDirty = false;
       std::vector<Span> spans;
       std::vector<std::size_t> lineStarts;
       std::vector<std::size_t> characterOffsets;
@@ -87,9 +91,51 @@ namespace recurloop {
       std::uint64_t nextGroup = 1;
       std::size_t sourceSteps = 0;
       std::size_t sourceStepBudget = 0;
+      std::vector<std::string> matches;
+      std::unordered_map<Size, std::string> names;
+      bool namesDirty = false;
     };
 
     thread_local TraceState *currentTrace = nullptr;
+
+    std::unordered_map<Size, std::string> phrasePaths(context::Context &context) {
+      std::unordered_map<Size, std::string> names;
+      std::unordered_set<Size> visited;
+      const auto visit = [&](lexicon::Phrase owner, std::string prefix, const auto &self) -> void {
+        if (owner.isNull() || !owner.containsSubdictionary() ||
+            !visited.insert(owner.getSubdictionary().getAddress()).second)
+          return;
+        auto populated = [](radix::Node *, radix::Node *candidate) { return !candidate->isEmpty(); };
+        for (lexicon::Dictionary node = owner.fore(populated); !node.isNull(); node = node.next(populated)) {
+          lexicon::Phrase phrase = node.getPhrase();
+          if (phrase.isNull()) continue;
+          const std::string key = phrase.getKey();
+          const std::string name = prefix.empty() ? key : prefix + ':' + key;
+          std::unordered_set<Size> history;
+          for (lexicon::Phrase version = phrase; !version.isNull() && history.insert(version.getAddress()).second;
+               version = version.older())
+            names.try_emplace(version.getAddress(), name);
+          if (key.empty() || static_cast<unsigned char>(key.front()) >= 32) self(phrase, name, self);
+        }
+      };
+      visit(context.lexicon.phrase(), {}, visit);
+      return names;
+    }
+
+    std::string phrasePath(const std::unordered_map<Size, std::string> &names, lexicon::Phrase phrase) {
+      if (phrase.isNull()) return {};
+      const auto found = names.find(phrase.getAddress());
+      return found == names.end() ? phrase.getKey() : found->second;
+    }
+
+    std::size_t phraseVersion(lexicon::Phrase phrase) {
+      std::size_t version = 0;
+      std::unordered_set<Size> visited;
+      for (lexicon::Phrase older = phrase.older(); !older.isNull() && visited.insert(older.getAddress()).second;
+           older = older.older())
+        ++version;
+      return version;
+    }
 
     lexicon::Phrase exact(lexicon::Phrase owner, std::string_view key) {
       if (owner.isNull() || !owner.containsSubdictionary()) return lexicon::Phrase(owner.getLexicon());
@@ -173,6 +219,11 @@ namespace recurloop {
       return result;
     }
 
+    void refreshTraceCatalog(TraceState &trace) {
+      trace.metadata = catalog(*trace.context);
+      trace.metadataDirty = false;
+    }
+
     OwnMetadata own(context::Context &context, lexicon::Phrase phrase) {
       const auto values = catalog(context);
       const auto found = values.find(phrase.getAddress());
@@ -203,6 +254,11 @@ namespace recurloop {
         phrase = phrase.getPrototype();
       }
       return result;
+    }
+
+    SemanticMetadata resolvedTrace(TraceState &trace, lexicon::Phrase phrase) {
+      if (trace.metadataDirty) refreshTraceCatalog(trace);
+      return resolved(trace.metadata, phrase);
     }
 
     void write(context::Context &context, lexicon::Phrase target, Patch patch) {
@@ -237,7 +293,7 @@ namespace recurloop {
       header.docsBytes = static_cast<std::uint32_t>(value.docs.size());
 
       const std::size_t total = sizeof(header) + value.kind.size() + value.color.size() + value.docs.size();
-      lexicon::Phrase &record = owner.append(keyFor(target.getAddress()))
+      lexicon::Phrase record = owner.append(keyFor(target.getAddress()))
                                     .make()
                                     .setPrototype(recordSchema)
                                     .setType(lexicon::phrase::type::getData(root))
@@ -300,7 +356,7 @@ namespace recurloop {
       Size owner = 0;
     };
 
-    DocsAnchor docsAnchor(const TraceState &trace, lexicon::Phrase phrase) {
+    DocsAnchor docsAnchor(TraceState &trace, lexicon::Phrase phrase) {
       std::unordered_set<Size> visited;
       while (!phrase.isNull() && visited.insert(phrase.getAddress()).second) {
         if (const auto found = trace.metadata.find(phrase.getAddress()); found != trace.metadata.end()) {
@@ -330,6 +386,7 @@ namespace recurloop {
       span.docs = std::string(docs);
       span.ownerKey = std::string(ownerKey);
       span.group = group;
+      span.fallback = true;
       trace.spans.push_back(std::move(span));
     }
 
@@ -378,21 +435,36 @@ namespace recurloop {
       return result;
     }
 
-    void recordLexicalBaseline(TraceState &trace) {
-      const std::vector<LexicalPhraseStyle> phrases = lexicalPhraseStyles(trace);
+    struct LexicalBaselineCatalog {
+      std::vector<LexicalPhraseStyle> phrases;
+      std::array<std::vector<std::size_t>, 256> phraseBuckets;
       std::unordered_set<std::string> typeNames;
       std::unordered_set<std::string> functionNames;
+    };
+
+    LexicalBaselineCatalog buildLexicalBaselineCatalog(TraceState &trace) {
+      LexicalBaselineCatalog result;
+      result.phrases = lexicalPhraseStyles(trace);
+      for (std::size_t index = 0; index < result.phrases.size(); ++index) {
+        const LexicalPhraseStyle &phrase = result.phrases[index];
+        if (!phrase.key.empty())
+          result.phraseBuckets[static_cast<unsigned char>(phrase.key.front())].push_back(index);
+      }
       try {
         compiler::LanguageState language = trace.context->language();
         for (const compiler::TypeDescriptor &type : language.types.types())
-          if (!type.name.empty()) typeNames.insert(type.name);
+          if (!type.name.empty()) result.typeNames.insert(type.name);
         for (const compiler::TypedFunction &function : language.functions())
-          if (!function.name.empty()) functionNames.insert(function.name);
+          if (!function.name.empty()) result.functionNames.insert(function.name);
       } catch (...) {
         // Phrase metadata and literal/comment highlighting remain useful even
         // for a deliberately tiny host that has no typed-language registry.
       }
+      return result;
+    }
 
+    void recordLexicalBaseline(TraceState &trace) {
+      const LexicalBaselineCatalog catalog = buildLexicalBaselineCatalog(trace);
       const std::string_view source(trace.source);
       std::size_t cursor = 0;
       while (cursor < source.size()) {
@@ -428,7 +500,8 @@ namespace recurloop {
         }
 
         bool phraseMatched = false;
-        for (const LexicalPhraseStyle &candidate : phrases) {
+        for (const std::size_t candidateIndex : catalog.phraseBuckets[first]) {
+          const LexicalPhraseStyle &candidate = catalog.phrases[candidateIndex];
           if (candidate.key.size() > source.size() - cursor || source.compare(cursor, candidate.key.size(), candidate.key) != 0 ||
               !lexicalBoundary(source, cursor, candidate.key))
             continue;
@@ -467,8 +540,8 @@ namespace recurloop {
             break;
           }
           const std::string_view name = source.substr(begin, cursor - begin);
-          const bool type = typeNames.contains(std::string(name));
-          const bool function = !type && functionNames.contains(std::string(name));
+          const bool type = catalog.typeNames.contains(std::string(name));
+          const bool function = !type && catalog.functionNames.contains(std::string(name));
           if (type) appendStyle(trace, begin, cursor, "#4EC9B0", "type");
           else if (function) appendStyle(trace, begin, cursor, "#DCDCAA", "function");
           else appendStyle(trace, begin, cursor, "#9CDCFE", "identifier");
@@ -502,7 +575,16 @@ namespace recurloop {
   }
 
   SemanticMetadata Semantic::resolve(context::Context &context, lexicon::Phrase phrase) {
+    if (currentTrace != nullptr && currentTrace->context == &context)
+      return resolvedTrace(*currentTrace, phrase);
     return resolved(catalog(context), phrase);
+  }
+
+  void Semantic::markInspectionMetadataDirty(context::Context &context) {
+    if (currentTrace != nullptr && currentTrace->context == &context) {
+      currentTrace->metadataDirty = true;
+      currentTrace->namesDirty = true;
+    }
   }
 
   void Semantic::applyPending(context::Context &context, lexicon::Phrase phrase) {
@@ -537,6 +619,7 @@ namespace recurloop {
     }
     state->characterOffsets[state->source.size()] = characters;
     state->metadata = catalog(context);
+    state->names = phrasePaths(context);
     // Source grammars legitimately use empty transition phrases, so the budget
     // is deliberately generous and scales with the inspected buffer.  It is a
     // deterministic safety bound, not a debounce or wall-clock timeout.
@@ -550,12 +633,25 @@ namespace recurloop {
 
   Semantic::InspectionScope::~InspectionScope() {
     if (currentTrace == state_) currentTrace = static_cast<TraceState *>(previous_);
-    delete static_cast<TraceState *>(state_);
+    auto *state = static_cast<TraceState *>(state_);
+    delete state;
   }
 
   std::string Semantic::InspectionScope::encode(std::string_view diagnostic) const {
     auto &state = *static_cast<TraceState *>(state_);
     std::vector<Span> spans = state.spans;
+
+    // Lexical coloring is only a fallback. Once elaboration recorded a real
+    // semantic phrase with a color for exactly the same range, discard the
+    // fallback span so consumers never receive two competing colors whose final
+    // appearance depends on sort order.
+    std::set<std::pair<std::size_t, std::size_t>> semanticColors;
+    for (const Span &span : spans)
+      if (!span.fallback && !span.color.empty()) semanticColors.emplace(span.start, span.end);
+    spans.erase(std::remove_if(spans.begin(), spans.end(), [&](const Span &span) {
+                  return span.fallback && semanticColors.contains({span.start, span.end});
+                }), spans.end());
+
     std::sort(spans.begin(), spans.end(), [](const Span &left, const Span &right) {
       if (left.start != right.start) return left.start < right.start;
       if (left.end != right.end) return left.end < right.end;
@@ -578,6 +674,71 @@ namespace recurloop {
              << hex(span.kind) << '\t' << hex(span.docs) << '\t' << hex(span.ownerKey) << '\n';
     }
     if (!diagnostic.empty()) output << "E\t" << hex(diagnostic) << '\n';
+    return output.str();
+  }
+
+  std::string Semantic::InspectionScope::trace() const {
+    auto &state = *static_cast<TraceState *>(state_);
+    context::Context &context = *state.context;
+    std::ostringstream output;
+    for (const std::string &match : state.matches) output << match;
+
+    // Export compiler facts rather than interpreting source spellings. Clients
+    // can implement documentation, navigation or other analyses in .rl.
+    std::unordered_map<std::string, std::string> signatures;
+    std::unordered_set<std::string> types;
+    try {
+      compiler::LanguageState language = context.language();
+      for (const auto &type : language.types.types()) types.insert(type.name);
+      for (const auto &function : language.functions()) {
+        std::ostringstream signature;
+        signature << function.name << '(';
+        for (std::size_t i = 0; i < function.parameterTypes.size(); ++i) {
+          if (i != 0) signature << ", ";
+          signature << language.types.get(function.parameterTypes[i]).name;
+        }
+        if (function.signature.variadic) {
+          if (!function.parameterTypes.empty()) signature << ", ";
+          signature << "...";
+        }
+        signature << ')';
+        if (function.resultType != compiler::InvalidType)
+          signature << " -> " << language.types.get(function.resultType).name;
+        // Keep every overload as its own catalog entry.
+        if (!signatures[function.name].empty()) signatures[function.name] += '\n';
+        signatures[function.name] += signature.str();
+      }
+    } catch (...) {
+      // A minimal language may have no compiler registry.
+    }
+    const auto metadata = catalog(context);
+    const auto names = phrasePaths(context);
+    std::unordered_set<Size> visited;
+    const auto visit = [&](lexicon::Phrase owner, const auto &self) -> void {
+      if (owner.isNull() || !owner.containsSubdictionary() ||
+          !visited.insert(owner.getSubdictionary().getAddress()).second)
+        return;
+      auto populated = [](radix::Node *, radix::Node *candidate) { return !candidate->isEmpty(); };
+      for (lexicon::Dictionary node = owner.fore(populated); !node.isNull(); node = node.next(populated)) {
+        lexicon::Phrase phrase = node.getPhrase();
+        if (phrase.isNull()) continue;
+        const std::string key = phrase.getKey();
+        if (key.empty() || static_cast<unsigned char>(key.front()) < 32) continue;
+        const std::string name = phrasePath(names, phrase);
+        const SemanticMetadata style = resolved(metadata, phrase);
+        std::string kind = style.hasKind ? style.kind : "phrase";
+        if (types.contains(name)) kind = "type";
+        if (signatures.contains(name)) kind = "function";
+        std::string prototype;
+        std::string type;
+        if (phrase.containsPrototype()) prototype = phrasePath(names, phrase.getPrototype());
+        if (phrase.containsType()) type = phrasePath(names, phrase.getType());
+        output << "P\t" << phraseVersion(phrase) << '\t' << hex(name) << '\t' << hex(kind) << '\t' << hex(style.docs)
+               << '\t' << hex(prototype) << '\t' << hex(type) << '\t' << hex(signatures[name]) << '\n';
+        self(phrase, self);
+      }
+    };
+    visit(context.lexicon.phrase(), visit);
     return output.str();
   }
 
@@ -640,6 +801,18 @@ namespace recurloop {
     const std::optional<std::size_t> endByte = sourceOffset(trace, end);
     if (!startByte || !endByte || *endByte <= *startByte) return fallbackOwner;
 
+    // A lexical path plus its chronological version identifies the matched
+    // phrase independently of arena addresses or later shadow definitions.
+    if (trace.namesDirty || !trace.names.contains(phrase.getAddress())) {
+      trace.names = phrasePaths(context);
+      trace.namesDirty = false;
+      trace.names.try_emplace(phrase.getAddress(), phrase.getKey());
+    }
+    std::ostringstream match;
+    match << "R\t" << characterOffset(trace, *startByte) << '\t' << characterOffset(trace, *endByte) << '\t'
+          << start.line << '\t' << phraseVersion(phrase) << '\t' << hex(phrasePath(trace.names, phrase)) << '\n';
+    trace.matches.push_back(match.str());
+
     Size fallback = fallbackOwner;
     std::uint64_t fallbackGroup = ownerGroup != nullptr ? *ownerGroup : 0;
     if (fallback != 0 && fallbackGroup == 0 && fallback == trace.activeOwner) fallbackGroup = trace.activeGroup;
@@ -652,6 +825,10 @@ namespace recurloop {
       fallbackGroup = trace.activeGroup;
     }
 
+    // Resolve style first: if an image was restored since the last source
+    // phrase and this is the first newly introduced phrase, resolvedTrace()
+    // refreshes metadata once so docsAnchor() below sees the same state.
+    const SemanticMetadata style = resolvedTrace(trace, phrase);
     const DocsAnchor anchor = docsAnchor(trace, phrase);
     Size selectedOwner = fallback;
     std::uint64_t selectedGroup = fallbackGroup;
@@ -668,13 +845,12 @@ namespace recurloop {
     trace.lastOwner = selectedOwner;
     trace.lastGroup = selectedGroup;
 
-    const SemanticMetadata style = resolved(trace.metadata, phrase);
     SemanticMetadata hover;
     std::string ownerKey;
     if (selectedOwner != 0) {
       lexicon::Phrase ownerPhrase = phraseAt(trace, selectedOwner);
       if (!ownerPhrase.isNull()) {
-        hover = resolved(trace.metadata, ownerPhrase);
+        hover = resolvedTrace(trace, ownerPhrase);
         ownerKey = ownerPhrase.getKey();
       }
     }

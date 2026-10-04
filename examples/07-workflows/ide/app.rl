@@ -51,6 +51,19 @@ record IDE:App:SearchResult {
     next:IDE:App:SearchResult*
 }
 
+record IDE:App:IntelligenceResult {
+    id:u64
+    path:u8*
+    start:u64
+    finish:u64
+    line:u64
+    role:i64
+    label:u8*
+    insert:u8*
+    completion:i64
+    next:IDE:App:IntelligenceResult*
+}
+
 record IDE:App:HistoryNode {
     id:u64
     parent_id:u64
@@ -125,7 +138,18 @@ record IDE:App:State {
     right_split:u8*
     editor:u8*
     editor_scroll:u8*
+    line_gutter:u8*
+    line_gutter_scroll:u8*
+    line_gutter_breakpoint_style:u8*
+    line_gutter_active_style:u8*
     file_label:u8*
+    application_output:u8*
+    application_status:u8*
+    application_mode:u8*
+    application_debug_input:u8*
+    application_page:i64
+    application_render_revision:u64
+    application_stop_revision_seen:u64
     status:u8*
     semantic_diagnostic:u8*
     notebook:u8*
@@ -184,6 +208,17 @@ record IDE:App:State {
     search_boundary:i64
     search_regex:i64
     search_visible:i64
+
+    intelligence_index:u8*
+    intelligence_pane:u8*
+    intelligence_tree:u8*
+    intelligence_input:u8*
+    intelligence_status:u8*
+    intelligence_results:IDE:App:IntelligenceResult*
+    intelligence_result_tail:IDE:App:IntelligenceResult*
+    intelligence_result_count:u64
+    intelligence_next_id:u64
+    intelligence_visible:i64
 }
 
 record IDE:App:TreeLoad {
@@ -197,6 +232,12 @@ let IDE:App:state = fn (host:IDE:Host*) -> IDE:App:State* {
     let data = IDE:view_data(host)
     if !data { return cast(IDE:App:State*, 0) }
     return cast(IDE:App:State*, data)
+}
+
+// Shared UI status primitive. Keep it in app.rl because terminal/editor/explorer/view
+// all use it and app.rl is the dependency root of the concrete IDE modules.
+let IDE:App:set_status = fn (state:IDE:App:State*, text:u8*) -> void {
+    if state && state.status { Gui:label_text(state.status, text) }
 }
 
 // Shared by find/search/editor modules. Keep this primitive helper in app.rl so

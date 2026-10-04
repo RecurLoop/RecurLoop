@@ -96,11 +96,10 @@ namespace recurloop {
   }
 
   void Engine::importImage(context::Context &context, lexicon::Phrase &) {
-    if (Semantic::active(context)) {
-      inspectExpression(context, readLine(context), "engine import");
-      resumeRoot(context);
-      return;
-    }
+    // Inspection is a rollback-only execution transaction, so imports must
+    // behave exactly like normal imports. Skipping the image here makes the
+    // semantic worker elaborate a different language state than the compiler
+    // (including root files that import their language before includes).
     const std::string imagePath = path(context, "engine import");
     // Project module caches treat imports exactly like linked-library
     // dependencies. Notify the active cache on both sides of the load so it can
@@ -109,6 +108,7 @@ namespace recurloop {
     // The restore replaces the lexicon that owns the currently invoked phrase.
     context.exec.invoked = nullptr;
     EngineImage::load(context, imagePath);
+    Semantic::markInspectionMetadataDirty(context);
     observeImageDependency(context, imagePath, true);
 
     // Loading a new image resets lookup to the restored root. Loading an image
@@ -136,10 +136,6 @@ namespace recurloop {
   }
 
   void Engine::includeSource(context::Context &context, lexicon::Phrase &) {
-    if (Semantic::active(context)) {
-      inspectExpression(context, readLine(context), "include");
-      return;
-    }
     std::filesystem::path includePath(path(context, "include"));
     if (includePath.is_relative() && !context.source.path.empty() && context.source.path.front() != '<')
       includePath = std::filesystem::path(context.source.path).parent_path() / includePath;

@@ -202,6 +202,12 @@ extern malloc(size:u64) -> u8* abi sysv-amd64
 extern free(pointer:u8*) -> void abi sysv-amd64
 ```
 
+Repeating an identical external declaration reuses the existing import,
+including imports supplied by an engine image. The source name, native symbol,
+parameter and result types, variadic flag, and calling convention must match.
+A conflicting declaration or an external declaration over a function definition
+is rejected.
+
 ## Source-defined syntax
 
 Syntax fields and parser behaviors are phrases, so source can alias or install

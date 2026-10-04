@@ -55,6 +55,8 @@ let IDE:App:create_explorer = fn (state:IDE:App:State*) -> u8* {
 
     let header = Gui:row(0)
     Gui:class_add(header, "explorer-header")
+    Gui:align_top(header)
+    Gui:expand_x(header, 1)
     let title = Gui:label("EXPLORER")
     Gui:label_align(title, cast(f32, 0.0))
     Gui:class_add(title, "explorer-title")
@@ -105,6 +107,8 @@ let IDE:App:create_editor = fn (state:IDE:App:State*) -> u8* {
     Gui:class_add(box, "editor-pane")
     let toolbar = Gui:row(6)
     Gui:class_add(toolbar, "ide-toolbar")
+    Gui:align_top(toolbar)
+    Gui:expand_x(toolbar, 1)
     state.file_label = Gui:label("No file selected")
     Gui:label_align(state.file_label, cast(f32, 0.0))
     Gui:class_add(state.file_label, "path-label")
@@ -141,13 +145,31 @@ let IDE:App:create_editor = fn (state:IDE:App:State*) -> u8* {
     state.editor = Gui:editor()
     Gui:on_text_changed(state.editor, IDE:App:on_editor_changed, cast(u8*, state))
     Gui:on_text_tooltip(state.editor, IDE:App:on_editor_tooltip, cast(u8*, state))
+    Gui:on_text_popup(state.editor, IDE:App:on_editor_context_menu, cast(u8*, state))
+    Gui:on_key_press(state.editor, IDE:App:on_editor_intelligence_key, cast(u8*, state))
     state.semantic_diagnostic = Gui:label("")
     Gui:label_align(state.semantic_diagnostic, cast(f32, 0.0))
     Gui:class_add(state.semantic_diagnostic, "semantic-diagnostic")
+    Gui:align_bottom(state.semantic_diagnostic)
+    Gui:expand_x(state.semantic_diagnostic, 1)
     Gui:append(box, toolbar, 0, 0)
+    Gui:append(box, IDE:App:create_application_toolbar(state), 0, 0)
     Gui:append(box, IDE:App:create_find_bar(state), 0, 0)
+
     state.editor_scroll = Gui:scroll(state.editor)
-    Gui:append(box, state.editor_scroll, 1, 0)
+    Gui:expand_x(state.editor_scroll, 1)
+    Gui:expand_y(state.editor_scroll, 1)
+    state.line_gutter = Gui:line_gutter()
+    state.line_gutter_breakpoint_style = Gui:text_style(state.line_gutter, "breakpoint", "#a94848")
+    state.line_gutter_active_style = Gui:text_style(state.line_gutter, "breakpoint-active", "#ff2d20")
+    Gui:on_button_press(state.line_gutter, IDE:App:on_line_gutter_press, cast(u8*, state))
+    let editor_adjustment = Gui:scroll_vadjustment(state.editor_scroll)
+    state.line_gutter_scroll = Gui:scroll_with_vadjustment(state.line_gutter, editor_adjustment, 2, 2)
+    let editor_surface = Gui:row(0)
+    Gui:append(editor_surface, state.line_gutter_scroll, 0, 0)
+    Gui:append(editor_surface, state.editor_scroll, 1, 0)
+    Gui:append(box, editor_surface, 1, 0)
+    IDE:App:update_line_gutter(state)
     Gui:append(box, state.semantic_diagnostic, 0, 0)
     return box
 }
@@ -158,6 +180,8 @@ let IDE:App:create_terminal_panel = fn (state:IDE:App:State*) -> u8* {
 
     let toolbar = Gui:row(6)
     Gui:class_add(toolbar, "ide-toolbar")
+    Gui:align_top(toolbar)
+    Gui:expand_x(toolbar, 1)
 
     let label = Gui:label("TERMINAL")
     Gui:label_align(label, cast(f32, 0.0))
@@ -172,6 +196,9 @@ let IDE:App:create_terminal_panel = fn (state:IDE:App:State*) -> u8* {
     Gui:append_end(toolbar, add_terminal, 0, 4)
 
     state.notebook = Gui:tabs()
+    Gui:expand_x(state.notebook, 1)
+    Gui:expand_y(state.notebook, 1)
+    IDE:App:create_application_console(state)
     Gui:append(box, toolbar, 0, 0)
     Gui:append(box, state.notebook, 1, 0)
 
@@ -182,6 +209,8 @@ let IDE:App:create_status = fn (state:IDE:App:State*) -> u8* {
     state.status = Gui:label("starting")
     Gui:label_align(state.status, cast(f32, 0.0))
     Gui:class_add(state.status, "ide-status")
+    Gui:align_bottom(state.status)
+    Gui:expand_x(state.status, 1)
     return state.status
 }
 
@@ -198,7 +227,18 @@ let IDE:App:mount = fn (host:IDE:Host*) -> void {
     state.right_split = cast(u8*, 0)
     state.editor = cast(u8*, 0)
     state.editor_scroll = cast(u8*, 0)
+    state.line_gutter = cast(u8*, 0)
+    state.line_gutter_scroll = cast(u8*, 0)
+    state.line_gutter_breakpoint_style = cast(u8*, 0)
+    state.line_gutter_active_style = cast(u8*, 0)
     state.file_label = cast(u8*, 0)
+    state.application_output = cast(u8*, 0)
+    state.application_status = cast(u8*, 0)
+    state.application_mode = cast(u8*, 0)
+    state.application_debug_input = cast(u8*, 0)
+    state.application_page = -1
+    state.application_render_revision = 0
+    state.application_stop_revision_seen = 0
     state.status = cast(u8*, 0)
     state.semantic_diagnostic = cast(u8*, 0)
     state.notebook = cast(u8*, 0)
@@ -254,6 +294,16 @@ let IDE:App:mount = fn (host:IDE:Host*) -> void {
     state.search_boundary = 0
     state.search_regex = 0
     state.search_visible = 0
+    state.intelligence_index = cast(u8*, 0)
+    state.intelligence_pane = cast(u8*, 0)
+    state.intelligence_tree = cast(u8*, 0)
+    state.intelligence_input = cast(u8*, 0)
+    state.intelligence_status = cast(u8*, 0)
+    state.intelligence_results = cast(IDE:App:IntelligenceResult*, 0)
+    state.intelligence_result_tail = cast(IDE:App:IntelligenceResult*, 0)
+    state.intelligence_result_count = 0
+    state.intelligence_next_id = 1
+    state.intelligence_visible = 0
 
     let main = Gui:split_horizontal()
     let right = Gui:split_vertical()
@@ -263,9 +313,11 @@ let IDE:App:mount = fn (host:IDE:Host*) -> void {
     state.explorer_pane = IDE:App:create_explorer(state)
     state.history_pane = IDE:App:create_history_view(state)
     state.search_pane = IDE:App:create_search_view(state)
+    state.intelligence_pane = IDE:App:create_intelligence_view(state)
     Gui:stack_add(state.sidebar_stack, state.explorer_pane)
     Gui:stack_add(state.sidebar_stack, state.history_pane)
     Gui:stack_add(state.sidebar_stack, state.search_pane)
+    Gui:stack_add(state.sidebar_stack, state.intelligence_pane)
     Gui:stack_select(state.sidebar_stack, state.explorer_pane)
     let editor = IDE:App:create_editor(state)
     let terminals = IDE:App:create_terminal_panel(state)
@@ -273,8 +325,8 @@ let IDE:App:mount = fn (host:IDE:Host*) -> void {
     var main_position:i32 = 300
     if state.restore_snapshot && state.restore_snapshot.main_split > 0 { main_position = cast(i32, state.restore_snapshot.main_split) }
     Gui:split_position(main, main_position)
-    Gui:split_first(right, editor, 1)
-    Gui:split_second(right, terminals, 1)
+    Gui:split_primary(right, editor)
+    Gui:split_auxiliary(right, terminals)
     var right_position:i32 = 555
     if state.restore_snapshot && state.restore_snapshot.right_split > 0 { right_position = cast(i32, state.restore_snapshot.right_split) }
     Gui:split_position(right, right_position)
@@ -295,6 +347,7 @@ let IDE:App:mount = fn (host:IDE:Host*) -> void {
     // becomes visible; project code never replaces the native window child.
     if !IDE:view_attach(host, state.root_box, cast(u8*, state)) {
         IDE:App:search_clear_results(state)
+        IDE:App:intelligence_free_results(state)
         Gui:destroy(state.root_box)
         IDE:App:free_files(state)
         IDE:App:free_terminal_views(state)
@@ -325,6 +378,9 @@ let IDE:App:unmount = fn (host:IDE:Host*) -> void {
     if state.history_refresh_idle_source != 0 { Gui:source_remove(state.history_refresh_idle_source); state.history_refresh_idle_source = 0 }
     IDE:App:history_close(state)
     IDE:App:search_free_results(state)
+    IDE:Analysis:destroy(cast(IDE:Analysis:Index*, state.intelligence_index))
+    state.intelligence_index = cast(u8*, 0)
+    IDE:App:intelligence_release_results(state)
     if state.find_query { free(state.find_query) }
     IDE:App:view_state_snapshot_free(state.restore_snapshot)
     state.restore_snapshot = cast(IDE:App:ViewSnapshot*, 0)
@@ -336,19 +392,49 @@ let IDE:App:reload_failed = fn (host:IDE:Host*) -> void {
     if state { IDE:App:update_status(state) }
 }
 
+let IDE:App:navigate_debug_stop = fn (state:IDE:App:State*) -> void {
+    if !state || !state.host || !state.host.application { return }
+    let application = state.host.application
+    if application.state != IDE:ApplicationState:Paused() || application.stop_revision == 0 ||
+       application.stop_revision == state.application_stop_revision_seen || !application.stop_path || application.stop_line == 0 { return }
+    state.application_stop_revision_seen = application.stop_revision
+
+    let root = IDE:App:application_root(state)
+    if !root { return }
+    let allowed = IDE:path_is_inside(application.stop_path, root)
+    free(root)
+    if !allowed || !IDE:file_exists(application.stop_path) { return }
+
+    if !state.host.selected || strcmp(state.host.selected, application.stop_path) != 0 {
+        IDE:App:open_path(state, application.stop_path)
+    }
+    let text = IDE:App:editor_text(state)
+    if text {
+        let start = IDE:App:debug_line_start(text, application.stop_line)
+        IDE:App:find_select(state, text, start, start)
+        Gui:text_free(text)
+    }
+    IDE:App:show_application_console(state)
+}
+
+let IDE:App:application_event = fn (host:IDE:Host*) -> void {
+    let state = IDE:App:state(host)
+    if !state { return }
+    IDE:App:render_application(state)
+    IDE:App:navigate_debug_stop(state)
+    IDE:App:update_line_gutter(state)
+}
+
 let IDE:App:runtime_ready = fn (host:IDE:Host*) -> void {
     let state = IDE:App:state(host)
     if !state { return }
     // start_reload() calls runtime_ready on the still-visible generation after
     // installing the reload worker. Capture exactly at that generation boundary.
     if host.job && host.job.kind == 2 { IDE:App:view_state_capture(state) }
-    if !host.terminals {
-        let model = IDE:terminal_new(host)
-        if model { IDE:App:add_terminal_view(state, model); Gui:show(state.notebook) }
-    } else if !state.terminal_views {
-        IDE:App:mount_terminals(state)
-        Gui:show(state.notebook)
-    }
+    // User terminals and internal IDE worker sessions are persistent models.
+    // Mount only models not already represented by this view generation.
+    IDE:App:mount_terminals(state)
+    if state.terminal_views { Gui:show(state.notebook) }
     IDE:App:schedule_semantics(state)
     IDE:App:update_status(state)
 }
@@ -362,4 +448,5 @@ let IDE:App:lifecycle = fn (action:i64, raw:u8*) -> void {
     else if action == 2 { IDE:App:unmount(host) }
     else if action == 3 { IDE:App:reload_failed(host) }
     else if action == 4 { IDE:App:runtime_ready(host) }
+    else if action == 6 { IDE:App:application_event(host) }
 }

@@ -26,6 +26,8 @@ let Gui:Modifier = phrase { dictionary = true permanent = true }
 let Gui:Signal = fn (widget:u8*, data:u8*) -> void
 let Gui:Timer = fn (data:u8*) -> i32
 let Gui:TooltipQuery = fn (widget:u8*, x:i32, y:i32, keyboard:i32, tooltip:u8*, data:u8*) -> i32
+let Gui:PopupSignal = fn (widget:u8*, menu:u8*, data:u8*) -> void
+let Gui:EventSignal = fn (widget:u8*, event:u8*, data:u8*) -> i32
 
 // -----------------------------------------------------------------------------
 // Native GTK3 backend.  Keep every backend symbol private to this library.
@@ -36,20 +38,33 @@ extern gtk_init_check(argc:i32*, argv:u8***) -> i32 abi sysv-amd64
 extern gtk_window_new(kind:i32) -> u8* abi sysv-amd64
 extern gtk_window_set_title(window:u8*, title:u8*) -> void abi sysv-amd64
 extern gtk_window_set_default_size(window:u8*, width:i32, height:i32) -> void abi sysv-amd64
+extern gtk_window_maximize(window:u8*) -> void abi sysv-amd64
 extern gtk_css_provider_new() -> u8* abi sysv-amd64
 extern gtk_css_provider_load_from_data(provider:u8*, data:u8*, length:i64, error:u8**) -> i32 abi sysv-amd64
 extern gtk_style_context_add_provider_for_screen(screen:u8*, provider:u8*, priority:u32) -> void abi sysv-amd64
 extern gtk_widget_get_style_context(widget:u8*) -> u8* abi sysv-amd64
 extern gtk_style_context_add_class(context:u8*, name:u8*) -> void abi sysv-amd64
 extern gdk_screen_get_default() -> u8* abi sysv-amd64
+extern gdk_event_get_keyval(event:u8*, keyval:u32*) -> i32 abi sysv-amd64
+extern gdk_event_get_state(event:u8*, state:u32*) -> i32 abi sysv-amd64
+extern gdk_event_get_coords(event:u8*, x:f64*, y:f64*) -> i32 abi sysv-amd64
+extern gdk_event_get_button(event:u8*, button:u32*) -> i32 abi sysv-amd64
 extern gtk_widget_set_size_request(widget:u8*, width:i32, height:i32) -> void abi sysv-amd64
+extern gtk_widget_get_allocated_width(widget:u8*) -> i32 abi sysv-amd64
+extern gtk_widget_get_allocated_height(widget:u8*) -> i32 abi sysv-amd64
 extern gtk_box_new(orientation:i32, spacing:i32) -> u8* abi sysv-amd64
 extern gtk_paned_new(orientation:i32) -> u8* abi sysv-amd64
 extern gtk_paned_pack1(paned:u8*, child:u8*, resize:i32, shrink:i32) -> void abi sysv-amd64
 extern gtk_paned_pack2(paned:u8*, child:u8*, resize:i32, shrink:i32) -> void abi sysv-amd64
+extern gtk_combo_box_text_new() -> u8* abi sysv-amd64
+extern gtk_combo_box_text_append_text(combo:u8*, text:u8*) -> void abi sysv-amd64
+extern gtk_combo_box_set_active(combo:u8*, index:i32) -> void abi sysv-amd64
+extern gtk_combo_box_get_active(combo:u8*) -> i32 abi sysv-amd64
 extern gtk_paned_set_position(paned:u8*, position:i32) -> void abi sysv-amd64
+extern gtk_paned_set_wide_handle(paned:u8*, wide:i32) -> void abi sysv-amd64
 extern gtk_scrolled_window_new(hadjustment:u8*, vadjustment:u8*) -> u8* abi sysv-amd64
 extern gtk_scrolled_window_set_policy(window:u8*, horizontal:i32, vertical:i32) -> void abi sysv-amd64
+extern gtk_scrolled_window_get_vadjustment(window:u8*) -> u8* abi sysv-amd64
 extern gtk_container_add(container:u8*, child:u8*) -> void abi sysv-amd64
 extern gtk_stack_new() -> u8* abi sysv-amd64
 extern gtk_stack_set_visible_child(stack:u8*, child:u8*) -> void abi sysv-amd64
@@ -66,6 +81,9 @@ extern gtk_button_set_always_show_image(button:u8*, always:i32) -> void abi sysv
 extern gtk_image_new_from_icon_name(icon:u8*, size:i32) -> u8* abi sysv-amd64
 extern gtk_widget_set_tooltip_text(widget:u8*, text:u8*) -> void abi sysv-amd64
 extern gtk_button_set_alignment(button:u8*, x:f32, y:f32) -> void abi sysv-amd64
+extern gtk_menu_item_new_with_label(text:u8*) -> u8* abi sysv-amd64
+extern gtk_separator_menu_item_new() -> u8* abi sysv-amd64
+extern gtk_menu_shell_append(menu:u8*, child:u8*) -> void abi sysv-amd64
 extern gtk_text_view_new() -> u8* abi sysv-amd64
 extern gtk_text_view_get_buffer(view:u8*) -> u8* abi sysv-amd64
 extern gtk_text_view_set_monospace(view:u8*, monospace:i32) -> void abi sysv-amd64
@@ -87,6 +105,7 @@ extern gtk_text_buffer_apply_tag(buffer:u8*, tag:u8*, start:u8*, finish:u8*) -> 
 extern gtk_text_view_window_to_buffer_coords(view:u8*, window_type:i32, window_x:i32, window_y:i32, buffer_x:i32*, buffer_y:i32*) -> void abi sysv-amd64
 extern gtk_text_view_get_iter_at_location(view:u8*, iterator:u8*, x:i32, y:i32) -> void abi sysv-amd64
 extern gtk_text_iter_get_offset(iterator:u8*) -> i32 abi sysv-amd64
+extern gtk_text_iter_get_line(iterator:u8*) -> i32 abi sysv-amd64
 extern gtk_widget_set_has_tooltip(widget:u8*, enabled:i32) -> void abi sysv-amd64
 extern gtk_tooltip_set_text(tooltip:u8*, text:u8*) -> void abi sysv-amd64
 extern gtk_entry_new() -> u8* abi sysv-amd64
@@ -100,6 +119,8 @@ extern gtk_notebook_set_current_page(notebook:u8*, page:i32) -> void abi sysv-am
 extern gtk_notebook_set_scrollable(notebook:u8*, scrollable:i32) -> void abi sysv-amd64
 extern gtk_widget_set_hexpand(widget:u8*, expand:i32) -> void abi sysv-amd64
 extern gtk_widget_set_vexpand(widget:u8*, expand:i32) -> void abi sysv-amd64
+extern gtk_widget_set_halign(widget:u8*, align:i32) -> void abi sysv-amd64
+extern gtk_widget_set_valign(widget:u8*, align:i32) -> void abi sysv-amd64
 extern gtk_widget_show_all(widget:u8*) -> void abi sysv-amd64
 extern gtk_widget_grab_focus(widget:u8*) -> void abi sysv-amd64
 extern gtk_widget_destroy(widget:u8*) -> void abi sysv-amd64
@@ -156,7 +177,7 @@ let Gui:Backend:dark_css = fn () -> u8* {
     // RecurLoop does not concatenate adjacent string literals. Keep the whole
     // GTK stylesheet in one literal; the old version only applied its first
     // `* { color: ... }` rule, which is why WSL showed grey text on white.
-    return "* { color: #cccccc; font-size: 10pt; } window, window.background, .background, .app-root { background-color: #1e1e1e; color: #cccccc; } box, paned, notebook, scrolledwindow, viewport { background-color: #1e1e1e; color: #cccccc; } label { color: #cccccc; } button { background-image: none; background-color: #2d2d30; color: #cccccc; border: 1px solid #3f3f46; border-radius: 3px; padding: 4px 8px; box-shadow: none; text-shadow: none; } button:hover { background-color: #3a3d41; color: #ffffff; } button:active, button:checked { background-color: #094771; color: #ffffff; } entry { background-image: none; background-color: #1e1e1e; color: #d4d4d4; border: 1px solid #3c3c3c; border-radius: 2px; padding: 4px 6px; box-shadow: none; } entry:focus { border-color: #007acc; } entry, entry text, textview, textview.view, textview text, textview.view text, .editor, .editor text, .terminal-input { caret-color: #ffffff; -gtk-secondary-caret-color: #80c8ff; } textview, textview.view, textview text, textview.view text { background-color: #1e1e1e; color: #d4d4d4; } treeview, treeview.view { background-color: #181818; color: #cccccc; border: 0; } treeview.view:selected { background-color: #094771; color: #ffffff; } treeview.view:hover { background-color: #2a2d2e; } notebook, notebook > stack { background-color: #181818; } notebook > header { background-color: #181818; border-color: #2b2b2b; } notebook > header > tabs > tab { background-color: #181818; color: #969696; padding: 4px 10px; border: 0; } notebook > header > tabs > tab:checked { background-color: #1e1e1e; color: #ffffff; border-top: 1px solid #007acc; } paned > separator { background-color: #2b2b2b; min-width: 1px; min-height: 1px; } scrollbar, scrollbar trough { background-color: #1e1e1e; } scrollbar slider { background-color: #424242; border-radius: 4px; min-width: 8px; min-height: 8px; } scrollbar slider:hover { background-color: #5a5a5a; } .explorer-pane { background-color: #181818; border-right: 1px solid #2b2b2b; } .explorer-header { background-color: #181818; padding: 2px 4px 2px 8px; border-bottom: 1px solid #242424; } .explorer-title { color: #bbbbbb; font-weight: bold; font-size: 9pt; } .explorer-root { color: #969696; font-weight: bold; padding: 5px 8px 4px 8px; } .explorer-tree { background-color: #181818; color: #cccccc; } .ide-toolbar { background-color: #181818; min-height: 28px; border-bottom: 1px solid #2b2b2b; } .path-label { color: #9d9d9d; padding-left: 8px; } .tool-button, .icon-button { background-image: none; background-color: transparent; border: 0; border-radius: 3px; padding: 3px 5px; box-shadow: none; } .tool-button:hover, .icon-button:hover { background-color: #2a2d2e; } .icon-button:active { background-color: #37373d; } .editor-pane, .editor, .editor text { background-color: #1e1e1e; color: #d4d4d4; } .terminal-panel, .terminal-panel box { background-color: #181818; } .terminal-output, .terminal-output text { background-color: #181818; color: #cccccc; font-family: monospace; } .terminal-command { background-color: #181818; border-top: 1px solid #2b2b2b; } .terminal-input { background-image: none; background-color: #181818; color: #d4d4d4; border: 0; border-radius: 0; font-family: monospace; padding: 5px 4px; box-shadow: none; } .terminal-prompt { color: #4ec9b0; font-family: monospace; padding: 5px 0 5px 8px; } .semantic-diagnostic { background-color: #2b1d1d; color: #f48771; border-top: 1px solid #5a2a2a; padding: 3px 8px; font-family: monospace; } .ide-status { background-color: #007acc; color: #ffffff; padding: 2px 7px; font-size: 9pt; } .dialog-surface { background-color: #252526; } .danger-button { background-color: #5a1d1d; color: #ffffff; border-color: #7a2d2d; } .danger-button:hover { background-color: #7a2424; }"
+    return "* { color: #cccccc; font-size: 10pt; } window, window.background, .background, .app-root { background-color: #1e1e1e; color: #cccccc; } box, paned, notebook, scrolledwindow, viewport { background-color: #1e1e1e; color: #cccccc; } label { color: #cccccc; } button { background-image: none; background-color: #2d2d30; color: #cccccc; border: 1px solid #3f3f46; border-radius: 3px; padding: 4px 8px; box-shadow: none; text-shadow: none; } button:hover { background-color: #3a3d41; color: #ffffff; } button:active, button:checked { background-color: #094771; color: #ffffff; } entry { background-image: none; background-color: #1e1e1e; color: #d4d4d4; border: 1px solid #3c3c3c; border-radius: 2px; padding: 4px 6px; box-shadow: none; } entry:focus { border-color: #007acc; } entry, entry text, textview, textview.view, textview text, textview.view text, .editor, .editor text, .terminal-input { caret-color: #ffffff; -gtk-secondary-caret-color: #80c8ff; } textview, textview.view, textview text, textview.view text { background-color: #1e1e1e; color: #d4d4d4; } treeview, treeview.view { background-color: #181818; color: #cccccc; border: 0; } treeview.view:selected { background-color: #094771; color: #ffffff; } treeview.view:hover { background-color: #2a2d2e; } notebook, notebook > stack { background-color: #181818; } notebook > header { background-color: #181818; border-color: #2b2b2b; } notebook > header > tabs > tab { background-color: #181818; color: #969696; padding: 4px 10px; border: 0; } notebook > header > tabs > tab:checked { background-color: #1e1e1e; color: #ffffff; border-top: 1px solid #007acc; } paned > separator { background-color: #2b2b2b; min-width: 5px; min-height: 5px; } paned > separator:hover { background-color: #3f3f46; } scrollbar, scrollbar trough { background-color: #1e1e1e; } scrollbar slider { background-color: #424242; border-radius: 4px; min-width: 8px; min-height: 8px; } scrollbar slider:hover { background-color: #5a5a5a; } .explorer-pane { background-color: #181818; border-right: 1px solid #2b2b2b; } .explorer-header { background-color: #181818; padding: 2px 4px 2px 8px; border-bottom: 1px solid #242424; } .explorer-title { color: #bbbbbb; font-weight: bold; font-size: 9pt; } .explorer-root { color: #969696; font-weight: bold; padding: 5px 8px 4px 8px; } .explorer-tree { background-color: #181818; color: #cccccc; } .ide-toolbar { background-color: #181818; min-height: 28px; border-bottom: 1px solid #2b2b2b; } .path-label { color: #9d9d9d; padding-left: 8px; } .tool-button, .icon-button { background-image: none; background-color: transparent; border: 0; border-radius: 3px; padding: 3px 5px; box-shadow: none; } .tool-button:hover, .icon-button:hover { background-color: #2a2d2e; } .icon-button:active { background-color: #37373d; } .editor-pane, .editor, .editor text { background-color: #1e1e1e; color: #d4d4d4; } .line-gutter, .line-gutter text { background-color: #181818; color: #858585; border-right: 1px solid #2b2b2b; } .application-toolbar { background-color: #181818; border-bottom: 1px solid #2b2b2b; padding: 2px 4px; } .application-toolbar button { padding: 2px 6px; } .application-toolbar combobox button { padding: 2px 6px; min-width: 76px; } .debug-command { background-color: #181818; border-top: 1px solid #2b2b2b; } .debug-command entry { background-color: #181818; border: 0; border-radius: 0; font-family: monospace; padding: 4px 5px; } .debug-prompt { color: #f14c4c; font-family: monospace; padding-left: 8px; } .terminal-panel, .terminal-panel box { background-color: #181818; } .terminal-output, .terminal-output text { background-color: #181818; color: #cccccc; font-family: monospace; } .terminal-command { background-color: #181818; border-top: 1px solid #2b2b2b; } .terminal-input { background-image: none; background-color: #181818; color: #d4d4d4; border: 0; border-radius: 0; font-family: monospace; padding: 5px 4px; box-shadow: none; } .terminal-prompt { color: #4ec9b0; font-family: monospace; padding: 5px 0 5px 8px; } .semantic-diagnostic { background-color: #2b1d1d; color: #f48771; border-top: 1px solid #5a2a2a; padding: 3px 8px; font-family: monospace; } .ide-status { background-color: #007acc; color: #ffffff; padding: 2px 7px; font-size: 9pt; } .dialog-surface { background-color: #252526; } .danger-button { background-color: #5a1d1d; color: #ffffff; border-color: #7a2d2d; } .danger-button:hover { background-color: #7a2424; } menu.ide-context-menu, .ide-context-menu { background-color: #252526; color: #d4d4d4; border: 1px solid #454545; padding: 4px 0; } menu.ide-context-menu menuitem, .ide-context-menu menuitem { background-color: #252526; color: #d4d4d4; padding: 5px 12px; text-shadow: none; } menu.ide-context-menu menuitem:hover, .ide-context-menu menuitem:hover { background-color: #094771; color: #ffffff; } menu.ide-context-menu menuitem:disabled, .ide-context-menu menuitem:disabled { background-color: #252526; color: #707070; } menu.ide-context-menu separator, .ide-context-menu separator { background-color: #3c3c3c; color: #3c3c3c; min-height: 1px; margin: 4px 0; } menu.ide-context-menu label, .ide-context-menu label { color: inherit; }"
 }
 
 let Gui:Backend:apply_dark_theme = fn () -> void {
@@ -213,6 +234,18 @@ let Gui:window_size = fn (window:u8*, width:i32, height:i32) -> void {
     if window { gtk_window_set_default_size(window, width, height) }
 }
 
+let Gui:window_maximize = fn (window:u8*) -> void {
+    if window { gtk_window_maximize(window) }
+}
+
+// Keep pointer rendering policy in the backend. This changes only the cursor
+// theme request; it never rescales pointer coordinates or the application UI.
+let Gui:cursor_theme_size = fn (size:i32) -> void {
+    if size <= 0 { return }
+    let settings = gtk_settings_get_default()
+    if settings { g_object_set(settings, "gtk-cursor-theme-size", size, cast(u8*, 0)) }
+}
+
 let Gui:run = fn () -> void { gtk_main() }
 let Gui:quit = fn () -> void { gtk_main_quit() }
 let Gui:show = fn (widget:u8*) -> void { if widget { gtk_widget_show_all(widget) } }
@@ -226,8 +259,17 @@ let Gui:focus = fn (widget:u8*) -> void { if widget { gtk_widget_grab_focus(widg
 
 let Gui:row = fn (spacing:i32) -> u8* { return gtk_box_new(0, spacing) }
 let Gui:column = fn (spacing:i32) -> u8* { return gtk_box_new(1, spacing) }
-let Gui:split_horizontal = fn () -> u8* { return gtk_paned_new(0) }
-let Gui:split_vertical = fn () -> u8* { return gtk_paned_new(1) }
+let Gui:split_horizontal = fn () -> u8* {
+    let split = gtk_paned_new(0)
+    if split { gtk_paned_set_wide_handle(split, 1) }
+    return split
+}
+
+let Gui:split_vertical = fn () -> u8* {
+    let split = gtk_paned_new(1)
+    if split { gtk_paned_set_wide_handle(split, 1) }
+    return split
+}
 
 // Stable render surface used by hot-reloadable applications. Children can be
 // fully constructed while detached from the visible generation, then selected
@@ -248,15 +290,43 @@ let Gui:stack_select = fn (stack:u8*, child:u8*) -> void {
 }
 
 let Gui:split_first = fn (split:u8*, child:u8*, grow:i64) -> void {
-    if split && child { gtk_paned_pack1(split, child, grow != 0, 0) }
+    // Panes are intentionally unconstrained. Either side may collapse
+    // below its natural requisition so the divider can use the full range.
+    if split && child { gtk_paned_pack1(split, child, grow != 0, 1) }
 }
 
+
 let Gui:split_second = fn (split:u8*, child:u8*, grow:i64) -> void {
-    if split && child { gtk_paned_pack2(split, child, grow != 0, 0) }
+    // Panes are intentionally unconstrained. Either side may collapse
+    // below its natural requisition so the divider can use the full range.
+    if split && child { gtk_paned_pack2(split, child, grow != 0, 1) }
 }
+
+// Primary/auxiliary split policy for IDE work areas. The primary child keeps
+// its GTK natural minimum, while the auxiliary panel may collapse completely.
+// Window resize is absorbed by the primary work area so a terminal keeps the
+// height chosen by the user instead of pushing editor chrome out of view.
+let Gui:split_primary = fn (split:u8*, child:u8*) -> void {
+    if split && child { gtk_paned_pack1(split, child, 1, 0) }
+}
+
+let Gui:split_auxiliary = fn (split:u8*, child:u8*) -> void {
+    if split && child { gtk_paned_pack2(split, child, 0, 1) }
+}
+
 
 let Gui:split_position = fn (split:u8*, position:i32) -> void {
     if split { gtk_paned_set_position(split, position) }
+}
+
+let Gui:allocated_width = fn (widget:u8*) -> i32 {
+    if !widget { return 0 }
+    return gtk_widget_get_allocated_width(widget)
+}
+
+let Gui:allocated_height = fn (widget:u8*) -> i32 {
+    if !widget { return 0 }
+    return gtk_widget_get_allocated_height(widget)
 }
 
 let Gui:add = fn (container:u8*, child:u8*) -> void {
@@ -279,12 +349,53 @@ let Gui:expand_y = fn (widget:u8*, enabled:i64) -> void {
     if widget { gtk_widget_set_vexpand(widget, enabled != 0) }
 }
 
+// Alignment helpers use GTK's natural layout. They pin chrome to an edge but
+// never impose a minimum/maximum size on the surrounding pane.
+let Gui:align_left = fn (widget:u8*) -> void {
+    if widget { gtk_widget_set_halign(widget, 1) }
+}
+
+let Gui:align_right = fn (widget:u8*) -> void {
+    if widget { gtk_widget_set_halign(widget, 2) }
+}
+
+let Gui:align_top = fn (widget:u8*) -> void {
+    if widget { gtk_widget_set_valign(widget, 1) }
+}
+
+let Gui:align_bottom = fn (widget:u8*) -> void {
+    if widget { gtk_widget_set_valign(widget, 2) }
+}
+
+let Gui:align_fill_x = fn (widget:u8*) -> void {
+    if widget { gtk_widget_set_halign(widget, 0) }
+}
+
+let Gui:align_fill_y = fn (widget:u8*) -> void {
+    if widget { gtk_widget_set_valign(widget, 0) }
+}
+
 let Gui:scroll = fn (child:u8*) -> u8* {
     let result = gtk_scrolled_window_new(cast(u8*, 0), cast(u8*, 0))
     if !result { return cast(u8*, 0) }
     gtk_scrolled_window_set_policy(result, 1, 1)
     if child { gtk_container_add(result, child) }
     return result
+}
+
+// Create a scroller that follows an existing vertical adjustment. This is used
+// by editor gutters so line numbers and source text always move as one surface.
+let Gui:scroll_with_vadjustment = fn (child:u8*, adjustment:u8*, horizontal:i32, vertical:i32) -> u8* {
+    let result = gtk_scrolled_window_new(cast(u8*, 0), adjustment)
+    if !result { return cast(u8*, 0) }
+    gtk_scrolled_window_set_policy(result, horizontal, vertical)
+    if child { gtk_container_add(result, child) }
+    return result
+}
+
+let Gui:scroll_vadjustment = fn (scroll:u8*) -> u8* {
+    if !scroll { return cast(u8*, 0) }
+    return gtk_scrolled_window_get_vadjustment(scroll)
 }
 
 // -----------------------------------------------------------------------------
@@ -331,6 +442,22 @@ let Gui:editor = fn () -> u8* {
         gtk_text_view_set_top_margin(result, 8)
         gtk_text_view_set_bottom_margin(result, 8)
         Gui:class_add(result, "editor")
+    }
+    return result
+}
+
+let Gui:line_gutter = fn () -> u8* {
+    let result = gtk_text_view_new()
+    if result {
+        gtk_text_view_set_monospace(result, 1)
+        gtk_text_view_set_editable(result, 0)
+        gtk_text_view_set_cursor_visible(result, 0)
+        gtk_text_view_set_left_margin(result, 4)
+        gtk_text_view_set_right_margin(result, 6)
+        gtk_text_view_set_top_margin(result, 8)
+        gtk_text_view_set_bottom_margin(result, 8)
+        gtk_widget_set_size_request(result, 74, -1)
+        Gui:class_add(result, "line-gutter")
     }
     return result
 }
@@ -481,6 +608,21 @@ let Gui:input_set = fn (input:u8*, text:u8*) -> void {
 
 let Gui:input_frame = fn (input:u8*, enabled:i64) -> void {
     if input { gtk_entry_set_has_frame(input, enabled != 0) }
+}
+
+let Gui:select = fn () -> u8* { return gtk_combo_box_text_new() }
+
+let Gui:select_add = fn (select:u8*, text:u8*) -> void {
+    if select && text { gtk_combo_box_text_append_text(select, text) }
+}
+
+let Gui:select_set = fn (select:u8*, index:i32) -> void {
+    if select { gtk_combo_box_set_active(select, index) }
+}
+
+let Gui:select_get = fn (select:u8*) -> i32 {
+    if !select { return -1 }
+    return gtk_combo_box_get_active(select)
 }
 
 let Gui:tabs = fn () -> u8* {
@@ -742,6 +884,88 @@ let Gui:on_activate = fn (widget:u8*, callback:Gui:Signal, data:u8*) -> u64 {
     return g_signal_connect_data(widget, "activate", callback, data, cast(u8*, 0), 0)
 }
 
+// GtkTextView owns the native edit menu. Applications can extend it without
+// replacing Copy/Paste/Select All or depending on GTK directly.
+let Gui:on_text_popup = fn (view:u8*, callback:Gui:PopupSignal, data:u8*) -> u64 {
+    if !view || !callback { return 0 }
+    return g_signal_connect_data(view, "populate-popup", cast(Gui:Signal, callback), data, cast(u8*, 0), 0)
+}
+
+let Gui:menu_action = fn (menu:u8*, label:u8*, callback:Gui:Signal, data:u8*) -> u8* {
+    if !menu || !label || !callback { return cast(u8*, 0) }
+    let item = gtk_menu_item_new_with_label(label)
+    if !item { return cast(u8*, 0) }
+    Gui:on_activate(item, callback, data)
+    gtk_menu_shell_append(menu, item)
+    return item
+}
+
+let Gui:menu_separator = fn (menu:u8*) -> u8* {
+    if !menu { return cast(u8*, 0) }
+    let item = gtk_separator_menu_item_new()
+    if item { gtk_menu_shell_append(menu, item) }
+    return item
+}
+
+let Gui:on_key_press = fn (widget:u8*, callback:Gui:EventSignal, data:u8*) -> u64 {
+    if !widget || !callback { return 0 }
+    return g_signal_connect_data(widget, "key-press-event", cast(Gui:Signal, callback), data, cast(u8*, 0), 0)
+}
+
+let Gui:on_button_press = fn (widget:u8*, callback:Gui:EventSignal, data:u8*) -> u64 {
+    if !widget || !callback { return 0 }
+    return g_signal_connect_data(widget, "button-press-event", cast(Gui:Signal, callback), data, cast(u8*, 0), 0)
+}
+
+let Gui:on_map = fn (widget:u8*, callback:Gui:EventSignal, data:u8*) -> u64 {
+    if !widget || !callback { return 0 }
+    return g_signal_connect_data(widget, "map-event", cast(Gui:Signal, callback), data, cast(u8*, 0), 0)
+}
+
+let Gui:event_button = fn (event:u8*) -> u32 {
+    if !event { return 0 }
+    var button:u32 = 0
+    if gdk_event_get_button(event, &button) == 0 { return 0 }
+    return button
+}
+
+let Gui:text_event_line = fn (view:u8*, event:u8*) -> i64 {
+    if !view || !event { return -1 }
+    var x:f64 = 0.0
+    var y:f64 = 0.0
+    if gdk_event_get_coords(event, &x, &y) == 0 { return -1 }
+    let iterator = malloc(128)
+    let bx = alloc(i32)
+    let by = alloc(i32)
+    if !iterator || !bx || !by {
+        if iterator { free(iterator) }
+        if bx { free(cast(u8*, bx)) }
+        if by { free(cast(u8*, by)) }
+        return -1
+    }
+    gtk_text_view_window_to_buffer_coords(view, 1, cast(i32, x), cast(i32, y), bx, by)
+    gtk_text_view_get_iter_at_location(view, iterator, bx[0], by[0])
+    let line = gtk_text_iter_get_line(iterator)
+    free(iterator)
+    free(cast(u8*, bx))
+    free(cast(u8*, by))
+    return cast(i64, line) + 1
+}
+
+let Gui:event_key = fn (event:u8*) -> u32 {
+    if !event { return 0 }
+    var key:u32 = 0
+    if gdk_event_get_keyval(event, &key) == 0 { return 0 }
+    return key
+}
+
+let Gui:event_modifiers = fn (event:u8*) -> u32 {
+    if !event { return 0 }
+    var state:u32 = 0
+    if gdk_event_get_state(event, &state) == 0 { return 0 }
+    return state
+}
+
 let Gui:on_destroy = fn (widget:u8*, callback:Gui:Signal, data:u8*) -> u64 {
     if !widget { return 0 }
     return g_signal_connect_data(widget, "destroy", callback, data, cast(u8*, 0), 0)
@@ -755,6 +979,7 @@ let Gui:Key:S = fn () -> u32 { return 115 }
 let Gui:Key:F2 = fn () -> u32 { return 65471 }
 let Gui:Key:Delete = fn () -> u32 { return 65535 }
 let Gui:Modifier:None = fn () -> u32 { return 0 }
+let Gui:Modifier:Shift = fn () -> u32 { return 1 }
 let Gui:Modifier:Control = fn () -> u32 { return 4 }
 
 let Gui:shortcut_click = fn (window:u8*, button:u8*, key:u32, modifiers:u32) -> void {
@@ -773,8 +998,17 @@ set gtk_style_context_add_provider_for_screen.serializable = false
 set gtk_widget_get_style_context.serializable = false
 set gtk_style_context_add_class.serializable = false
 set gdk_screen_get_default.serializable = false
+set gdk_event_get_keyval.serializable = false
+set gdk_event_get_state.serializable = false
+set gdk_event_get_coords.serializable = false
+set gdk_event_get_button.serializable = false
 set gtk_widget_set_size_request.serializable = false
+set gtk_widget_get_allocated_width.serializable = false
+set gtk_widget_get_allocated_height.serializable = false
 set gtk_button_set_alignment.serializable = false
+set gtk_menu_item_new_with_label.serializable = false
+set gtk_separator_menu_item_new.serializable = false
+set gtk_menu_shell_append.serializable = false
 set gtk_text_view_set_left_margin.serializable = false
 set gtk_text_view_set_right_margin.serializable = false
 set gtk_text_view_set_top_margin.serializable = false
@@ -785,13 +1019,20 @@ set gtk_init_check.serializable = false
 set gtk_window_new.serializable = false
 set gtk_window_set_title.serializable = false
 set gtk_window_set_default_size.serializable = false
+set gtk_window_maximize.serializable = false
 set gtk_box_new.serializable = false
 set gtk_paned_new.serializable = false
 set gtk_paned_pack1.serializable = false
 set gtk_paned_pack2.serializable = false
 set gtk_paned_set_position.serializable = false
+set gtk_paned_set_wide_handle.serializable = false
+set gtk_combo_box_text_new.serializable = false
+set gtk_combo_box_text_append_text.serializable = false
+set gtk_combo_box_set_active.serializable = false
+set gtk_combo_box_get_active.serializable = false
 set gtk_scrolled_window_new.serializable = false
 set gtk_scrolled_window_set_policy.serializable = false
+set gtk_scrolled_window_get_vadjustment.serializable = false
 set gtk_container_add.serializable = false
 set gtk_box_pack_start.serializable = false
 set gtk_box_pack_end.serializable = false
@@ -820,6 +1061,7 @@ set gtk_text_buffer_apply_tag.serializable = false
 set gtk_text_view_window_to_buffer_coords.serializable = false
 set gtk_text_view_get_iter_at_location.serializable = false
 set gtk_text_iter_get_offset.serializable = false
+set gtk_text_iter_get_line.serializable = false
 set gtk_widget_set_has_tooltip.serializable = false
 set gtk_tooltip_set_text.serializable = false
 set gtk_entry_new.serializable = false
@@ -832,6 +1074,8 @@ set gtk_notebook_set_current_page.serializable = false
 set gtk_notebook_set_scrollable.serializable = false
 set gtk_widget_set_hexpand.serializable = false
 set gtk_widget_set_vexpand.serializable = false
+set gtk_widget_set_halign.serializable = false
+set gtk_widget_set_valign.serializable = false
 set gtk_widget_show_all.serializable = false
 set gtk_widget_grab_focus.serializable = false
 set gtk_widget_destroy.serializable = false

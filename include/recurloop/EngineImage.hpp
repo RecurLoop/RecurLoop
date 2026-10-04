@@ -86,6 +86,11 @@ namespace recurloop {
     // source-module caches use this immediately after compiling a child .rl
     // file into its linked .rli image.
     static void rememberDependency(context::Context &context, const std::string &path);
+    // Return the materialized image dependencies in load order. Project module
+    // cache manifests use this at source entry so an Source inspection can rebuild
+    // the exact pre-source environment from the immutable baseline plus linked
+    // .rli inputs, without replaying an already-published source file.
+    static std::vector<std::string> dependencyPaths(context::Context &context);
     // After startup imports, later exports may use the loaded images as their
     // deterministic dependency base instead of duplicating the complete graph.
     static void markExportBase(context::Context &context);

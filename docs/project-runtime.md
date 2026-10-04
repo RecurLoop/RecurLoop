@@ -71,3 +71,36 @@ compose with the current context exactly like ordinary image imports.
 
 The cache contains only generated data under the configured cache directory;
 IDE configuration itself is ordinary `.rl` source.
+
+## Transactional source inspection
+
+`:inspect<TAB>hex(path)<TAB>hex(source)` returns semantic style/documentation
+spans (`S`) and diagnostics (`E`). `:trace` accepts the same payload and also
+returns language facts, without implementing any client-specific queries:
+
+- `R<TAB>start<TAB>end<TAB>line<TAB>version<TAB>hex(name)` is an actual phrase match.
+- `P<TAB>version<TAB>hex(name)<TAB>hex(kind)<TAB>hex(docs)<TAB>hex(prototype)<TAB>hex(type)<TAB>hex(signatures)` is a visible dictionary entry. Overload signatures are separated by newlines inside the hex payload.
+
+`:inspect-file` and `:trace-file` accept the same payload and return the same
+records for an independent source target. They create a separate context from
+the immutable baseline and elaborate the supplied buffer directly, including
+its imports/includes, then roll back. They do not require the target to belong
+to the published project's processing graph. Ordinary `:inspect`/`:trace`
+continue to reconstruct that graph's source-entry environment.
+The standalone context is created lazily per session and reused after rollback;
+a baseline change recreates it. Only the context's resources are reused, not
+previous analysis results or elaborated buffer state.
+
+`start` and `end` are UTF-8 character offsets; `end` is exclusive. `line` is
+one-based. `name` is the dictionary path; `version` counts older definitions of
+the same phrase, so chronological shadows remain distinct without exporting
+arena addresses. Compiler registries supply type names and signatures when
+available; custom languages need not contain those registries.
+
+A cache-backed inspection starts from the immutable baseline and images present
+at source entry, falling back to source-prefix replay when needed. The edited
+buffer replaces only its own source. Inspection uses a separate context and
+rolls back the request; it does not switch the caller's ordinary Session to the
+baseline or publish any analysis data. Permanent phrases retain their normal
+protection. Clients can build indexes and query policies from the exported facts
+in their own RecurLoop code.

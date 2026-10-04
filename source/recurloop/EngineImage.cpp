@@ -2230,6 +2230,13 @@ namespace recurloop {
     rememberImageDependency(context, imageIdentity(bytes), resolved);
   }
 
+  std::vector<std::string> EngineImage::dependencyPaths(context::Context &context) {
+    std::vector<std::string> result;
+    for (const ImageDependency &dependency : imageDependencies(context))
+      result.push_back(absolutePath(dependency.path).string());
+    return result;
+  }
+
 
   void EngineImage::releaseNativeState(context::Context &context) noexcept {
     try {

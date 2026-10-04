@@ -30,6 +30,10 @@ namespace recurloop {
     static void setColor(context::Context &context, lexicon::Phrase phrase, std::string value);
     static void setDocs(context::Context &context, lexicon::Phrase phrase, std::string value);
     static SemanticMetadata resolve(context::Context &context, lexicon::Phrase phrase);
+    // Engine-image restores during rollback-only inspection can introduce new
+    // phrase metadata. Mark the active trace so it refreshes lazily only when a
+    // later matched phrase actually needs metadata that was not present before.
+    static void markInspectionMetadataDirty(context::Context &context);
 
     // Apply/clear phrase-definition metadata accumulated before the staged
     // phrase receives its final lexicon address.
@@ -44,6 +48,9 @@ namespace recurloop {
       ~InspectionScope();
 
       std::string encode(std::string_view diagnostic = {}) const;
+      // Export actual phrase matches and the current dictionary/type/function
+      // catalog. This contains language state only; clients interpret it.
+      std::string trace() const;
 
     private:
       void *state_ = nullptr;
@@ -74,7 +81,7 @@ namespace recurloop {
     // Deterministic fail-safe for inspection-only source execution.  Normal
     // execution pays only the active() branch; an inspection that accidentally
     // re-enters an empty phrase forever is aborted and rolled back instead of
-    // blocking the IDE main loop indefinitely.
+    // blocking the inspection client indefinitely.
     static void sourceStep(context::Context &context);
 
     // Record a source-visible phrase. The returned owner is either the matched

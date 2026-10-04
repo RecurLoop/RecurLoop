@@ -35,9 +35,14 @@ namespace recurloop {
       std::string source;
       ProjectCacheStamp sourceStamp;
       std::unordered_map<std::string, ProjectCacheStamp> dependencies;
+      // Engine images that were already materialized when this source module
+      // started. They are the exact semantic input of the source and are kept
+      // separate from dependencies introduced by the source itself.
+      std::vector<std::pair<std::string, ProjectCacheStamp>> inputImages;
       Size segmentUsed = 0;
       std::uint64_t semanticPrefix = 0;
       bool linked = true;
+      bool directEntry = true;
     };
 
     bool enabled = false;
@@ -99,6 +104,22 @@ namespace recurloop {
                                       std::string_view path) noexcept;
     void abortCacheStep(ProjectCacheState &state) noexcept;
 
+    // Source inspection replays the same root source graph as a normal project
+    // build. Cached source images are transparent accelerators: an unchanged
+    // branch can be restored from its .rli, while the branch that contains the
+    // currently edited source is replayed until that source is reached.
+    bool inspectionRoot(std::string_view source, std::string &root) const noexcept;
+    bool inspectionModuleContains(std::string_view module, std::string_view source) const noexcept;
+    bool restoreInspectionModule(context::Context &context, std::string_view source) const noexcept;
+    // Fast inspection entry: restore exactly the engine-image state that was
+    // materialized before this source started. Returns false when the module
+    // requires source-prefix replay; callers then use the deterministic graph
+    // replay fallback instead.
+    bool restoreInspectionEntry(context::Context &context, std::string_view source) const noexcept;
+    std::uint64_t cacheRevision() const {
+      return cacheRevision_.load(std::memory_order_acquire);
+    }
+
     std::uint64_t cacheHits() const {
       return cacheHits_.load(std::memory_order_relaxed);
     }
@@ -142,6 +163,7 @@ namespace recurloop {
     void afterCacheDependency(ProjectCacheState &state, context::Context &context) noexcept;
     std::string cacheModuleImagePath(std::string_view source) const;
     std::string cacheModuleManifestPath(std::string_view source) const;
+    void rememberCacheEntrySource(std::string_view source) noexcept;
 
     context::Config config_;
     ActionEntries actions_;
@@ -155,11 +177,14 @@ namespace recurloop {
     std::string cacheDirectory_;
     std::string cacheModulesDirectory_;
     std::string cacheSourceRoot_;
+    mutable std::mutex cacheGraphMutex_;
+    std::string cacheEntrySource_;
     mutable std::uint64_t cacheBaselineHash_ = 0;
     mutable std::mutex cacheBaselineMutex_;
     std::atomic<std::uint64_t> cacheHits_{0};
     std::atomic<std::uint64_t> cacheMisses_{0};
     std::atomic<std::uint64_t> cacheWrites_{0};
     std::atomic<std::uint64_t> cacheTemporaryId_{1};
+    std::atomic<std::uint64_t> cacheRevision_{1};
   };
 } // namespace recurloop

@@ -18,10 +18,12 @@
 #include <algorithm>
 #include <cctype>
 #include <cstring>
+#include <deque>
 #include <limits>
 #include <optional>
 #include <string>
 #include <string_view>
+#include <unordered_set>
 #include <vector>
 
 namespace recurloop {
@@ -224,6 +226,69 @@ namespace recurloop {
       source.column = definition.sourceColumn;
       context.language().rememberFunctionSource(definition.function.signature.symbol, std::move(source));
     }
+
+#ifdef RECURLOOP_ENABLE_LLVM
+    void addDebugDependencies(context::Context &context, compiler::Module &module) {
+      // Previously compiled functions normally contain LLVM machine code, which
+      // has no RecurLoop statement map. Rebuild reachable source functions with
+      // the same generator as the debug entry; leave the session's JIT modules
+      // intact and merge only into this executable's output module.
+      const bool automatic = context.language().automaticModuleLinking();
+      const auto excludedList = context.language().excludedModules();
+      const std::unordered_set<std::string> excluded(excludedList.begin(), excludedList.end());
+      std::unordered_set<std::string> scheduled;
+      std::deque<std::string> pending;
+      const auto enqueue = [&](const std::string &symbol) {
+        if (excluded.contains(symbol) || !scheduled.insert(symbol).second) return;
+        const compiler::Symbol *existing = module.findSymbol(symbol);
+        if (existing && !existing->imported) return;
+        pending.push_back(symbol);
+      };
+      const auto enqueueImports = [&](const compiler::Module &dependency) {
+        if (!automatic) return;
+        for (const compiler::Symbol &symbol : dependency.symbols())
+          if (symbol.imported) enqueue(symbol.name);
+      };
+      enqueueImports(module);
+      for (const std::string &symbol : context.language().includedModules()) enqueue(symbol);
+      while (!pending.empty()) {
+        const std::string symbol = std::move(pending.front());
+        pending.pop_front();
+        const compiler::Symbol *existing = module.findSymbol(symbol);
+        if (existing && !existing->imported) continue;
+        const auto source = context.language().findFunctionSource(symbol);
+        if (!source) {
+          const auto stored = context.language().findModule(symbol);
+          if (stored) enqueueImports(*stored);
+          continue;
+        }
+        const auto function = context.language().findFunction(symbol);
+        if (!function || function->imported) THROW(, "debug fn source has no matching definition: '" << symbol << "'")
+        function_internal::FunctionDefinition dependency;
+        dependency.function = *function;
+        dependency.names = source->parameterNames;
+        dependency.scope = source->scope;
+        dependency.sourcePath = source->path;
+        dependency.sourceText = source->body;
+        dependency.sourceLine = source->line;
+        dependency.sourceColumn = source->column;
+        const auto statements = function_internal::parseBody(
+            context, source->body, source->scope, source->path, source->line, source->column);
+        const std::string previousOverride = context.exec.definitionSymbolOverride;
+        context.exec.definitionSymbolOverride = symbol;
+        compiler::Module generated;
+        try {
+          generated = function_internal::generateModule(context, dependency, statements);
+        } catch (...) {
+          context.exec.definitionSymbolOverride = previousOverride;
+          throw;
+        }
+        context.exec.definitionSymbolOverride = previousOverride;
+        enqueueImports(generated);
+        module.merge(generated);
+      }
+    }
+#endif
   } // namespace
 
   lexicon::Phrase Functions::action(context::Context &context, std::string_view symbol) {
@@ -440,6 +505,7 @@ namespace recurloop {
         // use the built-in code generator and are still linked by the configured LLVM
         // clang/lld toolchain in Assembler::finalize().
         module = function_internal::generateModule(context, signature, statements);
+        addDebugDependencies(context, module);
         Assembler::finalize(context, invoked, module);
       } else if (output && output->kind != NativeFileKind::Raw) {
         function_internal::LlvmProgram program = function_internal::generateLlvmProgram(

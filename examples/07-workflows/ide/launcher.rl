@@ -83,6 +83,8 @@ let IDE:Launcher:mount = fn (host:IDE:Host*) -> void {
     Gui:class_add(explorer, "explorer-pane")
     let header = Gui:row(0)
     Gui:class_add(header, "explorer-header")
+    Gui:align_top(header)
+    Gui:expand_x(header, 1)
     let title = Gui:label("EXPLORER")
     Gui:label_align(title, cast(f32, 0.0))
     Gui:class_add(title, "explorer-title")
@@ -116,6 +118,8 @@ let IDE:Launcher:mount = fn (host:IDE:Host*) -> void {
     state.status = Gui:label("starting project runtime")
     Gui:label_align(state.status, cast(f32, 0.0))
     Gui:class_add(state.status, "ide-status")
+    Gui:align_bottom(state.status)
+    Gui:expand_x(state.status, 1)
     Gui:append_end(state.root, state.status, 0, 0)
 
     if !IDE:view_attach(host, state.root, cast(u8*, state)) {

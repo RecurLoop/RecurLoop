@@ -4,6 +4,7 @@ include "launcher.rl"
 let IDE:Launcher:configure = fn (app:IDE:Config*) -> void {
     app.title("RecurLoop IDE")
     app.size(1360, 860)
+    app.maximized(1)
 
     app.workspace("examples/07-workflows/ide")
     app.source("examples/07-workflows/ide/ide.rl")

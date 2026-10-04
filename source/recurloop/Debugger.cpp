@@ -199,6 +199,17 @@ namespace recurloop {
       return std::filesystem::path(left).filename() == std::filesystem::path(right).filename();
     }
 
+    std::string hexText(std::string_view value) {
+      static constexpr char digits[] = "0123456789abcdef";
+      std::string result;
+      result.reserve(value.size() * 2);
+      for (const unsigned char byte : value) {
+        result.push_back(digits[byte >> 4]);
+        result.push_back(digits[byte & 0x0f]);
+      }
+      return result;
+    }
+
     bool stoppable(std::string_view phrase) {
       return !phrase.empty() && std::any_of(phrase.begin(), phrase.end(),
                                             [](unsigned char character) { return !std::isspace(character); });
@@ -358,9 +369,16 @@ namespace recurloop {
         return;
       }
       const compiler::DebugPoint &point = target.points[*target.currentPoint];
-      *context.io.out << "[debug] " << reason << " " << (point.path.empty() ? "<input>" : point.path) << ":"
-                      << point.line << ":" << point.column << " phrase \"" << point.phrase << "\" function \""
-                      << point.function << "\" rip 0x" << std::hex << point.address << std::dec << "\n";
+      const std::string_view path = point.path.empty() ? std::string_view{"<input>"} : std::string_view{point.path};
+      *context.io.out << "[debug] " << reason << " " << path << ":" << point.line << ":" << point.column
+                      << " phrase \"" << point.phrase << "\" function \"" << point.function << "\" rip 0x"
+                      << std::hex << point.address << std::dec << "\n";
+      // Stable machine-readable execution-stop event for debugger clients. Text
+      // fields are hex encoded so paths/phrases never need delimiter escaping.
+      // `where` is an inspection command, not a new execution stop.
+      if (reason != "at")
+        *context.io.out << "[debug-event]\tstop\t" << reason << "\t" << hexText(path) << "\t" << point.line << "\t"
+                        << point.column << "\t" << hexText(point.phrase) << "\t" << hexText(point.function) << "\n";
     }
 
     bool finishExecutable(context::Context &context, int status) {
@@ -386,6 +404,36 @@ namespace recurloop {
       for (auto &[address, breakpoint] : target.breakpoints) restoreBreakpoint(target, breakpoint);
     }
 
+    std::optional<std::uint64_t> resolvedLine(const ExecutableState &target, const Breakpoint &breakpoint) {
+      if (breakpoint.record.kind != BreakpointKind::Line) return std::nullopt;
+      std::optional<std::uint64_t> next;
+      for (const compiler::DebugPoint &point : target.points) {
+        if (!samePath(breakpoint.text, point.path)) continue;
+        if (point.line == breakpoint.record.line) return point.line;
+        if (point.line > breakpoint.record.line && (!next || point.line < *next)) next = point.line;
+      }
+      return next;
+    }
+
+    std::size_t installConfiguredBreakpoint(ExecutableState &target, const Breakpoint &breakpoint) {
+      std::size_t installed = 0;
+      std::optional<std::uint64_t> line;
+      if (breakpoint.record.kind == BreakpointKind::Line) line = resolvedLine(target, breakpoint);
+      for (const compiler::DebugPoint &point : target.points) {
+        bool selected = false;
+        if (breakpoint.record.kind == BreakpointKind::Line) {
+          selected = line && point.line == *line && samePath(breakpoint.text, point.path);
+        } else {
+          selected = matches(breakpoint, point);
+        }
+        if (!selected) continue;
+        installBreakpoint(target, point.address);
+        ++installed;
+        if (breakpoint.record.kind == BreakpointKind::Function) break;
+      }
+      return installed;
+    }
+
     void installConfiguredBreakpoints(context::Context &context) {
       ExecutableState &target = executableState(context);
       restoreAllBreakpoints(target);
@@ -393,11 +441,7 @@ namespace recurloop {
       const std::vector<Breakpoint> configured = breakpoints(context);
       for (const Breakpoint &breakpoint : configured) {
         if (breakpoint.record.active == 0) continue;
-        for (const compiler::DebugPoint &point : target.points) {
-          if (!matches(breakpoint, point)) continue;
-          installBreakpoint(target, point.address);
-          if (breakpoint.record.kind == BreakpointKind::Function) break;
-        }
+        installConfiguredBreakpoint(target, breakpoint);
       }
       if (target.currentPoint && target.breakpoints.contains(target.instruction))
         target.currentBreakpoint = target.instruction;
@@ -412,7 +456,11 @@ namespace recurloop {
       if (finishExecutable(context, status)) return false;
       if (!WIFSTOPPED(status)) THROW(, "executable debugger received an unexpected wait status")
 
-      target.pendingSignal = WSTOPSIG(status) == SIGTRAP ? 0 : WSTOPSIG(status);
+      const int stopSignal = WSTOPSIG(status);
+      // A debugger client can pause the tracee with SIGSTOP to inspect it or
+      // update breakpoints. Consuming this stop lets the next continue resume
+      // the target instead of putting it straight back into a stopped state.
+      target.pendingSignal = stopSignal == SIGTRAP || stopSignal == SIGSTOP ? 0 : stopSignal;
       user_regs_struct registers = registersOf(target);
       target.instruction = registers.rip;
       target.currentPoint = pointAt(target, target.instruction);
@@ -448,7 +496,8 @@ namespace recurloop {
       if (finishExecutable(context, status)) return false;
       if (!WIFSTOPPED(status)) THROW(, "executable debugger received an unexpected step status")
       if (reinsert) reinsertBreakpoint(target, breakpoint);
-      target.pendingSignal = WSTOPSIG(status) == SIGTRAP ? 0 : WSTOPSIG(status);
+      const int stopSignal = WSTOPSIG(status);
+      target.pendingSignal = stopSignal == SIGTRAP || stopSignal == SIGSTOP ? 0 : stopSignal;
       target.currentBreakpoint.reset();
       target.instruction = registersOf(target).rip;
       target.currentPoint = pointAt(target, target.instruction);
@@ -718,8 +767,19 @@ namespace recurloop {
     breakpoint.text = path.asString();
     breakpoint.record.textBytes = breakpoint.text.size();
     saveBreakpoint(context, breakpoint);
-    if (state(context).target == DebuggerState::Target::Executable) installConfiguredBreakpoints(context);
-    *context.io.out << "[debug] breakpoint " << breakpoint.record.id << " " << breakpoint.text << ":" << line << "\n";
+    if (state(context).target == DebuggerState::Target::Executable) {
+      installConfiguredBreakpoints(context);
+      const ExecutableState &target = executableState(context);
+      const std::optional<std::uint64_t> resolved = resolvedLine(target, breakpoint);
+      if (resolved)
+        *context.io.out << "[debug] breakpoint " << breakpoint.record.id << " " << breakpoint.text << ":" << line
+                        << " resolved " << breakpoint.text << ":" << *resolved << "\n";
+      else
+        *context.io.out << "[debug] breakpoint " << breakpoint.record.id << " " << breakpoint.text << ":" << line
+                        << " unresolved\n";
+    } else {
+      *context.io.out << "[debug] breakpoint " << breakpoint.record.id << " " << breakpoint.text << ":" << line << "\n";
+    }
   }
 
   void Debugger::breakFunction(context::Context &context, lexicon::Phrase &) {
@@ -932,6 +992,12 @@ namespace recurloop {
       THROW(, "executable target did not stop after exec")
     }
     try {
+      // If the debugger controller is terminated (stop/exit/crash), never
+      // leave a traced application orphaned or permanently stopped.
+      errno = 0;
+      if (ptrace(PTRACE_SETOPTIONS, target.pid, nullptr,
+                 reinterpret_cast<void *>(static_cast<std::uintptr_t>(PTRACE_O_EXITKILL))) == -1)
+        ptraceFailure("set exit-kill option");
       target.loadBias = executableLoadBias(target);
       if (target.loadBias != 0)
         for (compiler::DebugPoint &point : target.points) point.address += target.loadBias;

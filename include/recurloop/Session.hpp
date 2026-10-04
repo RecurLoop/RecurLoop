@@ -33,10 +33,13 @@ namespace recurloop {
       return id_;
     }
     SessionResponse evaluate(std::string_view source, std::string_view path = {});
-    // Elaborate source for editor semantics and always roll the request back.
+    // Elaborate source for inspection and always roll the request back.
     // Syntax errors are returned as diagnostics together with any spans that
     // were discovered before the error.
-    SessionResponse inspect(std::string_view source, std::string_view path = {});
+    // Standalone targets start at the immutable baseline rather than replaying
+    // the published project's processing graph.
+    SessionResponse inspect(std::string_view source, std::string_view path = {}, bool trace = false,
+                            bool standalone = false);
     SessionResponse executeFile(const std::string &path);
     SessionResponse executeArguments(int startIndex, std::ostream *out = nullptr, std::ostream *err = nullptr);
     Generations generations() const;
@@ -48,6 +51,7 @@ namespace recurloop {
     using Operation = std::function<void(context::Context &)>;
 
     void attach(std::shared_ptr<const ProjectGeneration> generation);
+    bool prepareInspectionReplay(std::string_view path, std::string &root, bool &direct);
     SessionResponse runRequest(const Operation &operation, std::ostream *out = nullptr, std::ostream *err = nullptr);
     SessionResponse failure(int status, std::string error) const;
 
@@ -57,8 +61,15 @@ namespace recurloop {
     std::shared_ptr<const ProjectGeneration> projectGeneration_;
     std::shared_ptr<const ProjectGeneration> preparedPublication_;
     std::unique_ptr<ContextGeneration> contextGeneration_;
+    std::shared_ptr<const ProjectGeneration> inspectionProjectGeneration_;
+    std::unique_ptr<ContextGeneration> inspectionContextGeneration_;
+    std::unique_ptr<ContextGeneration> standaloneInspectionContextGeneration_;
     std::vector<std::uint8_t> rollbackBuffer_;
     bool cacheEnabled_ = false;
     ProjectCacheState cacheState_;
+    std::string inspectionPreparedPath_;
+    std::string inspectionPreparedRoot_;
+    std::uint64_t inspectionPreparedRevision_ = 0;
+    bool inspectionPreparedDirect_ = false;
   };
 } // namespace recurloop

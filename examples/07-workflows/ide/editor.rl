@@ -1,7 +1,3 @@
-let IDE:App:set_status = fn (state:IDE:App:State*, text:u8*) -> void {
-    if state && state.status { Gui:label_text(state.status, text) }
-}
-
 let IDE:App:free_semantic_spans = fn (state:IDE:App:State*) -> void {
     if !state { return }
     var span = state.semantic_spans
@@ -152,13 +148,37 @@ let IDE:App:add_semantic_hover = fn (state:IDE:App:State*, start:i64, finish:i64
     state.semantic_hover_tail = hover
 }
 
-let IDE:App:semantic_parse = fn (state:IDE:App:State*, response:u8*) -> void {
+let IDE:App:semantic_response_has_error = fn (response:u8*) -> i64 {
+    if !response { return 0 }
+    var line:i64 = 0
+    while response[line] != 0 {
+        if response[line] == 69 && response[line + 1] == 9 { return 1 } // E\t
+        let line_end = IDE:App:find_byte(response, line, 10)
+        if response[line_end] == 0 { return 0 }
+        line = line_end + 1
+    }
+    return 0
+}
+
+let IDE:App:semantic_response_outside_graph = fn (response:u8*) -> i64 {
+    if !response { return 0 }
+    var line:i64 = 0
+    while response[line] != 0 {
+        if response[line] == 79 && response[line + 1] == 9 { return 1 } // O\t
+        let line_end = IDE:App:find_byte(response, line, 10)
+        if response[line_end] == 0 { return 0 }
+        line = line_end + 1
+    }
+    return 0
+}
+
+let IDE:App:semantic_parse = fn (state:IDE:App:State*, response:u8*, apply_semantics:i64) -> void {
     if !state || !response { return }
     if state.semantic_diagnostic { Gui:label_text(state.semantic_diagnostic, "") }
     var line:i64 = 0
     while response[line] != 0 {
         let line_end = IDE:App:find_byte(response, line, 10)
-        if response[line] == 83 && response[line + 1] == 9 { // S\t
+        if apply_semantics && response[line] == 83 && response[line + 1] == 9 { // S\t
             let f1 = IDE:App:find_byte(response, line + 2, 9)
             let f2 = IDE:App:find_byte(response, f1 + 1, 9)
             let f3 = IDE:App:find_byte(response, f2 + 1, 9)
@@ -200,12 +220,21 @@ let IDE:App:semantic_analyze = fn (state:IDE:App:State*) -> void {
     if !source { return }
     let response = IDE:intelligence_analyze(state.host, state.host.selected, source)
     Gui:text_free(source)
+    if state.host.intelligence { IDE:App:terminal_refresh_runtime(state, state.host.intelligence) }
     if !response { return }
 
-    IDE:App:free_semantic_spans(state)
-    state.semantic_hover_tail = cast(IDE:App:SemanticHover*, 0)
-    Gui:text_clear_styles(state.editor)
-    IDE:App:semantic_parse(state, response)
+    // Semantic styling is transactional from the editor's point of view.  A
+    // temporarily incomplete buffer may still return useful diagnostics, but
+    // spans recorded before the error are only a prefix of the document. Keep
+    // the last complete style set instead of mixing partial and fallback colors.
+    let outside_graph = IDE:App:semantic_response_outside_graph(response)
+    let complete = !IDE:App:semantic_response_has_error(response)
+    if complete || outside_graph {
+        IDE:App:free_semantic_spans(state)
+        state.semantic_hover_tail = cast(IDE:App:SemanticHover*, 0)
+        Gui:text_clear_styles(state.editor)
+    }
+    IDE:App:semantic_parse(state, response, complete && !outside_graph)
     free(response)
 }
 
@@ -236,6 +265,8 @@ let IDE:App:on_editor_changed = fn (buffer:u8*, data:u8*) -> void {
             Gui:text_free(text)
         }
     }
+    IDE:App:update_line_gutter(state)
+    IDE:App:invalidate_application_outputs(state)
     IDE:App:schedule_semantics(state)
 }
 
@@ -296,6 +327,7 @@ let IDE:App:open_path = fn (state:IDE:App:State*, path:u8*) -> void {
 
     let relative = IDE:relative(state.host.root, selected)
     if relative { Gui:label_text(state.file_label, relative); free(relative) }
+    IDE:App:update_line_gutter(state)
     IDE:App:schedule_semantics(state)
 }
 
@@ -305,7 +337,10 @@ let IDE:App:on_save = fn (widget:u8*, data:u8*) -> void {
     let text = IDE:App:editor_text(state)
     if !text { IDE:App:set_status(state, "cannot read editor buffer"); return }
     let ok = IDE:write_file(state.host.selected, text)
-    if ok { IDE:App:history_mark_saved(state, text) }
+    if ok {
+        IDE:App:history_mark_saved(state, text)
+        IDE:App:invalidate_application_outputs(state)
+    }
     Gui:text_free(text)
     if ok {
         if IDE:view_reload_mode(state.host) == IDE:Reload:Hot() { IDE:App:set_status(state, "saved | hot reload pending") }

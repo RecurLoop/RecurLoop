@@ -443,6 +443,7 @@ let IDE:App:show_search = fn (state:IDE:App:State*) -> void {
     if !state || !state.sidebar_stack || !state.search_pane { return }
     state.history_visible = 0
     state.search_visible = 1
+    state.intelligence_visible = 0
     Gui:stack_select(state.sidebar_stack, state.search_pane)
     if state.search_input { Gui:focus(state.search_input) }
 }
@@ -454,6 +455,8 @@ let IDE:App:create_search_view = fn (state:IDE:App:State*) -> u8* {
     Gui:class_add(pane, "explorer-pane")
     let header = Gui:row(0)
     Gui:class_add(header, "explorer-header")
+    Gui:align_top(header)
+    Gui:expand_x(header, 1)
     let title = Gui:label("SEARCH")
     Gui:label_align(title, cast(f32, 0.0))
     Gui:class_add(title, "explorer-title")

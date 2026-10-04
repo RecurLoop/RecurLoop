@@ -16,10 +16,12 @@ There is no `recurloop-ide` executable and no UI baked into `ide.rli`.
 
 ## Project-local view
 
-`main.rl` imports `ide.rli` and includes:
+`ide.rl` imports `ide.rli` and includes:
 
 - `app.rl` - application/view records owned by one mounted generation,
 - `editor.rl` - code editor behavior,
+- `analysis.rl` - workspace index, syntax classifiers and semantic queries,
+- `intelligence.rl` - navigation/refactoring controls and workspace edits,
 - `explorer.rl` - file-tree presentation and controls,
 - `terminal.rl` - terminal widgets bound to persistent runtime models,
 - `view.rl` - layout plus the single `IDE:App:lifecycle` callback.
@@ -67,16 +69,48 @@ publication transactional without a second load of the project environment.
 
 ## Source intelligence
 
-The editor does not keep a separate RecurLoop parser or AST. It sends the
-current unsaved buffer to the persistent Project runtime for rollback-only
-semantic inspection. The returned spans use phrase-owned `kind`, `color`, and
-`docs` metadata for highlighting and hover help, including the standard fields
-inside `phrase { ... }` descriptors.
+Highlighting and hover use phrase-owned `kind`, `color`, and `docs` metadata.
+The editor sends its unsaved buffer to the ordinary Project runtime for
+rollback-only inspection, including parser/elaboration diagnostics.
 
-Inspection also returns parser/elaboration diagnostics. The project-local editor
-shows the current diagnostic directly below the source buffer; a successful
-inspection clears it. Because the inspection transaction is rolled back, typing
-in the editor cannot mutate the published Project generation or terminal state.
+`analysis.rl` owns the IDE's navigation and refactoring engine: tokenization,
+function/local scopes, a view-local workspace index, completion, signatures,
+definitions, references, rename, call graphs and prototype queries. The index
+is rebuilt when the Project revision changes, replaces the active file with its
+unsaved buffer, and is freed when the view retires. It is never persisted into
+the language lexicon or module images.
+
+The only host interface needed by this engine is `:trace`, which exports actual
+phrase matches plus the dictionary and compiler catalogs. The host does not
+recognize editor operations or maintain a separate IDE grammar. The example's
+classifiers target the standard RecurLoop surface syntax; language extensions
+can replace these `.rl` classifiers. Rename refuses erroneous source graphs or
+ambiguous definitions rather than proposing unchecked workspace edits.
+
+Inspection reconstructs the state immediately before the source was entered,
+using the immutable Project baseline and ordinary cached image dependencies.
+It uses a separate context and rolls back afterwards, preserving the client
+session, published generation and permanent-phrase protection.
+
+`application/main.rl` is a separate compilation target. Its highlighting, hover
+and IntelliSense use `:inspect-file`/`:trace-file`: rollback-only inspection from
+the immutable baseline, without requiring membership in the IDE's processing
+graph. The analysis index keeps application sources separate from IDE sources.
+
+The application toolbar builds and runs Debug or Release executables. In Debug
+mode, source functions reachable from the entry are generated with RecurLoop
+statement maps, including functions defined before `emit executable debug`.
+Click a line in the application's gutter to toggle a breakpoint, build Debug,
+then Run. Continue, Step, Next and Out control the paused application; the
+APPLICATION console accepts commands such as `where` and `locals`. After host
+or library changes, rebuild the host and `ide.rli`, restart the IDE, and rebuild
+the Debug application before using an existing breakpoint.
+
+Run the headless integration tests without opening a GTK window:
+
+```bash
+python3 examples/07-workflows/ide/tests/run-analysis-tests.py
+```
 
 ## Persistent runtime state
 

@@ -68,6 +68,90 @@ TEST(RecurloopGeneration, FailedRequestRollsBackInPlaceValueWrites) {
   EXPECT_EQ(after.output, "7\n");
 }
 
+TEST(RecurloopGeneration, InspectionPreservesPermanentDefinitions) {
+  auto state = project();
+  auto session = state->openSession();
+
+  constexpr std::string_view source = R"(
+let InspectionPermanent = phrase { dictionary = true permanent = true }
+let InspectionPermanent:value = fn () -> i64 { return 17 }
+)";
+  ASSERT_EQ(session->evaluate(source, "/tmp/inspection-permanent.rl").status, 0);
+  ASSERT_EQ(session->publish()->id, session->generations().project);
+
+  // Ordinary execution keeps the permanent-phrase invariant.
+  EXPECT_NE(session->evaluate(source, "/tmp/inspection-permanent.rl").status, 0);
+
+  // Inspection preserves the same permanent-phrase contract as execution.
+  const auto inspected = session->inspect(source, "/tmp/inspection-permanent.rl");
+  EXPECT_EQ(inspected.status, 0);
+  EXPECT_NE(inspected.output.find("E\t"), std::string::npos) << inspected.output;
+  EXPECT_EQ(session->evaluate("print InspectionPermanent:value()").output, "17\n");
+}
+
+TEST(RecurloopGeneration, TraceExportsLanguageFactsWithoutPublishingAnIndex) {
+  auto state = project();
+  auto session = state->openSession();
+  const auto before = session->generations().lexicon;
+  const auto response = session->inspect("let trace_alias = <debug:ping>\ntrace_alias\n", "/tmp/trace-alias.rl", true);
+  ASSERT_EQ(response.status, 0) << response.error;
+  EXPECT_EQ(response.output.find("E\t"), std::string::npos) << response.output;
+  EXPECT_NE(response.output.find("R\t"), std::string::npos);
+  EXPECT_NE(response.output.find("P\t"), std::string::npos);
+  // The alias name and prototype are exported as facts, without recognizing
+  // any declaration spelling or storing client indexes in the phrase graph.
+  EXPECT_NE(response.output.find("74726163655f616c696173"), std::string::npos);
+  EXPECT_NE(response.output.find("64656275673a70696e67"), std::string::npos);
+  EXPECT_EQ(session->generations().lexicon, before);
+  EXPECT_NE(session->evaluate("trace_alias").status, 0);
+}
+
+TEST(RecurloopGeneration, TraceDistinguishesChronologicalDefinitions) {
+  auto session = project()->openSession();
+  const auto response = session->inspect("let traced = <debug:ping>\ntraced\nlet traced = <debug:ping>\ntraced\n",
+                                         "/tmp/trace-versions.rl", true);
+  EXPECT_EQ(response.output.find("E\t"), std::string::npos) << response.output;
+  EXPECT_NE(response.output.find("R\t26\t32\t2\t0\t747261636564\n"), std::string::npos);
+  EXPECT_NE(response.output.find("R\t59\t65\t4\t1\t747261636564\n"), std::string::npos);
+}
+
+TEST(RecurloopGeneration, ProjectInspectionReplaysSourceEntryAndKeepsTheSessionState) {
+  namespace fs = std::filesystem;
+  const fs::path root = fs::temp_directory_path() / "recurloop-source-entry-inspection-test";
+  fs::remove_all(root);
+  fs::create_directories(root);
+  const fs::path entry = root / "main.rl";
+  const fs::path module = root / "module.rl";
+  {
+    std::ofstream out(entry);
+    out << "let TraceNamespace = phrase { dictionary = true permanent = true }\n"
+           "include \"module.rl\"\n";
+  }
+  {
+    std::ofstream out(module);
+    out << "let TraceNamespace:value = fn () -> i64 { return 17 }\n";
+  }
+  auto state = project();
+  state->configureCache((root / "cache").string());
+  auto session = state->openSession();
+  ASSERT_EQ(session->evaluate(":cache").status, 0);
+  const auto loaded = session->executeFile(entry.string());
+  ASSERT_EQ(loaded.status, 0) << loaded.error;
+  session->publish();
+  const auto generation = session->generations().project;
+  for (int repeat = 0; repeat < 2; ++repeat) {
+    const auto inspected =
+        session->inspect("let TraceNamespace:value = fn () -> i64 { return 23 }\n", module.string(), true);
+    EXPECT_EQ(inspected.output.find("E\t"), std::string::npos) << inspected.output;
+    EXPECT_NE(inspected.output.find("P\t"), std::string::npos);
+    EXPECT_EQ(session->generations().project, generation);
+    EXPECT_EQ(session->evaluate("print TraceNamespace:value()").output, "17\n");
+  }
+  auto observer = state->openSession();
+  EXPECT_EQ(observer->evaluate("print TraceNamespace:value()").output, "17\n");
+  fs::remove_all(root);
+}
+
 TEST(RecurloopGeneration, CommandLineSourcesExecuteInsideSessionRequests) {
   char program[] = "recurloop-test";
   char stringOption[] = "--string";

@@ -52,16 +52,21 @@ files outside that set do not trigger hot reload.
 
 ## Source intelligence
 
-The editor asks the persistent Project runtime to inspect the current unsaved
-buffer. Inspection executes transactionally against the latest published
-generation and rolls back all semantic changes afterwards, so highlighting,
-hover information, and diagnostics cannot mutate the running project.
+The editor asks the persistent Project runtime to inspect its unsaved buffer.
+The runtime reconstructs the source's entry environment in a separate context
+and rolls back the analysis afterwards. Inspection preserves both the current
+client session and the published Project generation.
 
-Semantic spans come from the language itself. Phrase metadata fields `kind`,
-`color`, and `docs` drive highlighting and hover documentation and follow normal
-prototype inheritance. Inspection diagnostics are displayed directly below the
-editor. The GTK view does not maintain a second parser, AST, or hard-coded list
-of RecurLoop keywords.
+Phrase metadata fields `kind`, `color`, and `docs` drive highlighting and hover
+and follow normal prototype inheritance. Diagnostics come from source processing.
+The generic `:trace` transport additionally exports phrase matches, dictionary
+entries and compiler signatures; it has no navigation/refactoring operations.
+
+The example's `examples/07-workflows/ide/analysis.rl` implements its own workspace
+index, syntax classifiers, local scopes, completion and navigation/refactoring
+queries. This index is view-local working memory, excluded from core and project
+images. The standard surface-syntax policy can be changed in `.rl` without
+modifying the host or rebuilding `ide.rli`.
 
 ## Reload
 

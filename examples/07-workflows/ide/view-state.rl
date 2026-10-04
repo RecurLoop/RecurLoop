@@ -9,7 +9,6 @@ link shared "gtk-3"
 // history.rl. This avoids duplicate typed-function declarations across modules.
 extern gtk_paned_get_position(paned:u8*) -> i32 abi sysv-amd64
 extern gtk_scrolled_window_get_hadjustment(window:u8*) -> u8* abi sysv-amd64
-extern gtk_scrolled_window_get_vadjustment(window:u8*) -> u8* abi sysv-amd64
 extern gtk_adjustment_get_value(adjustment:u8*) -> f64 abi sysv-amd64
 extern gtk_adjustment_set_value(adjustment:u8*, value:f64) -> void abi sysv-amd64
 extern gtk_notebook_get_current_page(notebook:u8*) -> i32 abi sysv-amd64
@@ -123,7 +122,8 @@ let IDE:App:view_state_capture = fn (state:IDE:App:State*) -> void {
     if !stream { free(temporary); free(path); return }
 
     var sidebar:i64 = 0
-    if state.search_visible != 0 { sidebar = 2 }
+    if state.intelligence_visible != 0 { sidebar = 3 }
+    else if state.search_visible != 0 { sidebar = 2 }
     else if state.history_visible != 0 { sidebar = 1 }
     var insert_offset:i64 = 0
     var bound_offset:i64 = 0
@@ -232,7 +232,8 @@ let IDE:App:view_state_restore_controls = fn (state:IDE:App:State*) -> void {
     state.search_boundary = snapshot.search_boundary
     state.search_regex = snapshot.search_regex
     IDE:App:search_update_buttons(state)
-    if snapshot.sidebar == 2 {
+    if snapshot.sidebar == 3 { IDE:App:show_intelligence(state) }
+    else if snapshot.sidebar == 2 {
         IDE:App:show_search(state)
         if state.search_input {
             let query = Gui:input_text(state.search_input)
@@ -268,8 +269,20 @@ let IDE:App:view_state_restore_idle = fn (data:u8*) -> i32 {
             Gui:text_free(text)
         }
     }
-    if state.main_split && snapshot.main_split > 0 { Gui:split_position(state.main_split, cast(i32, snapshot.main_split)) }
-    if state.right_split && snapshot.right_split > 0 { Gui:split_position(state.right_split, cast(i32, snapshot.right_split)) }
+    if state.main_split && snapshot.main_split > 0 {
+        var position = snapshot.main_split
+        let available = cast(i64, Gui:allocated_width(state.main_split))
+        if available > 1 && position >= available { position = available - 1 }
+        if position < 0 { position = 0 }
+        Gui:split_position(state.main_split, cast(i32, position))
+    }
+    if state.right_split && snapshot.right_split > 0 {
+        var position = snapshot.right_split
+        let available = cast(i64, Gui:allocated_height(state.right_split))
+        if available > 1 && position >= available { position = available - 1 }
+        if position < 0 { position = 0 }
+        Gui:split_position(state.right_split, cast(i32, position))
+    }
     if state.editor_scroll { IDE:App:view_state_set_scroll(state.editor_scroll, snapshot.editor_scroll_x, snapshot.editor_scroll_y) }
     if state.notebook { Gui:tabs_select(state.notebook, cast(i32, snapshot.terminal_page)) }
 
@@ -280,7 +293,6 @@ let IDE:App:view_state_restore_idle = fn (data:u8*) -> i32 {
 
 set gtk_paned_get_position.serializable = false
 set gtk_scrolled_window_get_hadjustment.serializable = false
-set gtk_scrolled_window_get_vadjustment.serializable = false
 set gtk_adjustment_get_value.serializable = false
 set gtk_adjustment_set_value.serializable = false
 set gtk_notebook_get_current_page.serializable = false

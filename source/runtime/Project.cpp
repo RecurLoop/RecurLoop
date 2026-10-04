@@ -18,7 +18,7 @@
 
 namespace recurloop {
   namespace {
-    constexpr std::string_view CacheMagic{"recurloop-project-module-cache-v3"};
+    constexpr std::string_view CacheMagic{"recurloop-project-module-cache-v13"};
     constexpr std::uint64_t FnvOffset = 1469598103934665603ULL;
     constexpr std::uint64_t FnvPrime = 1099511628211ULL;
 
@@ -69,9 +69,11 @@ namespace recurloop {
     struct Manifest {
       std::uint64_t baseline = 0;
       bool linked = true;
+      bool directEntry = true;
       std::string source;
       ProjectCacheStamp sourceStamp;
       std::unordered_map<std::string, ProjectCacheStamp> dependencies;
+      std::vector<std::pair<std::string, ProjectCacheStamp>> inputImages;
     };
 
     bool readManifest(const std::filesystem::path &path, Manifest &manifest) {
@@ -79,35 +81,49 @@ namespace recurloop {
       if (!input.is_open()) return false;
       std::string magic;
       int linked = 0;
+      int directEntry = 0;
       std::size_t dependencyCount = 0;
-      if (!(input >> magic >> std::hex >> manifest.baseline >> std::dec >> linked >> manifest.sourceStamp.size >>
-            manifest.sourceStamp.mtime >> std::quoted(manifest.source) >> dependencyCount))
+      std::size_t inputCount = 0;
+      if (!(input >> magic >> std::hex >> manifest.baseline >> std::dec >> linked >> directEntry >> manifest.sourceStamp.size >>
+            manifest.sourceStamp.mtime >> std::quoted(manifest.source) >> dependencyCount >> inputCount))
         return false;
-      if (magic != CacheMagic || (linked != 0 && linked != 1) || dependencyCount == 0) return false;
+      if (magic != CacheMagic || (linked != 0 && linked != 1) || (directEntry != 0 && directEntry != 1) ||
+          dependencyCount == 0) return false;
       manifest.linked = linked != 0;
+      manifest.directEntry = directEntry != 0;
       for (std::size_t index = 0; index < dependencyCount; ++index) {
         ProjectCacheStamp stamp;
         std::string dependency;
         if (!(input >> stamp.size >> stamp.mtime >> std::quoted(dependency))) return false;
         manifest.dependencies.emplace(std::move(dependency), stamp);
       }
+      manifest.inputImages.reserve(inputCount);
+      for (std::size_t index = 0; index < inputCount; ++index) {
+        ProjectCacheStamp stamp;
+        std::string image;
+        if (!(input >> stamp.size >> stamp.mtime >> std::quoted(image))) return false;
+        manifest.inputImages.emplace_back(std::move(image), stamp);
+      }
       input >> std::ws;
       return input.eof();
     }
 
-    bool writeManifest(const std::filesystem::path &path, std::uint64_t baseline, bool linked,
+    bool writeManifest(const std::filesystem::path &path, std::uint64_t baseline, bool linked, bool directEntry,
                        const std::string &source, const ProjectCacheStamp &sourceStamp,
-                       const std::unordered_map<std::string, ProjectCacheStamp> &dependencies) {
+                       const std::unordered_map<std::string, ProjectCacheStamp> &dependencies,
+                       const std::vector<std::pair<std::string, ProjectCacheStamp>> &inputImages) {
       std::vector<std::pair<std::string, ProjectCacheStamp>> ordered(dependencies.begin(), dependencies.end());
       std::sort(ordered.begin(), ordered.end(),
                 [](const auto &left, const auto &right) { return left.first < right.first; });
       std::ofstream file(path, std::ios::trunc);
       if (!file.is_open()) return false;
       file << CacheMagic << ' ' << std::hex << baseline << std::dec << ' ' << (linked ? 1 : 0) << ' '
-           << sourceStamp.size << ' ' << sourceStamp.mtime << ' ' << std::quoted(source) << ' ' << ordered.size()
-           << '\n';
+           << (directEntry ? 1 : 0) << ' ' << sourceStamp.size << ' ' << sourceStamp.mtime << ' ' << std::quoted(source) << ' ' << ordered.size()
+           << ' ' << inputImages.size() << '\n';
       for (const auto &[dependency, stamp] : ordered)
         file << stamp.size << ' ' << stamp.mtime << ' ' << std::quoted(dependency) << '\n';
+      for (const auto &[image, stamp] : inputImages)
+        file << stamp.size << ' ' << stamp.mtime << ' ' << std::quoted(image) << '\n';
       file.close();
       return static_cast<bool>(file);
     }
@@ -285,6 +301,8 @@ namespace recurloop {
     std::error_code error;
     fs::create_directories(cacheModulesDirectory_, error);
 
+    cacheRevision_.fetch_add(1, std::memory_order_release);
+
     const char *projectRoot = std::getenv("RECURLOOP_PROJECT_ROOT");
     if (projectRoot != nullptr && *projectRoot != '\0')
       cacheSourceRoot_ = fs::absolute(fs::path(projectRoot), error).lexically_normal().string();
@@ -394,6 +412,19 @@ namespace recurloop {
           cacheMisses_.fetch_add(1, std::memory_order_relaxed);
           return false;
         }
+      // The cached module is only valid against the exact engine-image set that
+      // formed its pre-source baseline. Source stamps alone are insufficient:
+      // an earlier module can be rebuilt to a different .rli while every .rl
+      // file keeps the same mtime. Restoring the downstream module in that case
+      // would publish a valid-looking generation but leave its source-baseline
+      // manifest stale, so inspection clients could no longer reconstruct the state
+      // before that file. Validate these images during normal cache restore and
+      // let the miss cascade rebuild downstream modules deterministically.
+      for (const auto &[image, imageStamp] : manifest.inputImages)
+        if (!sameStamp(image, imageStamp)) {
+          cacheMisses_.fetch_add(1, std::memory_order_relaxed);
+          return false;
+        }
       if (!fs::is_regular_file(imagePath, error) || error || fs::file_size(imagePath, error) == 0 || error) {
         cacheMisses_.fetch_add(1, std::memory_order_relaxed);
         return false;
@@ -433,9 +464,25 @@ namespace recurloop {
       if (!sourceStamp(absolute, stamp)) return;
 
       ProjectCacheState::Module module;
+      // A source can be entered directly from baseline + inputImages only when
+      // every active parent is itself an append-only linked module. If a
+      // parent has emitted source-owned state before this include, that prefix
+      // is not represented by an image yet and inspection must replay the
+      // source graph to this point.
+      module.directEntry = std::all_of(state.modules.begin(), state.modules.end(), [](const auto &parent) {
+        return parent.directEntry && parent.linked;
+      });
       module.source = absolute;
       module.sourceStamp = stamp;
       module.dependencies.emplace(absolute, stamp);
+      // Capture the images that exist *before* this source starts. The final
+      // module image also depends on includes/imports introduced by the source;
+      // preloading that final dependency set would therefore be too late and
+      // can duplicate or retain dependencies removed by an edited buffer.
+      for (const std::string &image : EngineImage::dependencyPaths(context)) {
+        ProjectCacheStamp imageStamp;
+        if (sourceStamp(image, imageStamp)) module.inputImages.emplace_back(image, imageStamp);
+      }
       snapshotSegment(module, context);
       state.observed[absolute] = stamp;
       state.modules.push_back(std::move(module));
@@ -475,8 +522,8 @@ namespace recurloop {
 
       if (module.linked) EngineImage::saveLinked(context, module.segmentUsed, imageTemporary.string());
       else EngineImage::saveFull(context, imageTemporary.string());
-      if (!writeManifest(manifestTemporary, baselineHash(), module.linked, module.source, module.sourceStamp,
-                         module.dependencies)) {
+      if (!writeManifest(manifestTemporary, baselineHash(), module.linked, module.directEntry, module.source,
+                         module.sourceStamp, module.dependencies, module.inputImages)) {
         fs::remove(imageTemporary, error);
         return false;
       }
@@ -508,6 +555,7 @@ namespace recurloop {
       }
       ++state.step;
       cacheWrites_.fetch_add(1, std::memory_order_relaxed);
+      cacheRevision_.fetch_add(1, std::memory_order_release);
       return true;
     } catch (...) {
       if (!state.modules.empty() && state.modules.back().source == source) state.modules.pop_back();
@@ -516,14 +564,28 @@ namespace recurloop {
     }
   }
 
+  void Project::rememberCacheEntrySource(std::string_view source) noexcept {
+    namespace fs = std::filesystem;
+    try {
+      std::error_code error;
+      const std::string absolute = fs::absolute(fs::path(source), error).lexically_normal().string();
+      if (error) return;
+      std::lock_guard lock(cacheGraphMutex_);
+      cacheEntrySource_ = absolute;
+    } catch (...) {
+    }
+  }
+
   bool Project::restoreCacheStep(ProjectCacheState &state, context::Context &context,
                                  std::string_view source) noexcept {
+    if (state.enabled && state.step == 0) rememberCacheEntrySource(source);
     return restoreCacheModule(state, context, source, false);
   }
 
   void Project::beginCacheStep(ProjectCacheState &state, std::string_view source,
                                context::Context &context) noexcept {
     if (!state.modules.empty()) return;
+    if (state.enabled && state.step == 0) rememberCacheEntrySource(source);
     beginCacheModule(state, context, source);
   }
 
@@ -571,8 +633,32 @@ namespace recurloop {
 
   void Project::beginCacheImageDependency(ProjectCacheState &state, context::Context &context,
                                           std::string_view path) noexcept {
-    (void)path;
-    beforeCacheDependency(state, context);
+    namespace fs = std::filesystem;
+    if (!state.enabled || state.modules.empty()) return;
+    try {
+      // Imported engine images are part of the semantic input of every active
+      // source module, exactly like included .rl files.  A module restored
+      // against a different library image can contain phrase references and
+      // lookup state from the old lexicon even when every source timestamp is
+      // unchanged, so the image itself must participate in cache validation.
+      std::error_code error;
+      const std::string absolute = fs::absolute(fs::path(path), error).lexically_normal().string();
+      if (error) {
+        state.enabled = false;
+        return;
+      }
+      ProjectCacheStamp stamp;
+      if (!sourceStamp(absolute, stamp)) {
+        // EngineImage::load() will report the actual import error.  Refuse to
+        // publish a cache entry we could not deterministically validate later.
+        state.enabled = false;
+        return;
+      }
+      for (auto &module : state.modules) module.dependencies[absolute] = stamp;
+      beforeCacheDependency(state, context);
+    } catch (...) {
+      state.enabled = false;
+    }
   }
 
   void Project::completeCacheImageDependency(ProjectCacheState &state, context::Context &context,
@@ -584,6 +670,125 @@ namespace recurloop {
   void Project::abortCacheStep(ProjectCacheState &state) noexcept {
     state.active = false;
     state.modules.clear();
+  }
+
+  bool Project::inspectionRoot(std::string_view source, std::string &root) const noexcept {
+    namespace fs = std::filesystem;
+    root.clear();
+    if (cacheModulesDirectory_.empty()) return false;
+    try {
+      std::error_code error;
+      const std::string absolute = fs::absolute(fs::path(source), error).lexically_normal().string();
+      if (error) return false;
+
+      {
+        std::lock_guard lock(cacheGraphMutex_);
+        root = cacheEntrySource_;
+      }
+      if (root.empty()) return false;
+
+      Manifest manifest;
+      if (!readManifest(cacheModuleManifestPath(root), manifest) || manifest.baseline != baselineHash() ||
+          manifest.source != root)
+        return false;
+
+      // The root manifest is the published processing graph. The edited source
+      // itself is allowed to differ from disk, but every other edge must still
+      // have the stamp recorded by the last successful project build. If an
+      // earlier file changed, the graph is stale and inspection waits for the
+      // normal reload instead of inventing a different execution order.
+      for (const auto &[dependency, expected] : manifest.dependencies) {
+        if (dependency == absolute) continue;
+        if (!sameStamp(dependency, expected)) return false;
+      }
+      for (const auto &[image, expected] : manifest.inputImages)
+        if (!sameStamp(image, expected)) return false;
+
+      if (absolute == root) return true;
+      return manifest.dependencies.find(absolute) != manifest.dependencies.end();
+    } catch (...) {
+      root.clear();
+      return false;
+    }
+  }
+
+  bool Project::inspectionModuleContains(std::string_view module, std::string_view source) const noexcept {
+    namespace fs = std::filesystem;
+    if (cacheModulesDirectory_.empty()) return false;
+    try {
+      std::error_code error;
+      const std::string moduleAbsolute = fs::absolute(fs::path(module), error).lexically_normal().string();
+      if (error) return false;
+      const std::string sourceAbsolute = fs::absolute(fs::path(source), error).lexically_normal().string();
+      if (error) return false;
+      if (moduleAbsolute == sourceAbsolute) return true;
+
+      Manifest manifest;
+      if (!readManifest(cacheModuleManifestPath(moduleAbsolute), manifest) || manifest.baseline != baselineHash() ||
+          manifest.source != moduleAbsolute)
+        return false;
+      return manifest.dependencies.find(sourceAbsolute) != manifest.dependencies.end();
+    } catch (...) {
+      return false;
+    }
+  }
+
+  bool Project::restoreInspectionEntry(context::Context &context, std::string_view source) const noexcept {
+    namespace fs = std::filesystem;
+    if (cacheModulesDirectory_.empty() || !endsWith(source, ".rl")) return false;
+    try {
+      std::error_code error;
+      const std::string absolute = fs::absolute(fs::path(source), error).lexically_normal().string();
+      if (error) return false;
+      Manifest manifest;
+      if (!readManifest(cacheModuleManifestPath(absolute), manifest) || manifest.baseline != baselineHash() ||
+          manifest.source != absolute || !manifest.directEntry)
+        return false;
+
+      // inputImages is captured before the source starts. EngineImage::load()
+      // recursively restores each image dependency and ignores identities that
+      // are already present in the immutable baseline. The edited source stamp
+      // itself is intentionally not checked: unsaved buffers are exactly what
+      // inspection is for; only their semantic input must remain unchanged.
+      for (const auto &[image, expected] : manifest.inputImages) {
+        if (!sameStamp(image, expected) || !fs::is_regular_file(image, error) || error) return false;
+      }
+
+      LexiconTransaction transaction(context.lexicon);
+      for (const auto &[image, _] : manifest.inputImages) EngineImage::load(context, image);
+      transaction.commit();
+      return true;
+    } catch (...) {
+      return false;
+    }
+  }
+
+  bool Project::restoreInspectionModule(context::Context &context, std::string_view source) const noexcept {
+    namespace fs = std::filesystem;
+    if (cacheModulesDirectory_.empty() || !endsWith(source, ".rl")) return false;
+    try {
+      std::error_code error;
+      const std::string absolute = fs::absolute(fs::path(source), error).lexically_normal().string();
+      if (error) return false;
+      ProjectCacheStamp sourceNow;
+      if (!sourceStamp(absolute, sourceNow)) return false;
+      const fs::path imagePath(cacheModuleImagePath(absolute));
+      Manifest manifest;
+      if (!readManifest(cacheModuleManifestPath(absolute), manifest) || manifest.baseline != baselineHash() ||
+          manifest.source != absolute || manifest.sourceStamp.size != sourceNow.size ||
+          manifest.sourceStamp.mtime != sourceNow.mtime)
+        return false;
+      for (const auto &[dependency, expected] : manifest.dependencies)
+        if (!sameStamp(dependency, expected)) return false;
+      for (const auto &[image, expected] : manifest.inputImages)
+        if (!sameStamp(image, expected)) return false;
+      if (!fs::is_regular_file(imagePath, error) || error || fs::file_size(imagePath, error) == 0 || error)
+        return false;
+      EngineImage::load(context, imagePath.string());
+      return true;
+    } catch (...) {
+      return false;
+    }
   }
 
 } // namespace recurloop

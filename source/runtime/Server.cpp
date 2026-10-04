@@ -94,17 +94,26 @@ namespace recurloop {
     try {
       constexpr std::string_view loadFilePrefix = ":load-file\t";
       constexpr std::string_view inspectPrefix = ":inspect\t";
+      constexpr std::string_view tracePrefix = ":trace\t";
+      constexpr std::string_view inspectFilePrefix = ":inspect-file\t";
+      constexpr std::string_view traceFilePrefix = ":trace-file\t";
       const bool exits = languageExit(line);
       SessionResponse response;
       if (line.starts_with(loadFilePrefix)) {
         const std::string_view path = line.substr(loadFilePrefix.size());
         if (path.empty()) return {"load-file requires a path\nstatus=1\n", false, 1};
         response = session.executeFile(std::string(path));
-      } else if (line.starts_with(inspectPrefix)) {
-        const std::string_view payload = line.substr(inspectPrefix.size());
+      } else if (line.starts_with(inspectPrefix) || line.starts_with(tracePrefix) ||
+                 line.starts_with(inspectFilePrefix) || line.starts_with(traceFilePrefix)) {
+        const bool standalone = line.starts_with(inspectFilePrefix) || line.starts_with(traceFilePrefix);
+        const bool trace = line.starts_with(tracePrefix) || line.starts_with(traceFilePrefix);
+        const std::string_view prefix = standalone ? (trace ? traceFilePrefix : inspectFilePrefix)
+                                                   : (trace ? tracePrefix : inspectPrefix);
+        const std::string_view payload = line.substr(prefix.size());
         const std::size_t separator = payload.find('\t');
         if (separator == std::string_view::npos) return {"inspect requires path and source payloads\nstatus=1\n", false, 1};
-        response = session.inspect(unhex(payload.substr(separator + 1)), unhex(payload.substr(0, separator)));
+        response = session.inspect(unhex(payload.substr(separator + 1)), unhex(payload.substr(0, separator)),
+                                   trace, standalone);
       } else {
         response = session.evaluate(line);
       }

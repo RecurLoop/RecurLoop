@@ -450,6 +450,11 @@ namespace compiler {
     lexicon::Phrase existingPhrase = exact(overloads, key);
     if (!existingPhrase.isNull()) {
       const TypedFunction existing = decodeFunction(existingPhrase);
+      // Independent source files may repeat an external declaration supplied
+      // by an imported environment (for example libc printf in project.rli).
+      // Reuse only an identical import; never replace a definition or silently
+      // accept a different result type, ABI or physical symbol.
+      if (function.imported && existing.imported && sameDeclaration(existing, function)) return;
       if (function.imported) THROW(, "duplicate typed function: '" << function.signature.symbol << "'")
       if (!sameDeclaration(existing, function)) {
         if (existing.imported)
