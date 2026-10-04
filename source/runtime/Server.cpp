@@ -9,12 +9,31 @@
 
 #include <cerrno>
 #include <cctype>
+#include <csignal>
 #include <cstring>
 #include <iostream>
 #include <thread>
 
 namespace recurloop {
   namespace {
+    class IgnoreInteractiveInterrupt {
+    public:
+      IgnoreInteractiveInterrupt() {
+        struct sigaction ignored {};
+        ignored.sa_handler = SIG_IGN;
+        sigemptyset(&ignored.sa_mask);
+        active_ = sigaction(SIGINT, &ignored, &previous_) == 0;
+      }
+
+      ~IgnoreInteractiveInterrupt() {
+        if (active_) sigaction(SIGINT, &previous_, nullptr);
+      }
+
+    private:
+      struct sigaction previous_ {};
+      bool active_ = false;
+    };
+
     std::string trimLine(std::string line) {
       while (!line.empty() && (line.back() == '\n' || line.back() == '\r')) line.pop_back();
       return line;
@@ -176,7 +195,11 @@ namespace recurloop {
       if (line.status == utilities::LineStatus::Interrupt) continue;
       if (line.status == utilities::LineStatus::End) break;
 
-      CommandResult result = handle(*session, line.line);
+      CommandResult result;
+      {
+        IgnoreInteractiveInterrupt interrupt;
+        result = handle(*session, line.line);
+      }
       if (!result.text.empty()) std::cout << result.text << std::flush;
       status = result.status;
       if (result.quit) break;

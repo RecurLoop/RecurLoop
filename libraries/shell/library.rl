@@ -81,6 +81,7 @@ extern dup2(oldfd:i32, newfd:i32) -> i32 abi sysv-amd64
 extern open(path:u8*, flags:i32, ...) -> i32 abi sysv-amd64
 extern execvp(file:u8*, argv:u8**) -> i32 abi sysv-amd64
 extern waitpid(pid:i32, status:i32*, options:i32) -> i32 abi sysv-amd64
+extern signal(number:i32, handler:u8*) -> u8* abi sysv-amd64
 extern _exit(status:i32) -> void abi sysv-amd64
 extern read(fd:i32, buffer:u8*, count:u64) -> i64 abi sysv-amd64
 extern chdir(path:u8*) -> i32 abi sysv-amd64
@@ -778,6 +779,9 @@ let Shell:Invocation:start = fn (
                 }
                 invocation.spawn_failed = 1
             } else if pid == 0 {
+                // The interactive host ignores SIGINT while executing a line.
+                // Pipeline children must receive Ctrl+C normally.
+                signal(cast(i32, 2), cast(u8*, 0))
                 if previous_read >= 0 { dup2(cast(i32, previous_read), cast(i32, 0)) }
                 if next_fds {
                     dup2(next_fds[1], cast(i32, 1))
@@ -1042,6 +1046,7 @@ let Shell:Parallel:spawn = fn (self:Shell:Parallel*, pipeline:Shell:Pipeline*) -
     let pid = fork()
     if pid < 0 { return 0 }
     if pid == 0 {
+        signal(cast(i32, 2), cast(u8*, 0))
         let code = Shell:run_pipeline(pipeline)
         _exit(cast(i32, code))
     }
@@ -2069,6 +2074,7 @@ set open.serializable = false
 set execvp.serializable = false
 set perror.serializable = false
 set waitpid.serializable = false
+set signal.serializable = false
 set _exit.serializable = false
 set read.serializable = false
 set chdir.serializable = false
