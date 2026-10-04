@@ -16,7 +16,7 @@ examples/07-workflows/http-language/tests/query-header.test.sh \
   build/Release/bin/recurloop
 ```
 
-Each script builds `/tmp/recurloop-http-library.rli` automatically when needed and reports `ok` only after the actual socket request matches the expected result.
+Each script builds the HTTP image in a temporary directory when needed and reports `ok` only after the actual socket request matches the expected result. The workflow runner shares that directory between its tests. `top-level.rl` is a stdin fixture whose `@HTTP_IMAGE@` placeholder is replaced by the runner with the current image path.
 
 `standalone.test.sh` additionally compiles `standalone.rl`, launches the
 generated `/tmp/recurloop-http-server` directly, and checks its inline POST

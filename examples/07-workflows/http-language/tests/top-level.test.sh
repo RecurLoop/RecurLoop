@@ -17,7 +17,10 @@ trap cleanup EXIT
 
 # Feed the source through stdin on purpose. This is the same root/interactive
 # path used when a user pastes `engine import ...` followed by `http ... {}`.
-"$HTTP_RECURLOOP" - <"$DIR/top-level.rl" >"$TMP/out" 2>"$TMP/err" &
+# Render the import with this run's image instead of relying on a global /tmp file.
+image_replacement=$(printf '%s' "$HTTP_IMAGE" | sed 's/[\\&|]/\\&/g')
+sed "s|@HTTP_IMAGE@|$image_replacement|g" "$DIR/top-level.rl" >"$TMP/top-level.rl"
+"$HTTP_RECURLOOP" - <"$TMP/top-level.rl" >"$TMP/out" 2>"$TMP/err" &
 server_pid=$!
 
 response=''

@@ -1,4 +1,4 @@
-engine import "/tmp/recurloop-http-library.rli"
+engine import "@HTTP_IMAGE@"
 
 http "127.0.0.1" 18087 {
     POST "/echo" -> fn (request:Http:Request*, response:Http:Response*) -> void {
