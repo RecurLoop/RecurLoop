@@ -115,7 +115,11 @@ namespace recurloop {
         response = session.inspect(unhex(payload.substr(separator + 1)), unhex(payload.substr(0, separator)),
                                    trace, standalone);
       } else {
-        response = session.evaluate(line);
+        // Line readers strip Enter's newline. Preserve that source boundary so
+        // line-oriented language grammars can finish and execute the command.
+        std::string source(line);
+        source.push_back('\n');
+        response = session.evaluate(source);
       }
       std::string text = std::move(response.output);
       text += response.error;

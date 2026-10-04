@@ -54,6 +54,9 @@ A deterministic archive-backed configuration is:
 cmake --preset release -DRECURLOOP_LLVM_PROVIDER=ARCHIVE
 ```
 
+Linux archive builds require the static zlib development archive (`zlib1g-dev`
+on Debian/Ubuntu), which is embedded in the host executable.
+
 The LLVM backend itself is linked into `recurloop`. The JIT/runtime backend is in-process. Object emission uses host `ld.lld`;
 executable emission delegates the final system link to compatible `clang`/`ld.lld` on `PATH`; this keeps libc/sysroot ownership with
 the target operating system instead of embedding a Linux-specific SDK in the
@@ -68,6 +71,9 @@ The current published binary profile is explicit:
 - generic x86-64 CPU baseline;
 - LLVM 22.1.8 official Linux X64 binary distribution, SHA-256 pinned;
 - native LLVM backend linked statically into RecurLoop;
+- dynamic runtime dependencies limited to glibc libraries; unused optional
+  LLVM dependencies such as libxml2 are removed during linking and rejected
+  by the package audit if they remain;
 - Clang/LLD are build/optional executable-link dependencies, not package files.
 
 The archive contains:
@@ -110,6 +116,8 @@ The ELF audit rejects unexpected architectures, interpreters, RPATH/RUNPATH and
 undeclared shared dependencies and computes the actual maximum GLIBC symbol
 version. Official CI uses a Linux x86-64 glibc 2.35 profile and runs the finished
 archive in clean representative newer distributions with networking disabled.
+Those clean containers verify JIT execution and missing-tool diagnostics;
+actual native object emission is tested on the release builder with host LLD.
 
 ## Docker and other libc profiles
 

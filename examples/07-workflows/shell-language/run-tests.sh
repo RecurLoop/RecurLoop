@@ -62,6 +62,13 @@ if [[ ! -s "$IMAGE" ]]; then
     exit 1
 fi
 
+# The stdio server uses the same command handler as the interactive REPL.
+# Check that stripping transport newlines does not suppress shell execution.
+printf 'echo "test"\nprint 42\necho "again"\n:quit\n' \
+    | "$RECURLOOP" --import "$IMAGE" --serve >"$TMP/repl.out"
+printf 'test\n42\nagain\n' >"$TMP/repl.expected"
+diff -u "$TMP/repl.expected" "$TMP/repl.out"
+
 #
 # Run an ordinary source-file test.
 #

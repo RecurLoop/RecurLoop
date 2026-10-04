@@ -205,6 +205,9 @@ if(RECURLOOP_ENABLE_LLVM AND RECURLOOP_LLVM_SELECTED_PROVIDER STREQUAL "ARCHIVE"
         "-ffile-prefix-map=${CMAKE_CURRENT_SOURCE_DIR}=/usr/src/recurloop"
         "-fmacro-prefix-map=${CMAKE_CURRENT_SOURCE_DIR}=/usr/src/recurloop"
         "-fdebug-prefix-map=${CMAKE_CURRENT_SOURCE_DIR}=/usr/src/recurloop")
+    # llvm-config --link-static also lists optional shared system libraries.
+    # Keep only libraries whose symbols the selected backend actually uses.
+    add_link_options("LINKER:--as-needed")
 endif()
 
 option(RECURLOOP_STATIC_CXX_RUNTIME "Link the host C++ runtime statically" ${RECURLOOP_ENABLE_LLVM})

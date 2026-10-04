@@ -34,16 +34,18 @@ set(work "${CMAKE_CURRENT_BINARY_DIR}/package-audit")
 file(MAKE_DIRECTORY "${work}/bin" "${work}/lib")
 file(WRITE "${work}/xml.c" "int xmlFake(void) { return 0; }\n")
 file(WRITE "${work}/main.c" "extern int xmlFake(void); int main(void) { return xmlFake(); }\n")
-execute_process(COMMAND "${CC}" -shared -fPIC "${work}/xml.c" -Wl,-soname,libunexpected.so.1
-    -o "${work}/lib/libunexpected.so.1" COMMAND_ERROR_IS_FATAL ANY)
-execute_process(COMMAND "${CC}" "${work}/main.c" "-L${work}/lib" -l:libunexpected.so.1
-    -o "${work}/bin/recurloop" COMMAND_ERROR_IS_FATAL ANY)
-execute_process(COMMAND "${CMAKE_COMMAND}" "-DPREFIX=${work}" -P "${root}/cmake/AuditLinuxPackage.cmake"
-    RESULT_VARIABLE result OUTPUT_VARIABLE output ERROR_VARIABLE error)
-if(result EQUAL 0 OR NOT error MATCHES "Undeclared runtime dependency")
-    message(FATAL_ERROR "Audit did not reject an undeclared runtime dependency: ${output}${error}")
-endif()
-file(REMOVE "${work}/lib/libunexpected.so.1")
+foreach(dependency IN ITEMS libunexpected.so.1 libxml2.so.2 libz.so.1 libzstd.so.1 libtinfo.so.6)
+    execute_process(COMMAND "${CC}" -shared -fPIC "${work}/xml.c" "-Wl,-soname,${dependency}"
+        -o "${work}/lib/${dependency}" COMMAND_ERROR_IS_FATAL ANY)
+    execute_process(COMMAND "${CC}" "${work}/main.c" "-L${work}/lib" "-l:${dependency}"
+        -o "${work}/bin/recurloop" COMMAND_ERROR_IS_FATAL ANY)
+    execute_process(COMMAND "${CMAKE_COMMAND}" "-DPREFIX=${work}" -P "${root}/cmake/AuditLinuxPackage.cmake"
+        RESULT_VARIABLE result OUTPUT_VARIABLE output ERROR_VARIABLE error)
+    if(result EQUAL 0 OR NOT error MATCHES "Undeclared runtime dependency")
+        message(FATAL_ERROR "Audit did not reject ${dependency}: ${output}${error}")
+    endif()
+    file(REMOVE "${work}/lib/${dependency}")
+endforeach()
 file(WRITE "${work}/main.c" "int main(void) { return 0; }\n")
 execute_process(COMMAND "${CC}" "${work}/main.c" -o "${work}/bin/recurloop" COMMAND_ERROR_IS_FATAL ANY)
 execute_process(COMMAND "${CMAKE_COMMAND}" "-DPREFIX=${work}" -P "${root}/cmake/AuditLinuxPackage.cmake"

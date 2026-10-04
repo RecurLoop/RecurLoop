@@ -160,6 +160,12 @@ endif()
 separate_arguments(RECURLOOP_LLVM_LIBRARIES NATIVE_COMMAND "${_recurloop_llvm_libfiles}")
 if(NOT _recurloop_llvm_system_libs STREQUAL "")
     separate_arguments(_recurloop_llvm_system_libraries NATIVE_COMMAND "${_recurloop_llvm_system_libs}")
+    if(_recurloop_llvm_selected_provider STREQUAL "ARCHIVE" AND CMAKE_SYSTEM_NAME STREQUAL "Linux")
+        # LLVM's object reader uses zlib even with only the native backend.
+        # Embed it so clean runtime images need only their glibc installation.
+        find_library(_recurloop_zlib_static NAMES libz.a REQUIRED)
+        list(TRANSFORM _recurloop_llvm_system_libraries REPLACE "^-lz$" "${_recurloop_zlib_static}")
+    endif()
     list(APPEND RECURLOOP_LLVM_LIBRARIES ${_recurloop_llvm_system_libraries})
 endif()
 
