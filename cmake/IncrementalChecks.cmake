@@ -123,15 +123,15 @@ function(recurloop_add_checked_example name)
         COMMAND "${CMAKE_COMMAND}" -E make_directory "${RECURLOOP_CHECK_DIR}/examples" "${work_dir}"
         COMMAND "${CMAKE_COMMAND}" -E chdir "${work_dir}"
             "${CMAKE_COMMAND}"
-            "-DQUIET_LABEL=example ${name}"
-            "-DQUIET_PROGRAM=${CMAKE_SOURCE_DIR}/tools/examples.sh"
-            "-DQUIET_ARGC=3"
-            "-DQUIET_ARG_0=run"
-            "-DQUIET_ARG_1=$<TARGET_FILE:Recurloop>"
-            "-DQUIET_ARG_2=${name}"
-            -P "${CMAKE_SOURCE_DIR}/cmake/RunQuiet.cmake"
+            "-DCHECK_LABEL=example ${name}"
+            "-DCHECK_PROGRAM=${CMAKE_SOURCE_DIR}/tools/examples.sh"
+            "-DCHECK_ARGC=3"
+            "-DCHECK_ARG_0=run"
+            "-DCHECK_ARG_1=$<TARGET_FILE:Recurloop>"
+            "-DCHECK_ARG_2=${name}"
+            -P "${CMAKE_SOURCE_DIR}/cmake/RunCheck.cmake"
         COMMAND "${CMAKE_COMMAND}" -E touch "${stamp}"
-        DEPENDS ${example_files} ${ARG_DEPENDS}
+        DEPENDS "${CMAKE_SOURCE_DIR}/cmake/RunCheck.cmake" ${example_files} ${ARG_DEPENDS}
         COMMENT "[check][example] ${name}"
         VERBATIM
         USES_TERMINAL)

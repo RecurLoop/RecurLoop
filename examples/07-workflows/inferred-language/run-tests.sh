@@ -6,9 +6,9 @@ DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 ROOT=$(cd -- "$DIR/../../.." && pwd)
 KIT_LIBRARY="$ROOT/libraries/language-kit/library.rl"
 INFERRED_LIBRARY="$ROOT/libraries/inferred/library.rl"
-KIT_IMAGE=/tmp/recurloop-language-kit.rli
-IMAGE=/tmp/recurloop-inferred-library.rli
 TMP=$(mktemp -d)
+KIT_IMAGE="$TMP/language-kit.rli"
+IMAGE="$TMP/library.rli"
 trap 'rm -rf "$TMP"' EXIT
 
 [[ -x "$RECURLOOP" ]] || { echo "Recurloop executable not found: $RECURLOOP" >&2; exit 2; }

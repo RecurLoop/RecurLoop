@@ -1,0 +1,11 @@
+and-ok
+or-ok
+recovered
+left-to-right
+pipefail
+literal && || ;
+escaped&&word
+sequence
+no-spaces
+no-spaces-or
+trailing-semicolon

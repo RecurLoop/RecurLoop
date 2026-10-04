@@ -81,15 +81,16 @@ if(ENABLE_TESTS_UNIT)
                 COMMAND "${CMAKE_COMMAND}" -E make_directory "${RECURLOOP_CHECK_DIR}/unit" "${work_dir}"
                 COMMAND "${CMAKE_COMMAND}" -E chdir "${work_dir}"
                     "${CMAKE_COMMAND}"
-                    "-DQUIET_LABEL=unit ${test_name}"
-                    "-DQUIET_PROGRAM=$<TARGET_FILE:${target}>"
-                    "-DQUIET_ARGC=1"
-                    "-DQUIET_ARG_0=--gtest_brief=1"
-                    -P "${CMAKE_SOURCE_DIR}/cmake/RunQuiet.cmake"
+                    "-DCHECK_LABEL=unit ${test_name}"
+                    "-DCHECK_PROGRAM=$<TARGET_FILE:${target}>"
+                    "-DCHECK_ARGC=1"
+                    "-DCHECK_ARG_0=--gtest_brief=1"
+                    -P "${CMAKE_SOURCE_DIR}/cmake/RunCheck.cmake"
                 COMMAND "${CMAKE_COMMAND}" -E touch "${stamp}"
-                DEPENDS ${target}
+                DEPENDS ${target} "${CMAKE_SOURCE_DIR}/cmake/RunCheck.cmake"
                 COMMENT "[check][unit] ${test_name}"
-                VERBATIM)
+                VERBATIM
+                USES_TERMINAL)
             list(APPEND recurloop_unit_check_outputs "${stamp}")
         endforeach()
 
@@ -156,17 +157,17 @@ if(ENABLE_TESTS_FEATURE)
                 COMMAND "${CMAKE_COMMAND}" -E make_directory "${RECURLOOP_CHECK_DIR}/feature" "${work_dir}"
                 COMMAND "${CMAKE_COMMAND}" -E chdir "${work_dir}"
                     "${CMAKE_COMMAND}"
-                    "-DQUIET_LABEL=feature ${test_name}"
-                    "-DQUIET_PROGRAM=${CMAKE_COMMAND}"
-                    "-DQUIET_ARGC=5"
-                    "-DQUIET_ARG_0=-DPROGRAM=$<TARGET_FILE:Recurloop>"
-                    "-DQUIET_ARG_1=-DREADELF=${CMAKE_READELF}"
-                    "-DQUIET_ARG_2=-DTARGET_TRIPLE=${RECURLOOP_LLVM_TARGET_TRIPLE}"
-                    "-DQUIET_ARG_3=-P"
-                    "-DQUIET_ARG_4=${feature_test}"
-                    -P "${CMAKE_SOURCE_DIR}/cmake/RunQuiet.cmake"
+                    "-DCHECK_LABEL=feature ${test_name}"
+                    "-DCHECK_PROGRAM=${CMAKE_COMMAND}"
+                    "-DCHECK_ARGC=5"
+                    "-DCHECK_ARG_0=-DPROGRAM=$<TARGET_FILE:Recurloop>"
+                    "-DCHECK_ARG_1=-DREADELF=${CMAKE_READELF}"
+                    "-DCHECK_ARG_2=-DTARGET_TRIPLE=${RECURLOOP_LLVM_TARGET_TRIPLE}"
+                    "-DCHECK_ARG_3=-P"
+                    "-DCHECK_ARG_4=${feature_test}"
+                    -P "${CMAKE_SOURCE_DIR}/cmake/RunCheck.cmake"
                 COMMAND "${CMAKE_COMMAND}" -E touch "${stamp}"
-                DEPENDS "${feature_test}" ${ARG_DEPENDS}
+                DEPENDS "${feature_test}" "${CMAKE_SOURCE_DIR}/cmake/RunCheck.cmake" ${ARG_DEPENDS}
                 COMMENT "[check][feature] ${test_name}"
                 VERBATIM
                 USES_TERMINAL)
@@ -176,17 +177,17 @@ if(ENABLE_TESTS_FEATURE)
                 COMMAND "${CMAKE_COMMAND}" -E make_directory "${RECURLOOP_CHECK_DIR}/feature" "${work_dir}"
                 COMMAND "${CMAKE_COMMAND}" -E chdir "${work_dir}"
                     "${CMAKE_COMMAND}"
-                    "-DQUIET_LABEL=feature ${test_name}"
-                    "-DQUIET_PROGRAM=${CMAKE_COMMAND}"
-                    "-DQUIET_ARGC=5"
-                    "-DQUIET_ARG_0=-DPROGRAM=$<TARGET_FILE:Recurloop>"
-                    "-DQUIET_ARG_1=-DCORE_IMAGE=${RECURLOOP_CORE_IMAGE}"
-                    "-DQUIET_ARG_2=-DLLVM_BACKEND=${RECURLOOP_ENABLE_LLVM}"
-                    "-DQUIET_ARG_3=-P"
-                    "-DQUIET_ARG_4=${feature_test}"
-                    -P "${CMAKE_SOURCE_DIR}/cmake/RunQuiet.cmake"
+                    "-DCHECK_LABEL=feature ${test_name}"
+                    "-DCHECK_PROGRAM=${CMAKE_COMMAND}"
+                    "-DCHECK_ARGC=5"
+                    "-DCHECK_ARG_0=-DPROGRAM=$<TARGET_FILE:Recurloop>"
+                    "-DCHECK_ARG_1=-DCORE_IMAGE=${RECURLOOP_CORE_IMAGE}"
+                    "-DCHECK_ARG_2=-DLLVM_BACKEND=${RECURLOOP_ENABLE_LLVM}"
+                    "-DCHECK_ARG_3=-P"
+                    "-DCHECK_ARG_4=${feature_test}"
+                    -P "${CMAKE_SOURCE_DIR}/cmake/RunCheck.cmake"
                 COMMAND "${CMAKE_COMMAND}" -E touch "${stamp}"
-                DEPENDS "${feature_test}" ${ARG_DEPENDS}
+                DEPENDS "${feature_test}" "${CMAKE_SOURCE_DIR}/cmake/RunCheck.cmake" ${ARG_DEPENDS}
                 COMMENT "[check][feature] ${test_name}"
                 VERBATIM
                 USES_TERMINAL)

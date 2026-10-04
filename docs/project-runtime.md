@@ -24,6 +24,24 @@ transient lifecycle driver and commits that snapshot only after the native
 module links successfully. The same build session can therefore publish the
 clean pre-driver state without loading the complete project a second time.
 
+## Terminal output
+
+Ordinary terminal requests stream output while source executes. Shell drains
+process output in 4 KiB chunks into the request's output stream; the server
+forwards those chunks immediately, and `--connect` writes received bytes directly
+to its terminal. A slow reader applies socket/pipe backpressure instead of
+accumulating the complete command output in memory. Explicit Shell `capture`
+and Session calls without output streams still collect their requested results.
+
+Unix connections initially receive the plain `> ` prompt. The terminal client
+then sends `:transport-stream-v1` as its first line to select framed responses.
+Each frame has a one-byte kind followed by a four-byte unsigned big-endian
+payload length. `O` frames carry 1–4096 output bytes; an empty `P` frame marks
+command completion. Payloads may include NUL bytes and prompt-looking text.
+Status diagnostics remain output text. Input commands and Ctrl+C retain their
+existing line/control-byte format. Clients that do not select framing retain
+plain text responses and prompts.
+
 ## Source-module cache
 
 `--project-cache <dir>` enables a persistent linked-module cache. `IDE:Config`

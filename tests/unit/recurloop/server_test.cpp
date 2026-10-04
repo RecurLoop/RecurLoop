@@ -7,10 +7,12 @@
 #include <sys/socket.h>
 #include <sys/un.h>
 #include <unistd.h>
+#include <poll.h>
 
 #include <chrono>
 #include <cstring>
 #include <filesystem>
+#include <fstream>
 #include <memory>
 #include <string>
 #include <thread>
@@ -56,7 +58,7 @@ namespace {
     }
     return result;
   }
-}
+} // namespace
 
 TEST(RecurloopServer, UnixClientsHaveIndependentSessionsAndCanPublish) {
   const std::string path = "/tmp/recurloop-server-unit-" + std::to_string(getpid()) + ".sock";
@@ -142,4 +144,56 @@ TEST(RecurloopServer, LanguageExitClosesOnlyTheCallingUnixSession) {
   server.stop();
   thread.join();
   std::filesystem::remove(path);
+}
+
+TEST(RecurloopServer, LoadFileStreamsOutputBeforeTheRequestCompletes) {
+  const auto directory =
+      std::filesystem::temp_directory_path() / ("recurloop-server-stream-" + std::to_string(getpid()));
+  std::filesystem::create_directories(directory);
+  const std::string path = (directory / "server.sock").string();
+  const auto release = directory / "release";
+  const auto source = directory / "stream.rl";
+  std::filesystem::remove(release);
+  {
+    std::ofstream file(source);
+    file << "link shared \"c\"\n"
+         << "extern access(path:u8*, mode:i32) -> i32 abi sysv-amd64\n"
+         << "extern usleep(time:u32) -> i32 abi sysv-amd64\n"
+         << "print \"server-live\"\n"
+         << "while access(\"" << release.string() << "\", 0) != 0 { usleep(1000) }\n"
+         << "print \"server-done\"\n";
+  }
+
+  recurloop::ServerOptions options;
+  options.stdio = false;
+  options.unixPath = path;
+  recurloop::Server server(project(), options);
+  std::thread thread([&] { EXPECT_EQ(server.run(), 0); });
+  const int client = connectUnix(path);
+  EXPECT_GE(client, 0);
+  if (client >= 0) {
+    EXPECT_EQ(readPrompt(client), "> ");
+    sendLine(client, ":load-file\t" + source.string());
+    std::string output;
+    while (output.find("server-live\n") == std::string::npos) {
+      pollfd input{client, POLLIN, 0};
+      const int ready = poll(&input, 1, 2000);
+      EXPECT_GT(ready, 0) << "output was held until request completion";
+      if (ready <= 0) break;
+      char bytes[4096];
+      const auto count = recv(client, bytes, sizeof(bytes), 0);
+      if (count <= 0) break;
+      output.append(bytes, static_cast<std::size_t>(count));
+      if (output.ends_with("> ")) break;
+    }
+    EXPECT_NE(output.find("server-live\n"), std::string::npos);
+    EXPECT_EQ(output.find("server-done"), std::string::npos);
+    EXPECT_FALSE(output.ends_with("> ")) << "request completed before the release gate: " << output;
+    std::ofstream(release).close();
+    if (!output.ends_with("> ")) EXPECT_NE(readPrompt(client).find("server-done\n"), std::string::npos);
+    close(client);
+  }
+  server.stop();
+  thread.join();
+  std::filesystem::remove_all(directory);
 }

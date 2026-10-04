@@ -5,8 +5,8 @@ RECURLOOP=${1:-build/Release/bin/recurloop}
 DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 ROOT=$(cd -- "$DIR/../../.." && pwd)
 LIBRARY="$ROOT/libraries/language-kit/library.rl"
-KIT_IMAGE=/tmp/recurloop-language-kit.rli
 TMP=$(mktemp -d)
+KIT_IMAGE="$TMP/language-kit.rli"
 trap 'rm -rf "$TMP"' EXIT
 
 [[ -x "$RECURLOOP" ]] || { echo "Recurloop executable not found: $RECURLOOP" >&2; exit 2; }

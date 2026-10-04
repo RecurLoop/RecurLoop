@@ -387,10 +387,10 @@ namespace recurloop {
     return response;
   }
 
-  SessionResponse Session::evaluate(std::string_view source, std::string_view path) {
+  SessionResponse Session::evaluate(std::string_view source, std::string_view path, std::ostream *out, std::ostream *err) {
     const std::string sourceCopy(source);
     const std::string pathCopy(path.empty() ? "<session>" : path);
-    return runRequest([&](context::Context &context) { executeSource(context, sourceCopy, pathCopy, 1, 1); });
+    return runRequest([&](context::Context &context) { executeSource(context, sourceCopy, pathCopy, 1, 1); }, out, err);
   }
 
   SessionResponse Session::inspect(std::string_view source, std::string_view path, bool trace, bool standalone) {
@@ -465,7 +465,7 @@ namespace recurloop {
     return response;
   }
 
-  SessionResponse Session::executeFile(const std::string &path) {
+  SessionResponse Session::executeFile(const std::string &path, std::ostream *out, std::ostream *err) {
     const std::string absolute = std::filesystem::absolute(path).lexically_normal().string();
     bool restored = false;
     bool started = false;
@@ -509,7 +509,7 @@ namespace recurloop {
               bridge->session->project_->beginCacheImageDependency(bridge->session->cacheState_, context, path);
           });
       executeStream(context, input, absolute, 1, 1);
-    });
+    }, out, err);
 
     if (restored) return response;
     if (!started) return response;

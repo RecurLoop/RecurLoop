@@ -4,8 +4,12 @@ set -euo pipefail
 HTTP_TEST_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 HTTP_DIR=$(cd -- "$HTTP_TEST_DIR/.." && pwd)
 HTTP_REPO_ROOT=$(cd -- "$HTTP_DIR/../../.." && pwd)
-HTTP_IMAGE=/tmp/recurloop-http-library.rli
-HTTP_KIT_IMAGE=/tmp/recurloop-language-kit.rli
+if [[ -z "${HTTP_IMAGE_DIR:-}" ]]; then
+    HTTP_IMAGE_DIR=$(mktemp -d)
+    trap 'rm -rf "$HTTP_IMAGE_DIR"' EXIT
+fi
+HTTP_IMAGE="$HTTP_IMAGE_DIR/http.rli"
+HTTP_KIT_IMAGE="$HTTP_IMAGE_DIR/language-kit.rli"
 
 http_prepare() {
     local recurloop=${1:-build/Release/bin/recurloop}

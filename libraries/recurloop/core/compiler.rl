@@ -184,6 +184,7 @@ compiler {
   extern "context:process:active" symbol "context:process:active" params [ ] result "u64" abi "sysv-amd64" imported
   extern "context:process:track" symbol "context:process:track" params [ "u64" ] result "void" abi "sysv-amd64" imported
   extern "context:process:release" symbol "context:process:release" params [ "u64" ] result "void" abi "sysv-amd64" imported
+  extern "context:io:write_bytes" symbol "context:io:write-bytes" params [ "Context*" "u8*" "u64" ] result "u64" abi "sysv-amd64" imported
   extern "context:io:write" symbol "context:io:write" params [ "Context*" "u8*" ] result "u64" abi "sysv-amd64" imported
   extern "context:memory:allocate" symbol "context:memory:allocate" params [ "Context*" "u64" ] result "u8*" abi "sysv-amd64" imported
   extern "context:memory:reallocate" symbol "context:memory:reallocate" params [ "Context*" "u8*" "u64" ] result "u8*" abi "sysv-amd64" imported

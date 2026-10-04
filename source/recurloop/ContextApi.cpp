@@ -827,6 +827,17 @@ namespace recurloop {
       });
     }
 
+    extern "C" std::uint64_t contextIoWriteBytes(context::Context *context, const std::uint8_t *bytes,
+                                                std::uint64_t size) noexcept {
+      return checked(context, std::uint64_t{0}, [&](context::Context &value) {
+        if (bytes == nullptr || value.io.out == nullptr || size > std::numeric_limits<std::streamsize>::max())
+          return std::uint64_t{0};
+        value.io.out->write(reinterpret_cast<const char *>(bytes), static_cast<std::streamsize>(size));
+        value.io.out->flush();
+        return std::uint64_t{value.io.out->good()};
+      });
+    }
+
     extern "C" std::uint8_t *contextMemoryAllocate(context::Context *context, std::uint64_t bytes) noexcept {
       if (context == nullptr || context->exec.pendingException || bytes > std::numeric_limits<std::size_t>::max())
         return nullptr;
@@ -2180,6 +2191,9 @@ namespace recurloop {
                           reinterpret_cast<std::uintptr_t>(&contextProcessRelease));
       declareHostFunction(context, IoWrite, "context:io:write", {contextPointer, bytePointer}, u64,
                         reinterpret_cast<std::uintptr_t>(&contextIoWrite));
+    declareHostFunction(context, "context:io:write_bytes", "context:io:write-bytes",
+                        {contextPointer, bytePointer, u64}, u64,
+                        reinterpret_cast<std::uintptr_t>(&contextIoWriteBytes));
     declareHostFunction(context, MemoryAllocate, "context:memory:allocate", {contextPointer, u64}, bytePointer,
                         reinterpret_cast<std::uintptr_t>(&contextMemoryAllocate));
     declareHostFunction(context, MemoryReallocate, "context:memory:reallocate", {contextPointer, bytePointer, u64},

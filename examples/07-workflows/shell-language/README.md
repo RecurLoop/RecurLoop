@@ -29,7 +29,7 @@ LanguageKit owns the shared top-level fallback dispatcher. An otherwise unknown
 top-level line is offered to the Shell fallback and enters the shell phrase dictionary;
 ordinary RecurLoop phrases retain longest-prefix priority. Dispatch then moves
 between phrase dictionaries for an unquoted word, single and double quotes,
-escapes, interpolation, pipelines and redirection. Those phrase actions build
+escapes, interpolation, pipelines, conditional lists and redirection. Those phrase actions build
 `Shell:Pipeline` directly; there is no command string tokenizer or mini shell
 parser. Explicit `run` uses the same graph in scripts and, inside `fn`, emits
 native builder calls before the ordinary function compiler sees the expanded
@@ -70,7 +70,21 @@ Top-level `var`, `const`, `set`, `print`, `assert` and shell interpolation share
 the phrase-backed RecurLoop Values store. The shell library does not create a
 second user-variable store.
 
+Chain commands with `&&` (continue on success), `||` (continue on failure),
+or `;` (always continue):
+
+```text
+> make build && make check && make libraries && make test && make verify
+> false || echo recovered
+```
+
+Pipelines bind more tightly than these separators. `&&` and `||` have equal
+precedence and evaluate left to right. Quoted or escaped operators remain
+literal arguments. A list reports the status of the last pipeline it executed;
+`capture` concatenates stdout from the executed pipelines. The same grammar
+works with explicit `run`, compiled functions and the VS Code console.
+
 Each top-level `run` updates the integer value `status`. Top-level
 `capture command ...` updates both `captured` (stdout) and `status`; inside a
-compiled function, `capture command ...` remains an expression returning
-`Shell:Capture*`.
+compiled function, `capture command ...` is an expression returning owned
+stdout text (`u8*`), which the caller releases with `free`.

@@ -44,7 +44,8 @@ namespace recurloop {
       std::shared_ptr<std::atomic<bool>> finished;
     };
 
-    static CommandResult handle(Session &session, std::string_view line);
+    static CommandResult handle(Session &session, std::string_view line, std::ostream *out = nullptr,
+                                std::ostream *err = nullptr);
     int runStdio();
     void openUnix();
     void runUnix();

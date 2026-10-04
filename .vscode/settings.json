@@ -28,6 +28,7 @@
         }
     },
     "terminal.integrated.defaultProfile.linux": "RecurLoop",
+    "recurloop.executablePath": "${workspaceFolder}/build/Release/bin/recurloop",
     "recurloop.terminal.libraries": [
         "shell",
         "inferred"

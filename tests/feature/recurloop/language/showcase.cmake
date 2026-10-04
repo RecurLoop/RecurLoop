@@ -26,6 +26,8 @@ file(REMOVE
 
 execute_process(
     COMMAND "${PROGRAM}" --file "${REPOSITORY_ROOT}/program.rl.example"
+    ECHO_OUTPUT_VARIABLE
+    ECHO_ERROR_VARIABLE
     RESULT_VARIABLE showcase_rc
     OUTPUT_VARIABLE showcase_out
     ERROR_VARIABLE showcase_err

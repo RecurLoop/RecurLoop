@@ -18,6 +18,12 @@ let shell_functions_main = fn (argc:i64, argv:u8**) -> i64 {
     if !result { return 100 }
     defer free(result)
     printf("captured in fn: %s", result)
+    let conditional = run false && echo should-not-run || printf "compiled-chain\\n"
+    if conditional != 0 { return 101 }
+    let combined = capture printf first && printf second
+    if !combined { return 102 }
+    defer free(combined)
+    if !Shell:text_equal(combined, "firstsecond") { return 103 }
     return 0
 }
 

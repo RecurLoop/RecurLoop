@@ -51,12 +51,14 @@
 //   - spawn returns an asynchronous Shell:Invocation whose accessors wait;
 //   - typed RecurLoop callbacks can consume stdin and produce pipeline stdout;
 //   - pipeline failure uses pipefail-like semantics (first non-zero status);
+//   - && and || conditionally run pipelines from left to right;
+//   - semicolons run the next pipeline regardless of the previous status;
 //   - directory/environment scopes restore state through `defer`;
 //   - parallel runs each `run` line in its own supervisor process.
 //   - `cd` is a parent-process builtin and maintains PWD/OLDPWD.
 //
 // Deliberately not implemented in this example library:
-//   glob expansion, && / ||, heredocs, job control, signals, and arbitrary
+//   glob expansion, heredocs, job control, signals, and arbitrary
 //   Bash grammar. PS1 command substitution is handled by the interactive core.
 //
 // Build reusable language images:
@@ -367,6 +369,8 @@ record Shell:Pipeline {
     capacity:i64
     output_path:u8*
     append:i64
+    next:Shell:Pipeline*
+    condition:i64
 }
 
 let Shell:Pipeline:new = fn () -> Shell:Pipeline* {
@@ -378,6 +382,8 @@ let Shell:Pipeline:new = fn () -> Shell:Pipeline* {
     pipeline.capacity = 0
     pipeline.output_path = cast(u8*, 0)
     pipeline.append = 0
+    pipeline.next = cast(Shell:Pipeline*, 0)
+    pipeline.condition = 0
     return pipeline
 }
 
@@ -439,22 +445,27 @@ let Shell:Pipeline:add_command = fn (self:Shell:Pipeline*, program:u8*) -> i64 {
 }
 
 let Shell:Pipeline:destroy = fn (self:Shell:Pipeline*) -> void {
-    if !self { return }
-    var i = 0
-    while i < self.count {
-        if self.commands[i] { Shell:Command:destroy(self.commands[i]) }
-        if self.functions[i] { Shell:Function:destroy(self.functions[i]) }
-        i += 1
+    var current = self
+    while current {
+        let next = current.next
+        var i = 0
+        while i < current.count {
+            if current.commands[i] { Shell:Command:destroy(current.commands[i]) }
+            if current.functions[i] { Shell:Function:destroy(current.functions[i]) }
+            i += 1
+        }
+        if current.commands { free(cast(u8*, current.commands)) }
+        if current.functions { free(cast(u8*, current.functions)) }
+        if current.output_path { free(current.output_path) }
+        free(cast(u8*, current))
+        current = next
     }
-    if self.commands { free(cast(u8*, self.commands)) }
-    if self.functions { free(cast(u8*, self.functions)) }
-    if self.output_path { free(self.output_path) }
-    free(cast(u8*, self))
 }
 
 // A command is assembled by phrase actions while source is being consumed.
 // There is intentionally no string tokenizer and no second shell parser.
 record Shell:Build {
+    head:Shell:Pipeline*
     pipeline:Shell:Pipeline*
     command:Shell:Command*
     word:Shell:Text*
@@ -469,6 +480,7 @@ let Shell:Build:new = fn () -> Shell:Build* {
     let build = alloc(Shell:Build)
     if !build { return cast(Shell:Build*, 0) }
     build.pipeline = Shell:Pipeline:new()
+    build.head = build.pipeline
     build.command = Shell:Command:new()
     build.word = Shell:Text:new()
     build.expression = Shell:Text:new()
@@ -489,7 +501,7 @@ let Shell:Build:new = fn () -> Shell:Build* {
 
 let Shell:Build:destroy = fn (self:Shell:Build*) -> void {
     if !self { return }
-    if self.pipeline { Shell:Pipeline:destroy(self.pipeline) }
+    if self.head { Shell:Pipeline:destroy(self.head) }
     if self.command { Shell:Command:destroy(self.command) }
     if self.word { Shell:Text:destroy(self.word) }
     if self.expression { Shell:Text:destroy(self.expression) }
@@ -562,13 +574,56 @@ let Shell:Build:redirect_to = fn (self:Shell:Build*, append:i64) -> i64 {
     return 1
 }
 
+// Each separator closes one pipeline and links the next one with its gate.
+let Shell:Build:connect = fn (self:Shell:Build*, condition:i64) -> i64 {
+    if !self || !self.finish_word() || self.failed || self.redirect == 1 || self.command.argc == 0 {
+        if self { self.failed = 1 }
+        return 0
+    }
+    let next = Shell:Pipeline:new()
+    let command = Shell:Command:new()
+    if !next || !command {
+        if next { Shell:Pipeline:destroy(next) }
+        if command { Shell:Command:destroy(command) }
+        self.failed = 1
+        return 0
+    }
+    if !self.pipeline.add(self.command) {
+        Shell:Pipeline:destroy(next)
+        Shell:Command:destroy(command)
+        self.failed = 1
+        return 0
+    }
+    next.condition = condition
+    self.pipeline.next = next
+    self.pipeline = next
+    self.command = command
+    self.redirect = 0
+    return 1
+}
+
 let Shell:Build:finish = fn (self:Shell:Build*) -> Shell:Pipeline* {
+    // A trailing semicolon terminates a list; && and || still require a RHS.
+    if self && !self.failed && !self.word_open && self.redirect == 0 && self.command.argc == 0 &&
+        self.head != self.pipeline && self.pipeline.condition == 0 && self.pipeline.count == 0 {
+        var previous = self.head
+        while previous.next != self.pipeline { previous = previous.next }
+        previous.next = cast(Shell:Pipeline*, 0)
+        Shell:Pipeline:destroy(self.pipeline)
+        Shell:Command:destroy(self.command)
+        self.pipeline = cast(Shell:Pipeline*, 0)
+        self.command = cast(Shell:Command*, 0)
+        let result = self.head
+        self.head = cast(Shell:Pipeline*, 0)
+        return result
+    }
     if !self || !self.finish_word() || self.failed || self.redirect == 1 || self.command.argc == 0 {
         return cast(Shell:Pipeline*, 0)
     }
     if !self.pipeline.add(self.command) { self.failed = 1; return cast(Shell:Pipeline*, 0) }
     self.command = cast(Shell:Command*, 0)
-    let result = self.pipeline
+    let result = self.head
+    self.head = cast(Shell:Pipeline*, 0)
     self.pipeline = cast(Shell:Pipeline*, 0)
     return result
 }
@@ -841,11 +896,6 @@ let Shell:Invocation:start_impl = fn (
     return invocation
 }
 
-// Ordinary/programmatic pipelines remain standalone-native compatible.
-let Shell:Invocation:start = fn (pipeline:Shell:Pipeline*, want_output:i64) -> Shell:Invocation* {
-    return Shell:Invocation:start_impl(pipeline, want_output, 0)
-}
-
 let Shell:Invocation:await = fn (self:Shell:Invocation*) -> i64 {
     if !self { return 126 }
     if self.completed { return self.result }
@@ -904,9 +954,36 @@ let Shell:Invocation:destroy = fn (self:Shell:Invocation*) -> void {
     free(cast(u8*, self))
 }
 
+// A single pipeline stays asynchronous. Conditional lists wait between
+// pipelines in the parent, so cd and managed process groups keep their semantics.
+let Shell:Invocation:start = fn (pipeline:Shell:Pipeline*, want_output:i64) -> Shell:Invocation* {
+    if !pipeline || !pipeline.next { return Shell:Invocation:start_impl(pipeline, want_output, 0) }
+    var current = pipeline
+    var result = cast(Shell:Invocation*, 0)
+    var status = 0
+    let output = Shell:Text:new()
+    if !output { return result }
+    defer Shell:Text:destroy(output)
+    while current {
+        if current.condition == 0 || (current.condition == 1 && status == 0) || (current.condition == 2 && status != 0) {
+            if result { result.destroy() }
+            result = Shell:Invocation:start_impl(current, want_output, 0)
+            if !result { return result }
+            status = result.exit_code()
+            if want_output { output.append_text(result.stdout()) }
+        }
+        current = current.next
+    }
+    if result && want_output {
+        free(result.output)
+        result.output = output.take()
+    }
+    return result
+}
+
 // Only phrase execution in a managed request calls host process-control APIs.
 // Keep these APIs outside the ordinary pipeline graph used by emit executable.
-let Shell:managed_invocation = fn (pipeline:Shell:Pipeline*, want_output:i64) -> Shell:Invocation* {
+let Shell:managed_single_invocation = fn (pipeline:Shell:Pipeline*, want_output:i64, state:Context*) -> Shell:Invocation* {
     let invocation = Shell:Invocation:start_impl(pipeline, want_output, 1)
     if !invocation { return cast(Shell:Invocation*, 0) }
     var index = 0
@@ -915,7 +992,20 @@ let Shell:managed_invocation = fn (pipeline:Shell:Pipeline*, want_output:i64) ->
         index += 1
     }
     if invocation.capture_fd >= 0 {
-        invocation.output = Shell:read_all(cast(i32, invocation.capture_fd))
+        if want_output == 2 {
+            // Ordinary commands stream through the request's output sink.
+            // Only explicit capture retains the complete process output.
+            let buffer = cast(u8*, malloc(4096))
+            if buffer {
+                var reading = 1
+                while reading {
+                    let got = read(cast(i32, invocation.capture_fd), buffer, 4096)
+                    if got <= 0 { reading = 0 }
+                    else { context:io:write_bytes(state, buffer, cast(u64, got)) }
+                }
+                free(buffer)
+            }
+        } else { invocation.output = Shell:read_all(cast(i32, invocation.capture_fd)) }
         close(cast(i32, invocation.capture_fd))
         invocation.capture_fd = -1
     }
@@ -928,6 +1018,31 @@ let Shell:managed_invocation = fn (pipeline:Shell:Pipeline*, want_output:i64) ->
     }
     invocation.await()
     return invocation
+}
+
+let Shell:managed_invocation = fn (pipeline:Shell:Pipeline*, want_output:i64, state:Context*) -> Shell:Invocation* {
+    if !pipeline || !pipeline.next { return Shell:managed_single_invocation(pipeline, want_output, state) }
+    var current = pipeline
+    var result = cast(Shell:Invocation*, 0)
+    var status = 0
+    let output = Shell:Text:new()
+    if !output { return result }
+    defer Shell:Text:destroy(output)
+    while current {
+        if current.condition == 0 || (current.condition == 1 && status == 0) || (current.condition == 2 && status != 0) {
+            if result { result.destroy() }
+            result = Shell:managed_single_invocation(current, want_output, state)
+            if !result { return result }
+            status = result.exit_code()
+            if want_output == 1 { output.append_text(result.stdout()) }
+        }
+        current = current.next
+    }
+    if result && want_output == 1 {
+        free(result.output)
+        result.output = output.take()
+    }
+    return result
 }
 
 // Compatibility result used by the programmatic capture_pipeline API.
@@ -1427,6 +1542,34 @@ let Shell:Internal:token_pipe = phrase {
     }
 }
 
+let Shell:connect_command = fn (state:Context*, condition:i64) -> void {
+    if context:syntax:active(state) {
+        Shell:emit(state, "Shell:Build:connect(__shell_build, ")
+        if condition == 1 { Shell:emit(state, "1") }
+        else if condition == 2 { Shell:emit(state, "2") }
+        else { Shell:emit(state, "0") }
+        Shell:emit(state, ")\n")
+        return
+    }
+    let build = Shell:active_build(state)
+    if !build || !build.connect(condition) {
+        Shell:top_command_error(state, "shell separator expects a command on both sides")
+    }
+}
+
+let Shell:Internal:token_and = phrase {
+    type = <phrase-types:elaborate>
+    action = fn (state:Context*, called:Phrase*) -> void { Shell:connect_command(state, 1) }
+}
+let Shell:Internal:token_or = phrase {
+    type = <phrase-types:elaborate>
+    action = fn (state:Context*, called:Phrase*) -> void { Shell:connect_command(state, 2) }
+}
+let Shell:Internal:token_sequence = phrase {
+    type = <phrase-types:elaborate>
+    action = fn (state:Context*, called:Phrase*) -> void { Shell:connect_command(state, 0) }
+}
+
 let Shell:Internal:token_redirect = phrase {
     type = <phrase-types:elaborate>
     action = fn (state:Context*, called:Phrase*) -> void {
@@ -1683,7 +1826,7 @@ let Shell:finish_top_command = fn (state:Context*) -> void {
         } else {
             var result = cast(Shell:Capture*, 0)
             if context:process:active() {
-                let invocation = Shell:managed_invocation(pipeline, 1)
+                let invocation = Shell:managed_invocation(pipeline, 1, state)
                 if invocation {
                     result = alloc(Shell:Capture)
                     if result {
@@ -1718,9 +1861,8 @@ let Shell:finish_top_command = fn (state:Context*) -> void {
             }
         } else {
             if context:process:active() {
-                let invocation = Shell:managed_invocation(pipeline, 2)
+                let invocation = Shell:managed_invocation(pipeline, 2, state)
                 if invocation {
-                    context:io:write(state, invocation.stdout())
                     status = invocation.exit_code()
                     invocation.destroy()
                 } else { status = 126 }
@@ -1971,6 +2113,9 @@ let spawn = phrase {
 let Shell:Grammar:command:"" = phrase { type = <phrase-types:elaborate> action = <Shell:Internal:token_byte> successor = <Shell:Grammar:command> }
 let Shell:Grammar:command:" " = phrase { type = <phrase-types:elaborate> action = <Shell:Internal:token_word> successor = <Shell:Grammar:command> }
 let Shell:Grammar:command:"\t" = phrase { type = <phrase-types:elaborate> action = <Shell:Internal:token_word> successor = <Shell:Grammar:command> }
+let Shell:Grammar:command:"&&" = phrase { type = <phrase-types:elaborate> action = <Shell:Internal:token_and> successor = <Shell:Grammar:command> }
+let Shell:Grammar:command:"||" = phrase { type = <phrase-types:elaborate> action = <Shell:Internal:token_or> successor = <Shell:Grammar:command> }
+let Shell:Grammar:command:";" = phrase { type = <phrase-types:elaborate> action = <Shell:Internal:token_sequence> successor = <Shell:Grammar:command> }
 let Shell:Grammar:command:"|" = phrase { type = <phrase-types:elaborate> action = <Shell:Internal:token_pipe> successor = <Shell:Grammar:command> }
 let Shell:Grammar:command:">>" = phrase { type = <phrase-types:elaborate> action = <Shell:Internal:token_append> successor = <Shell:Grammar:command> }
 let Shell:Grammar:command:">" = phrase { type = <phrase-types:elaborate> action = <Shell:Internal:token_redirect> successor = <Shell:Grammar:command> }

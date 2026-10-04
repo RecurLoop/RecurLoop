@@ -16,14 +16,10 @@ execute_process(
     WORKING_DIRECTORY
         "${REPOSITORY_ROOT}"
     RESULT_VARIABLE test_rc
-    OUTPUT_VARIABLE test_out
-    ERROR_VARIABLE test_err
 )
 
 if (NOT test_rc EQUAL 0)
     message(FATAL_ERROR
-        "Shell language tests failed: status=${test_rc}\n"
-        "stdout:\n${test_out}\n"
-        "stderr:\n${test_err}"
+        "Shell language tests failed: status=${test_rc}"
     )
 endif()

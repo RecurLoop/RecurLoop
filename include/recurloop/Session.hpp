@@ -32,7 +32,8 @@ namespace recurloop {
     GenerationId id() const {
       return id_;
     }
-    SessionResponse evaluate(std::string_view source, std::string_view path = {});
+    SessionResponse evaluate(std::string_view source, std::string_view path = {}, std::ostream *out = nullptr,
+                             std::ostream *err = nullptr);
     // Elaborate source for inspection and always roll the request back.
     // Syntax errors are returned as diagnostics together with any spans that
     // were discovered before the error.
@@ -40,7 +41,7 @@ namespace recurloop {
     // the published project's processing graph.
     SessionResponse inspect(std::string_view source, std::string_view path = {}, bool trace = false,
                             bool standalone = false);
-    SessionResponse executeFile(const std::string &path);
+    SessionResponse executeFile(const std::string &path, std::ostream *out = nullptr, std::ostream *err = nullptr);
     SessionResponse executeArguments(int startIndex, std::ostream *out = nullptr, std::ostream *err = nullptr);
     Generations generations() const;
 

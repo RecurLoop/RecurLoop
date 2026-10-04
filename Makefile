@@ -83,9 +83,9 @@ test: $(RELEASE_BUILD_FILE)
 	@echo '[test] build'
 	@cmake --build --preset release --target Recurloop RecurloopUnitTests
 	@echo '[test] unit'
-	@ctest --test-dir build/Release -L unit --output-on-failure --parallel
+	@ctest --test-dir build/Release -L unit --verbose --parallel
 	@echo '[test] feature'
-	@ctest --test-dir build/Release -L feature --output-on-failure
+	@ctest --test-dir build/Release -L feature --verbose
 	@echo '[test] passed'
 
 libraries: $(RELEASE_BUILD_FILE)
@@ -104,9 +104,9 @@ verify:
 	@echo '[verify] build'
 	@cmake --build --preset release --target Recurloop RecurloopUnitTests
 	@echo '[verify] unit'
-	@ctest --test-dir build/Release -L unit --output-on-failure --parallel
+	@ctest --test-dir build/Release -L unit --verbose --parallel
 	@echo '[verify] feature'
-	@ctest --test-dir build/Release -L feature --output-on-failure
+	@ctest --test-dir build/Release -L feature --verbose
 	@echo '[verify] libraries + core'
 	@cmake --build --preset release --target RecurloopLibraries RecurloopCoreVerify
 	@echo '[verify] examples'
