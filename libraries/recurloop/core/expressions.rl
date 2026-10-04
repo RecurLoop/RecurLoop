@@ -214,7 +214,7 @@ phrase expressions_infix_not_equal = "!=" in expressions_infix {
   prototype not_equal
   type phrase_types_callable
   action host "expressions.operator.infix-not-equal"
-  operator infix precedence 3
+  operator infix precedence 6
 }
 
 phrase expressions_infix_percent = "%" in expressions_infix {
@@ -222,7 +222,7 @@ phrase expressions_infix_percent = "%" in expressions_infix {
   prototype percent
   type phrase_types_callable
   action host "expressions.operator.infix-modulo"
-  operator infix precedence 6
+  operator infix precedence 10
 }
 
 phrase expressions_infix_and_and = "&&" in expressions_infix {
@@ -238,7 +238,7 @@ phrase expressions_infix_star = "*" in expressions_infix {
   prototype star
   type phrase_types_callable
   action host "expressions.operator.infix-multiply"
-  operator infix precedence 6
+  operator infix precedence 10
 }
 
 phrase expressions_infix_plus = "+" in expressions_infix {
@@ -246,7 +246,7 @@ phrase expressions_infix_plus = "+" in expressions_infix {
   prototype plus
   type phrase_types_callable
   action host "expressions.operator.infix-add"
-  operator infix precedence 5
+  operator infix precedence 9
 }
 
 phrase expressions_infix_minus = "-" in expressions_infix {
@@ -254,7 +254,7 @@ phrase expressions_infix_minus = "-" in expressions_infix {
   prototype minus
   type phrase_types_callable
   action host "expressions.operator.infix-subtract"
-  operator infix precedence 5
+  operator infix precedence 9
 }
 
 phrase expressions_infix_slash = "/" in expressions_infix {
@@ -262,7 +262,7 @@ phrase expressions_infix_slash = "/" in expressions_infix {
   prototype slash
   type phrase_types_callable
   action host "expressions.operator.infix-divide"
-  operator infix precedence 6
+  operator infix precedence 10
 }
 
 phrase expressions_infix_less = "<" in expressions_infix {
@@ -270,7 +270,7 @@ phrase expressions_infix_less = "<" in expressions_infix {
   prototype less
   type phrase_types_callable
   action host "expressions.operator.infix-less"
-  operator infix precedence 4
+  operator infix precedence 7
 }
 
 phrase expressions_infix_less_equal = "<=" in expressions_infix {
@@ -278,7 +278,7 @@ phrase expressions_infix_less_equal = "<=" in expressions_infix {
   prototype less_equal
   type phrase_types_callable
   action host "expressions.operator.infix-less-equal"
-  operator infix precedence 4
+  operator infix precedence 7
 }
 
 phrase expressions_infix_equal_equal = "==" in expressions_infix {
@@ -286,7 +286,7 @@ phrase expressions_infix_equal_equal = "==" in expressions_infix {
   prototype equal_equal
   type phrase_types_callable
   action host "expressions.operator.infix-equal"
-  operator infix precedence 3
+  operator infix precedence 6
 }
 
 phrase expressions_infix_greater = ">" in expressions_infix {
@@ -294,7 +294,7 @@ phrase expressions_infix_greater = ">" in expressions_infix {
   prototype greater
   type phrase_types_callable
   action host "expressions.operator.infix-greater"
-  operator infix precedence 4
+  operator infix precedence 7
 }
 
 phrase expressions_infix_greater_equal = ">=" in expressions_infix {
@@ -302,7 +302,7 @@ phrase expressions_infix_greater_equal = ">=" in expressions_infix {
   prototype greater_equal
   type phrase_types_callable
   action host "expressions.operator.infix-greater-equal"
-  operator infix precedence 4
+  operator infix precedence 7
 }
 
 phrase expressions_infix_or_or = "||" in expressions_infix {
@@ -336,7 +336,7 @@ phrase expressions_prefix_not = "!" in expressions_prefix {
   prototype not
   type phrase_types_callable
   action host "expressions.operator.prefix-not"
-  operator prefix precedence 7
+  operator prefix precedence 11
 }
 
 phrase expressions_prefix_plus = "+" in expressions_prefix {
@@ -344,7 +344,7 @@ phrase expressions_prefix_plus = "+" in expressions_prefix {
   prototype plus
   type phrase_types_callable
   action host "expressions.operator.prefix-positive"
-  operator prefix precedence 7
+  operator prefix precedence 11
 }
 
 phrase expressions_prefix_minus = "-" in expressions_prefix {
@@ -352,7 +352,7 @@ phrase expressions_prefix_minus = "-" in expressions_prefix {
   prototype minus
   type phrase_types_callable
   action host "expressions.operator.prefix-negative"
-  operator prefix precedence 7
+  operator prefix precedence 11
 }
 
 phrase expressions_primary_lparen = "(" in expressions_primary {
@@ -575,6 +575,175 @@ phrase expressions_prefix_minus_fn_emit = "\0fn-emit" in expressions_prefix_minu
 }
 
 phrase expressions_prefix_minus_fn_infer = "\0fn-infer" in expressions_prefix_minus {
+  type phrase_types_callable
+  action host "fn.operator.infer-left"
+}
+
+// Integer bitwise operators.
+phrase expressions_infix_bit_and = "&" in expressions_infix {
+  dictionary
+  prototype ampersand
+  type phrase_types_callable
+  action host "expressions.operator.infix-bit-and"
+  operator infix precedence 5
+}
+
+phrase expressions_infix_bit_and_fn_emit = "\0fn-emit" in expressions_infix_bit_and {
+  type phrase_types_callable
+  action host "fn.operator.emit-bit-and"
+}
+
+phrase expressions_infix_bit_and_fn_infer = "\0fn-infer" in expressions_infix_bit_and {
+  type phrase_types_callable
+  action host "fn.operator.infer-left"
+}
+
+phrase expressions_assignments_bit_and_equals = "&=" in expressions_assignments {
+  dictionary
+  prototype bit_and_equals
+  type phrase_types_data
+  assignment compound
+}
+
+phrase expressions_assignments_bit_and_equals_fn_assign = "\0fn-assign" in expressions_assignments_bit_and_equals {
+  type phrase_types_callable
+  action host "fn.assignment.emit-bit-and"
+}
+
+phrase expressions_infix_bit_or = "|" in expressions_infix {
+  dictionary
+  prototype bit_pipe
+  type phrase_types_callable
+  action host "expressions.operator.infix-bit-or"
+  operator infix precedence 3
+}
+
+phrase expressions_infix_bit_or_fn_emit = "\0fn-emit" in expressions_infix_bit_or {
+  type phrase_types_callable
+  action host "fn.operator.emit-bit-or"
+}
+
+phrase expressions_infix_bit_or_fn_infer = "\0fn-infer" in expressions_infix_bit_or {
+  type phrase_types_callable
+  action host "fn.operator.infer-left"
+}
+
+phrase expressions_assignments_bit_or_equals = "|=" in expressions_assignments {
+  dictionary
+  prototype bit_or_equals
+  type phrase_types_data
+  assignment compound
+}
+
+phrase expressions_assignments_bit_or_equals_fn_assign = "\0fn-assign" in expressions_assignments_bit_or_equals {
+  type phrase_types_callable
+  action host "fn.assignment.emit-bit-or"
+}
+
+phrase expressions_infix_bit_xor = "^" in expressions_infix {
+  dictionary
+  prototype bit_caret
+  type phrase_types_callable
+  action host "expressions.operator.infix-bit-xor"
+  operator infix precedence 4
+}
+
+phrase expressions_infix_bit_xor_fn_emit = "\0fn-emit" in expressions_infix_bit_xor {
+  type phrase_types_callable
+  action host "fn.operator.emit-bit-xor"
+}
+
+phrase expressions_infix_bit_xor_fn_infer = "\0fn-infer" in expressions_infix_bit_xor {
+  type phrase_types_callable
+  action host "fn.operator.infer-left"
+}
+
+phrase expressions_assignments_bit_xor_equals = "^=" in expressions_assignments {
+  dictionary
+  prototype bit_xor_equals
+  type phrase_types_data
+  assignment compound
+}
+
+phrase expressions_assignments_bit_xor_equals_fn_assign = "\0fn-assign" in expressions_assignments_bit_xor_equals {
+  type phrase_types_callable
+  action host "fn.assignment.emit-bit-xor"
+}
+
+phrase expressions_infix_shift_left = "<<" in expressions_infix {
+  dictionary
+  prototype bit_shift_left
+  type phrase_types_callable
+  action host "expressions.operator.infix-shift-left"
+  operator infix precedence 8
+}
+
+phrase expressions_infix_shift_left_fn_emit = "\0fn-emit" in expressions_infix_shift_left {
+  type phrase_types_callable
+  action host "fn.operator.emit-shift-left"
+}
+
+phrase expressions_infix_shift_left_fn_infer = "\0fn-infer" in expressions_infix_shift_left {
+  type phrase_types_callable
+  action host "fn.operator.infer-left"
+}
+
+phrase expressions_assignments_shift_left_equals = "<<=" in expressions_assignments {
+  dictionary
+  prototype bit_shift_left_equals
+  type phrase_types_data
+  assignment compound
+}
+
+phrase expressions_assignments_shift_left_equals_fn_assign = "\0fn-assign" in expressions_assignments_shift_left_equals {
+  type phrase_types_callable
+  action host "fn.assignment.emit-shift-left"
+}
+
+phrase expressions_infix_shift_right = ">>" in expressions_infix {
+  dictionary
+  prototype bit_shift_right
+  type phrase_types_callable
+  action host "expressions.operator.infix-shift-right"
+  operator infix precedence 8
+}
+
+phrase expressions_infix_shift_right_fn_emit = "\0fn-emit" in expressions_infix_shift_right {
+  type phrase_types_callable
+  action host "fn.operator.emit-shift-right"
+}
+
+phrase expressions_infix_shift_right_fn_infer = "\0fn-infer" in expressions_infix_shift_right {
+  type phrase_types_callable
+  action host "fn.operator.infer-left"
+}
+
+phrase expressions_assignments_shift_right_equals = ">>=" in expressions_assignments {
+  dictionary
+  prototype bit_shift_right_equals
+  type phrase_types_data
+  assignment compound
+}
+
+phrase expressions_assignments_shift_right_equals_fn_assign = "\0fn-assign" in expressions_assignments_shift_right_equals {
+  type phrase_types_callable
+  action host "fn.assignment.emit-shift-right"
+}
+
+phrase expressions_prefix_bit_not = "~" in expressions_prefix {
+  dictionary
+  prototype bit_tilde
+  type phrase_types_callable
+  action host "expressions.operator.prefix-bit-not"
+  operator prefix precedence 11
+}
+
+phrase expressions_prefix_bit_not_fn_emit = "\0fn-emit" in expressions_prefix_bit_not {
+  type phrase_types_callable
+  action host "fn.operator.emit-bit-not"
+}
+
+phrase expressions_prefix_bit_not_fn_infer = "\0fn-infer" in expressions_prefix_bit_not {
   type phrase_types_callable
   action host "fn.operator.infer-left"
 }

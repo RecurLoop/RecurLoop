@@ -66,8 +66,7 @@ namespace recurloop {
     public:
       Generator(context::Context &context, const FunctionDefinition &signature)
           : context(context), signature(signature), integerType(context.language().types.find("i64")),
-            unsignedIntegerType(context.language().types.find("u64")),
-            realType(context.language().types.find("f64")),
+            unsignedIntegerType(context.language().types.find("u64")), realType(context.language().types.find("f64")),
             bytePointer(context.language().types.pointerTo(context.language().types.find("u8"))),
             bitStringPointer(context.language().types.find("BitString*")),
             phraseActionPointer(context.language().types.find("PhraseAction*")) {
@@ -174,6 +173,42 @@ namespace recurloop {
         emit("mov", "rax, 0");
         emitBytes({0x0f, 0x94, 0xc0});
         return integerType;
+      }
+
+      void normalizeBitwise(compiler::TypeDescriptor descriptor) {
+        if (descriptor.size == 8) return;
+        const unsigned shift = static_cast<unsigned>((8 - descriptor.size) * 8);
+        emit("shl", "rax, " + std::to_string(shift));
+        emit(descriptor.isSigned ? "sar" : "shr", "rax, " + std::to_string(shift));
+      }
+
+      void bitwiseOperation(compiler::TypeDescriptor descriptor, std::string_view instruction, std::size_t offset) {
+        if (descriptor.kind != compiler::TypeKind::Integer || descriptor.size == 0 || descriptor.size > 8)
+          fail({}, offset, "bitwise operator requires integer operands");
+        if (instruction == "shl" || instruction == "shr") {
+          emit("and", "rcx, " + std::to_string(descriptor.size * 8 - 1));
+          if (instruction == "shr" && descriptor.isSigned) normalizeBitwise(descriptor);
+          emit(instruction == "shr" && descriptor.isSigned ? "sar" : instruction, "rax, cl");
+        } else {
+          emit(instruction, "rax, rcx");
+        }
+        normalizeBitwise(descriptor);
+      }
+
+      compiler::TypeId emitBitwise(const Expression &value, std::string_view instruction) {
+        const compiler::TypeId left = binaryOperands(value);
+        bitwiseOperation(context.language().types.get(left), instruction, value.offset);
+        return left;
+      }
+
+      compiler::TypeId emitBitNot(const Expression &value) {
+        const compiler::TypeId type = expression(*value.children[0]);
+        const compiler::TypeDescriptor descriptor = context.language().types.get(type);
+        if (descriptor.kind != compiler::TypeKind::Integer)
+          fail({}, value.offset, "bitwise operator requires an integer operand");
+        emit("not", "rax");
+        normalizeBitwise(descriptor);
+        return type;
       }
 
       compiler::TypeId emitArithmetic(const Expression &value, std::string_view instruction) {
@@ -292,8 +327,8 @@ namespace recurloop {
         emitBytes({0xe8});
         const std::size_t patch = code.size();
         little(0, 4);
-        relocations.push_back({compiler::SectionKind::Text, patch, compiler::RelocationKind::PLTRelative32,
-                               "malloc", -4, true});
+        relocations.push_back(
+            {compiler::SectionKind::Text, patch, compiler::RelocationKind::PLTRelative32, "malloc", -4, true});
         if (padding) {
           emit("add", "rsp, 8");
           --temporaryDepth;
@@ -420,10 +455,10 @@ namespace recurloop {
         emitBytes({0x48, 0x8d, 0x05});
         const std::size_t patch = code.size();
         little(0, 4);
-        relocations.push_back({compiler::SectionKind::Text, patch,
-                               imported ? compiler::RelocationKind::PLTRelative32
-                                        : compiler::RelocationKind::PCRelative32,
-                               symbol, -4, imported || symbol != signature.function.signature.symbol});
+        relocations.push_back(
+            {compiler::SectionKind::Text, patch,
+             imported ? compiler::RelocationKind::PLTRelative32 : compiler::RelocationKind::PCRelative32, symbol, -4,
+             imported || symbol != signature.function.signature.symbol});
       }
       void emitDataAddress(const std::string &symbol) {
         emitBytes({0x48, 0x8d, 0x05});
@@ -612,6 +647,11 @@ namespace recurloop {
         emit("cqo", "");
         emit("idiv", "rcx");
         if (remainder) emit("mov", "rax, rdx");
+      }
+
+      void emitAssignmentBitwise(compiler::TypeId targetType, std::string_view instruction, std::size_t offset) {
+        load(targetType, "rdx");
+        bitwiseOperation(context.language().types.get(targetType), instruction, offset);
       }
 
       void generateConditional(const Statement &statement) {
@@ -1220,6 +1260,36 @@ namespace recurloop {
         frame.result = frame.generator->emitLogicalNot(*frame.expression);
       }
 
+      void emitBitNot(context::Context &, lexicon::Phrase &) {
+        OperatorFrame &frame = operatorFrame();
+        frame.result = frame.generator->emitBitNot(*frame.expression);
+      }
+
+      void emitBitAnd(context::Context &, lexicon::Phrase &) {
+        OperatorFrame &frame = operatorFrame();
+        frame.result = frame.generator->emitBitwise(*frame.expression, "and");
+      }
+
+      void emitBitOr(context::Context &, lexicon::Phrase &) {
+        OperatorFrame &frame = operatorFrame();
+        frame.result = frame.generator->emitBitwise(*frame.expression, "or");
+      }
+
+      void emitBitXor(context::Context &, lexicon::Phrase &) {
+        OperatorFrame &frame = operatorFrame();
+        frame.result = frame.generator->emitBitwise(*frame.expression, "xor");
+      }
+
+      void emitShiftLeft(context::Context &, lexicon::Phrase &) {
+        OperatorFrame &frame = operatorFrame();
+        frame.result = frame.generator->emitBitwise(*frame.expression, "shl");
+      }
+
+      void emitShiftRight(context::Context &, lexicon::Phrase &) {
+        OperatorFrame &frame = operatorFrame();
+        frame.result = frame.generator->emitBitwise(*frame.expression, "shr");
+      }
+
       void emitAdd(context::Context &, lexicon::Phrase &) {
         OperatorFrame &frame = operatorFrame();
         frame.result = frame.generator->emitArithmetic(*frame.expression, "add");
@@ -1396,6 +1466,31 @@ namespace recurloop {
         frame.generator->emitAssignmentDivision(frame.targetType, true);
       }
 
+      void emitAssignmentBitAnd(context::Context &, lexicon::Phrase &) {
+        AssignmentFrame &frame = assignmentFrame();
+        frame.generator->emitAssignmentBitwise(frame.targetType, "and", frame.statement->offset);
+      }
+
+      void emitAssignmentBitOr(context::Context &, lexicon::Phrase &) {
+        AssignmentFrame &frame = assignmentFrame();
+        frame.generator->emitAssignmentBitwise(frame.targetType, "or", frame.statement->offset);
+      }
+
+      void emitAssignmentBitXor(context::Context &, lexicon::Phrase &) {
+        AssignmentFrame &frame = assignmentFrame();
+        frame.generator->emitAssignmentBitwise(frame.targetType, "xor", frame.statement->offset);
+      }
+
+      void emitAssignmentShiftLeft(context::Context &, lexicon::Phrase &) {
+        AssignmentFrame &frame = assignmentFrame();
+        frame.generator->emitAssignmentBitwise(frame.targetType, "shl", frame.statement->offset);
+      }
+
+      void emitAssignmentShiftRight(context::Context &, lexicon::Phrase &) {
+        AssignmentFrame &frame = assignmentFrame();
+        frame.generator->emitAssignmentBitwise(frame.targetType, "shr", frame.statement->offset);
+      }
+
       lexicon::Phrase installBehavior(lexicon::Phrase owner, std::string_view key, lexicon::Phrase::Action action,
                                       lexicon::Phrase type) {
         return owner.append(Byte(const_cast<char *>(key.data())), 0, key.size() * Byte::length)
@@ -1414,6 +1509,12 @@ namespace recurloop {
       action("fn.operator.emit-positive", emitPositive);
       action("fn.operator.emit-negative", emitNegative);
       action("fn.operator.emit-not", emitNot);
+      action("fn.operator.emit-bit-not", emitBitNot);
+      action("fn.operator.emit-bit-and", emitBitAnd);
+      action("fn.operator.emit-bit-or", emitBitOr);
+      action("fn.operator.emit-bit-xor", emitBitXor);
+      action("fn.operator.emit-shift-left", emitShiftLeft);
+      action("fn.operator.emit-shift-right", emitShiftRight);
       action("fn.operator.emit-add", emitAdd);
       action("fn.operator.emit-subtract", emitSubtract);
       action("fn.operator.emit-multiply", emitMultiply);
@@ -1443,6 +1544,11 @@ namespace recurloop {
       action("fn.assignment.emit-multiply", emitAssignmentMultiply);
       action("fn.assignment.emit-divide", emitAssignmentDivide);
       action("fn.assignment.emit-modulo", emitAssignmentModulo);
+      action("fn.assignment.emit-bit-and", emitAssignmentBitAnd);
+      action("fn.assignment.emit-bit-or", emitAssignmentBitOr);
+      action("fn.assignment.emit-bit-xor", emitAssignmentBitXor);
+      action("fn.assignment.emit-shift-left", emitAssignmentShiftLeft);
+      action("fn.assignment.emit-shift-right", emitAssignmentShiftRight);
     }
 
     void setupCompilerSyntax(context::Context &context) {
@@ -1454,6 +1560,12 @@ namespace recurloop {
       action("fn.operator.emit-positive", emitPositive);
       action("fn.operator.emit-negative", emitNegative);
       action("fn.operator.emit-not", emitNot);
+      action("fn.operator.emit-bit-not", emitBitNot);
+      action("fn.operator.emit-bit-and", emitBitAnd);
+      action("fn.operator.emit-bit-or", emitBitOr);
+      action("fn.operator.emit-bit-xor", emitBitXor);
+      action("fn.operator.emit-shift-left", emitShiftLeft);
+      action("fn.operator.emit-shift-right", emitShiftRight);
       action("fn.operator.emit-add", emitAdd);
       action("fn.operator.emit-subtract", emitSubtract);
       action("fn.operator.emit-multiply", emitMultiply);
@@ -1483,6 +1595,11 @@ namespace recurloop {
       action("fn.assignment.emit-multiply", emitAssignmentMultiply);
       action("fn.assignment.emit-divide", emitAssignmentDivide);
       action("fn.assignment.emit-modulo", emitAssignmentModulo);
+      action("fn.assignment.emit-bit-and", emitAssignmentBitAnd);
+      action("fn.assignment.emit-bit-or", emitAssignmentBitOr);
+      action("fn.assignment.emit-bit-xor", emitAssignmentBitXor);
+      action("fn.assignment.emit-shift-left", emitAssignmentShiftLeft);
+      action("fn.assignment.emit-shift-right", emitAssignmentShiftRight);
 
       lexicon::Phrase root = context.lexicon.phrase();
       lexicon::Phrase callable = lexicon::phrase::type::getCallable(root);
@@ -1498,6 +1615,7 @@ namespace recurloop {
       install(true, "+", inferLeft, emitPositive);
       install(true, "-", inferLeft, emitNegative);
       install(true, "!", inferInteger, emitNot);
+      install(true, "~", inferLeft, emitBitNot);
       install(false, "+", inferLeft, emitAdd);
       install(false, "-", inferLeft, emitSubtract);
       install(false, "*", inferLeft, emitMultiply);
@@ -1511,6 +1629,11 @@ namespace recurloop {
       install(false, ">=", inferInteger, emitGreaterEqual);
       install(false, "&&", inferInteger, emitAnd);
       install(false, "||", inferInteger, emitOr);
+      install(false, "&", inferLeft, emitBitAnd);
+      install(false, "|", inferLeft, emitBitOr);
+      install(false, "^", inferLeft, emitBitXor);
+      install(false, "<<", inferLeft, emitShiftLeft);
+      install(false, ">>", inferLeft, emitShiftRight);
 
       lexicon::Phrase grammar = exact(root, FunctionGrammarName);
       lexicon::Phrase intrinsics = exact(grammar, IntrinsicDictionaryName);
@@ -1570,6 +1693,11 @@ namespace recurloop {
       assignment("*=", emitAssignmentMultiply);
       assignment("/=", emitAssignmentDivide);
       assignment("%=", emitAssignmentModulo);
+      assignment("&=", emitAssignmentBitAnd);
+      assignment("|=", emitAssignmentBitOr);
+      assignment("^=", emitAssignmentBitXor);
+      assignment("<<=", emitAssignmentShiftLeft);
+      assignment(">>=", emitAssignmentShiftRight);
     }
 
     compiler::Module generateModule(context::Context &context, const FunctionDefinition &signature,

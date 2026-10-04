@@ -38,13 +38,17 @@ print project + ": " + str(result)
 
 Operator precedence, from highest to lowest:
 
-1. unary `!`, `+`, `-`;
+1. unary `!`, `~`, `+`, `-`;
 2. `*`, `/`, `%`;
 3. `+`, `-`;
-4. `<`, `<=`, `>`, `>=`;
-5. `==`, `!=`;
-6. `&&`;
-7. `||`.
+4. `<<`, `>>`;
+5. `<`, `<=`, `>`, `>=`;
+6. `==`, `!=`;
+7. bitwise `&`;
+8. bitwise `^`;
+9. bitwise `|`;
+10. `&&`;
+11. `||`.
 
 Primary and postfix syntax is phrase-backed too. The standard runtime-expression
 grammar declares grouping as a primary phrase and qualification, calls, and
@@ -55,6 +59,13 @@ paths instead of being recognized by spelling-specific parser branches.
 Integer arithmetic checks overflow and division by zero. Mixed numeric
 operations produce `real`. String addition concatenates, and boolean operators
 short-circuit.
+
+Bitwise operators require integers. `~` inverts bits, while `&`, `|`, and `^`
+combine bits. `<<` shifts left, and `>>` shifts right arithmetically for signed
+types and logically for unsigned types. Shift counts are reduced modulo the
+left operand's bit width. Left shifts discard bits past that width. The top-level
+`int` has 64 bits. Compound assignments
+`&=`, `|=`, `^=`, `<<=`, and `>>=` use the same operations.
 
 `var` is mutable, `const` is immutable, and assignment updates the nearest
 visible binding. Function bodies, branches, loops, and explicit blocks create

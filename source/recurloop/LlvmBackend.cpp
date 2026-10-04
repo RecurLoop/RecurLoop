@@ -376,6 +376,12 @@ namespace recurloop::function_internal {
         if (action == "fn.operator.emit-positive" || action == "fn.operator.emit-add") return "+";
         if (action == "fn.operator.emit-negative" || action == "fn.operator.emit-subtract") return "-";
         if (action == "fn.operator.emit-not") return "!";
+        if (action == "fn.operator.emit-bit-not") return "~";
+        if (action == "fn.operator.emit-bit-and") return "&";
+        if (action == "fn.operator.emit-bit-or") return "|";
+        if (action == "fn.operator.emit-bit-xor") return "^";
+        if (action == "fn.operator.emit-shift-left") return "<<";
+        if (action == "fn.operator.emit-shift-right") return ">>";
         if (action == "fn.operator.emit-multiply") return "*";
         if (action == "fn.operator.emit-divide") return "/";
         if (action == "fn.operator.emit-modulo") return "%";
@@ -431,19 +437,24 @@ namespace recurloop::function_internal {
         auto [address, targetType] = lvalue(*statement.target, true);
         Emitted right = coerce(expression(*statement.expression, targetType), targetType, statement.offset);
         const std::string action = behaviorAction(statement.operationSyntax, AssignmentEmitName);
-        const std::string operation = action == "fn.assignment.emit-move"       ? "="
-                                      : action == "fn.assignment.emit-add"      ? "+="
-                                      : action == "fn.assignment.emit-subtract" ? "-="
-                                      : action == "fn.assignment.emit-multiply" ? "*="
-                                      : action == "fn.assignment.emit-divide"   ? "/="
-                                      : action == "fn.assignment.emit-modulo"   ? "%="
-                                                                                : "";
+        const std::string operation = action == "fn.assignment.emit-move"          ? "="
+                                      : action == "fn.assignment.emit-add"         ? "+="
+                                      : action == "fn.assignment.emit-subtract"    ? "-="
+                                      : action == "fn.assignment.emit-multiply"    ? "*="
+                                      : action == "fn.assignment.emit-divide"      ? "/="
+                                      : action == "fn.assignment.emit-modulo"      ? "%="
+                                      : action == "fn.assignment.emit-bit-and"     ? "&="
+                                      : action == "fn.assignment.emit-bit-or"      ? "|="
+                                      : action == "fn.assignment.emit-bit-xor"     ? "^="
+                                      : action == "fn.assignment.emit-shift-left"  ? "<<="
+                                      : action == "fn.assignment.emit-shift-right" ? ">>="
+                                                                                   : "";
         if (operation.empty())
           fail({}, statement.offset, "assignment operator '" + statement.operation + "' has no LLVM emitter");
         llvm::Value *result = right.value;
         if (operation != "=") {
           Emitted left{builder.CreateLoad(type(targetType), address), targetType};
-          result = binaryValue(operation.substr(0, 1), left, right, statement.offset).value;
+          result = binaryValue(operation.substr(0, operation.size() - 1), left, right, statement.offset).value;
         }
         builder.CreateStore(result, address);
       }
@@ -648,6 +659,11 @@ namespace recurloop::function_internal {
                   operand.type};
         if (operation == "!")
           return {builder.CreateZExt(builder.CreateNot(truth(operand)), type(integerType)), integerType};
+        if (operation == "~") {
+          if (descriptor.kind != compiler::TypeKind::Integer)
+            fail({}, value.offset, "bitwise operator requires an integer operand");
+          return {builder.CreateNot(operand.value), operand.type};
+        }
         fail({}, value.offset, "operator '" + value.text + "' has no LLVM emitter");
       }
 
@@ -669,7 +685,23 @@ namespace recurloop::function_internal {
           result = floating ? builder.CreateFSub(left.value, right.value) : builder.CreateSub(left.value, right.value);
         else if (operation == "*")
           result = floating ? builder.CreateFMul(left.value, right.value) : builder.CreateMul(left.value, right.value);
-        else if (operation == "/")
+        else if (operation == "&" || operation == "|" || operation == "^" || operation == "<<" || operation == ">>") {
+          if (descriptor.kind != compiler::TypeKind::Integer)
+            fail({}, offset, "bitwise operator requires integer operands");
+          if (operation == "&")
+            result = builder.CreateAnd(left.value, right.value);
+          else if (operation == "|")
+            result = builder.CreateOr(left.value, right.value);
+          else if (operation == "^")
+            result = builder.CreateXor(left.value, right.value);
+          else {
+            const unsigned bits = static_cast<unsigned>(descriptor.size * 8);
+            llvm::Value *count = builder.CreateAnd(right.value, llvm::ConstantInt::get(type(left.type), bits - 1));
+            result = operation == "<<"     ? builder.CreateShl(left.value, count)
+                     : descriptor.isSigned ? builder.CreateAShr(left.value, count)
+                                           : builder.CreateLShr(left.value, count);
+          }
+        } else if (operation == "/")
           result = floating              ? builder.CreateFDiv(left.value, right.value)
                    : descriptor.isSigned ? builder.CreateSDiv(left.value, right.value)
                                          : builder.CreateUDiv(left.value, right.value);

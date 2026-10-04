@@ -1,6 +1,7 @@
 #include "ExpressionsInternal.hpp"
 
 #include <algorithm>
+#include <bit>
 #include <cctype>
 #include <limits>
 
@@ -46,6 +47,12 @@ namespace internal {
   void prefixLogicalNot(context::Context &, lexicon::Phrase &) {
     EvaluationFrame &frame = evaluation();
     frame.result = context::Value(!frame.left->asBoolean());
+  }
+
+  void prefixBitNot(context::Context &context, lexicon::Phrase &) {
+    EvaluationFrame &frame = evaluation();
+    if (!frame.left->isInteger()) expressionFail(context, frame.token->offset, "'~' requires an integer operand");
+    frame.result = context::Value(~frame.left->asInteger());
   }
 
   void infixLogicalOr(context::Context &, lexicon::Phrase &) {
@@ -141,6 +148,44 @@ namespace internal {
         frame.left->asInteger() == std::numeric_limits<std::int64_t>::min() && frame.right->asInteger() == -1
             ? context::Value(std::int64_t{0})
             : context::Value(frame.left->asInteger() % frame.right->asInteger());
+  }
+
+  void requireIntegers(context::Context &context, const EvaluationFrame &frame) {
+    if (!frame.left->isInteger() || !frame.right->isInteger())
+      expressionFail(context, frame.token->offset, "'" + frame.token->text + "' requires integer operands");
+  }
+
+  void infixBitAnd(context::Context &context, lexicon::Phrase &) {
+    EvaluationFrame &frame = evaluation();
+    requireIntegers(context, frame);
+    frame.result = context::Value(frame.left->asInteger() & frame.right->asInteger());
+  }
+
+  void infixBitOr(context::Context &context, lexicon::Phrase &) {
+    EvaluationFrame &frame = evaluation();
+    requireIntegers(context, frame);
+    frame.result = context::Value(frame.left->asInteger() | frame.right->asInteger());
+  }
+
+  void infixBitXor(context::Context &context, lexicon::Phrase &) {
+    EvaluationFrame &frame = evaluation();
+    requireIntegers(context, frame);
+    frame.result = context::Value(frame.left->asInteger() ^ frame.right->asInteger());
+  }
+
+  void infixShiftLeft(context::Context &context, lexicon::Phrase &) {
+    EvaluationFrame &frame = evaluation();
+    requireIntegers(context, frame);
+    const auto count = static_cast<unsigned>(static_cast<std::uint64_t>(frame.right->asInteger()) & 63);
+    frame.result = context::Value(
+        std::bit_cast<std::int64_t>(static_cast<std::uint64_t>(frame.left->asInteger()) << count));
+  }
+
+  void infixShiftRight(context::Context &context, lexicon::Phrase &) {
+    EvaluationFrame &frame = evaluation();
+    requireIntegers(context, frame);
+    const auto count = static_cast<unsigned>(static_cast<std::uint64_t>(frame.right->asInteger()) & 63);
+    frame.result = context::Value(frame.left->asInteger() >> count);
   }
 
   void builtinStr(context::Context &context, lexicon::Phrase &) {

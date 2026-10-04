@@ -83,6 +83,46 @@ assert 9223372036854775807 != 9223372036854775806
   EXPECT_THROW(context.values().assign("limit", context::Value(std::int64_t{1})), Exception);
 }
 
+TEST_F(ExpressionLanguageTesting, EvaluatesBitwiseOperatorsInExpressionsAndCompiledFunctions) {
+  ASSERT_EQ(execute(R"(
+assert (1 + 2 << 3) == 24
+assert (1 | 2 & 3) == 3
+assert (7 ^ 3) == 4
+assert ~0 == -1
+assert (-8 >> 2) == -2
+assert (1 << 65) == 2
+var bits = 12
+bits &= 10
+bits |= 1
+bits ^= 3
+bits <<= 2
+bits >>= 1
+assert bits == 20
+fn bit(index:i64, target:i64) -> i64 { return (index >> target) & 1 }
+fn flip(index:i64, target:i64) -> i64 { return index ^ (1 << target) }
+fn narrow() -> i64 { var value:i8 = -8; return value >> 2 }
+fn unsigned() -> u64 { var value:u64 = cast(u64, -1); return value >> 63 }
+fn glyph() -> i64 { let text = "~"; return text[0] }
+fn update() -> i64 {
+    var value:i64 = 12
+    value &= 10
+    value |= 1
+    value ^= 3
+    value <<= 2
+    value >>= 1
+    return value
+}
+assert bit(10, 1) == 1
+assert flip(10, 1) == 8
+assert narrow() == -2
+assert unsigned() == 1
+assert glyph() == 126
+assert update() == 20
+)"),
+            0)
+      << errors.str();
+}
+
 TEST_F(ExpressionLanguageTesting, ContinuesTopLevelExpressionsInsidePhraseDefinedGroups) {
   ASSERT_EQ(execute(R"(
 let open = <(>
@@ -180,7 +220,7 @@ TEST_F(ExpressionLanguageTesting, ReadsArithmeticPrecedenceFromExpressionPhrases
   };
   lexicon::Phrase grammar = child(context.lexicon.phrase(), std::string_view("\0expressions", 12));
   lexicon::Phrase plus = child(child(grammar, "infix"), "+");
-  plus.update(1, std::uint8_t{7});
+  plus.update(1, std::uint8_t{11});
 
   EXPECT_EQ(recurloop::Expressions::evaluate(context, "2 + 3 * 4").asInteger(), 20);
 }
