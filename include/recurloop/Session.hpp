@@ -49,6 +49,8 @@ namespace recurloop {
                               std::ostream *err = nullptr);
     SessionResponse debugTarget(std::string_view name, std::ostream *out = nullptr, std::ostream *err = nullptr);
     utilities::Completion complete(std::string_view line, std::size_t cursor);
+    // Color console input from this session's metadata without elaborating it.
+    std::string highlight(std::string_view line);
     Generations generations() const;
 
     void refresh();

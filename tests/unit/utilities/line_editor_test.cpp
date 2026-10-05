@@ -14,7 +14,9 @@ namespace {
       for (unsigned char byte : bytes) input.push_back(byte);
     }
 
-    utilities::LineEditor editor() {
+    utilities::LineEditor editor(
+        utilities::LineEditor::Columns columns = [] { return 120; },
+        utilities::LineEditor::Highlighter highlighter = {}, bool integration = false) {
       return utilities::LineEditor(
           [this](int) {
             if (input.empty()) return utilities::LineEditor::End;
@@ -26,7 +28,7 @@ namespace {
             output.append(text);
             return true;
           },
-          [] { return 120; });
+          std::move(columns), {}, std::move(highlighter), integration);
     }
   };
 } // namespace
@@ -133,4 +135,42 @@ TEST(LineEditor, AmbiguousEscapedPathsDoNotLeaveAnIncompleteEscape) {
       });
   console.push("fi\t\n");
   EXPECT_EQ(editor.readLine("> ").line, "file");
+}
+
+TEST(LineEditor, WrappedCommandsRemainCompleteInScrollback) {
+  ScriptedConsole console;
+  auto editor = console.editor([] { return 8; });
+  console.push("abcdefghijkl\x01Z\x05\n");
+  EXPECT_EQ(editor.readLine("> ").line, "Zabcdefghijkl");
+  EXPECT_NE(console.output.find("Zabcdefghijkl"), std::string::npos);
+  EXPECT_NE(console.output.find("\x1b[1A"), std::string::npos);
+}
+
+TEST(LineEditor, HighlightsInputWithoutChangingSourceOrHistory) {
+  ScriptedConsole console;
+  auto editor = console.editor(
+      [] { return 8; },
+      [](std::string_view line) { return std::vector<utilities::LineEditor::ColorSpan>{{0, line.size(), 0x123456}}; });
+  console.push("hello\n");
+  EXPECT_EQ(editor.readLine("> ").line, "hello");
+  EXPECT_EQ(editor.history(), (std::vector<std::string>{"hello"}));
+  EXPECT_NE(console.output.find("\x1b[38;2;18;52;86mhello\x1b[0m"), std::string::npos);
+}
+
+TEST(LineEditor, ReportsEscapedCommandForVSCodeShellIntegration) {
+  ScriptedConsole console;
+  auto editor = console.editor([] { return 120; }, {}, true);
+  console.push("print 1;\\name\n");
+  EXPECT_EQ(editor.readLine("> ").line, "print 1;\\name");
+  const auto prompt = console.output.find("\x1b]633;A\x07");
+  const auto input = console.output.find("\x1b]633;B\x07", prompt);
+  const auto command = console.output.find("\x1b]633;E;print\\x201\\x3b\\\\name\x07", input);
+  const auto execution = console.output.find("\x1b]633;C\x07", command);
+  ASSERT_NE(prompt, std::string::npos);
+  ASSERT_NE(input, std::string::npos);
+  ASSERT_NE(command, std::string::npos);
+  ASSERT_NE(execution, std::string::npos);
+  EXPECT_LT(prompt, input);
+  EXPECT_LT(input, command);
+  EXPECT_LT(command, execution);
 }

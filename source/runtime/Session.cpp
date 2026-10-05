@@ -466,6 +466,16 @@ namespace recurloop {
     return response;
   }
 
+  std::string Session::highlight(std::string_view line) {
+    std::lock_guard lock(mutex_);
+    if (line.empty() || line.size() > 8192) return {};
+    // Reuse inspection's lexical colors and current phrase/type metadata.
+    // Do not elaborate unfinished console input: even custom language actions
+    // must never execute merely because the user typed a character.
+    Semantic::InspectionScope inspection(contextGeneration_->context(), line, "<console>");
+    return inspection.encode();
+  }
+
   SessionResponse Session::executeFile(const std::string &path, std::ostream *out, std::ostream *err) {
     const std::string absolute = std::filesystem::absolute(path).lexically_normal().string();
     bool restored = false;

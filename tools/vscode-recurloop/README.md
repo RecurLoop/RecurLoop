@@ -23,6 +23,11 @@ libraries belonging to the selected runtime.
 
 ## Features
 
+- Console input colors from the active session's phrase metadata, with wrapped
+  command editing and full command text retained in terminal scrollback.
+- VS Code shell integration for command decorations, command navigation and
+  sticky scroll (when enabled in VS Code terminal settings).
+
 - `.rl` and `.rl.example` language registration.
 - TextMate fallback highlighting for comments, strings, numbers, declarations,
   common core phrases and operators.
@@ -189,6 +194,13 @@ code --install-extension recurloop-vscode-0.1.2.vsix
 
 When using Remote - WSL, install/enable the extension in WSL because it needs to
 spawn the RecurLoop workspace executable.
+
+Console input colors require RecurLoop 0.2.4 and respect `NO_COLOR` in ordinary
+terminals. The extension removes that variable for its interactive console client.
+Shell integration is emitted only in VS Code (`TERM_PROGRAM=vscode`). It reports
+prompt boundaries, exact command text and completion status; it does not add Bash
+startup files or Bash-specific IntelliSense. After updating, rebuild RecurLoop,
+reinstall this VSIX, reload the VS Code window and open a new RecurLoop console.
 
 ## Executable project entry and shared console
 

@@ -30,9 +30,10 @@ namespace utilities {
     if (active_) tcsetattr(descriptor_, TCSANOW, &original_);
   }
 
-  LineEditor::LineEditor(Reader reader, Writer writer, Columns columns, Completer completer)
+  LineEditor::LineEditor(Reader reader, Writer writer, Columns columns, Completer completer, Highlighter highlighter,
+                         bool shellIntegration)
       : reader_(std::move(reader)), writer_(std::move(writer)), columns_(std::move(columns)),
-        completer_(std::move(completer)) {
+        completer_(std::move(completer)), highlighter_(std::move(highlighter)), shellIntegration_(shellIntegration) {
     std::setlocale(LC_CTYPE, "");
   }
 
@@ -164,26 +165,94 @@ namespace utilities {
     line.erase(cursor, finish - cursor);
   }
 
-  void LineEditor::refresh(const std::string &line, std::size_t cursor, std::string_view prompt) {
-    const std::size_t columns = columns_ ? columns_() : 80;
-    const std::size_t promptWidth = displayWidth(prompt);
-    const std::size_t available = columns > promptWidth + 1 ? columns - promptWidth - 1 : 1;
-
-    std::size_t start = 0;
-    while (start < cursor && displayWidth(std::string_view(line).substr(start, cursor - start)) > available)
-      start = nextCharacter(line, start);
-
-    std::size_t finish = cursor;
-    while (finish < line.size()) {
-      const std::size_t next = nextCharacter(line, finish);
-      if (displayWidth(std::string_view(line).substr(start, next - start)) > available) break;
-      finish = next;
+  std::string LineEditor::colored(const std::string &line, std::size_t start, std::size_t end) {
+    if (!highlighter_) return line.substr(start, end - start);
+    if (line != highlightedLine_) {
+      highlightedLine_ = line;
+      colors_.clear();
+      try {
+        colors_ = highlighter_(line);
+      } catch (...) { /* Editing remains usable on inspection failure. */
+      }
     }
-
+    std::vector<unsigned> colors(end - start, 0x1000000);
+    for (const auto &span : colors_) {
+      if (span.start >= span.end || span.rgb > 0xffffff) continue;
+      const auto begin = std::max(start, span.start);
+      const auto finish = std::min(end, span.end);
+      for (auto index = begin; index < finish; ++index) colors[index - start] = span.rgb;
+    }
     std::ostringstream output;
-    output << "\r\x1b[2K" << prompt << std::string_view(line).substr(start, finish - start);
-    const std::size_t tailWidth = displayWidth(std::string_view(line).substr(cursor, finish - cursor));
-    if (tailWidth > 0) output << "\x1b[" << tailWidth << 'D';
+    unsigned previous = 0x1000000;
+    for (auto index = start; index < end; ++index) {
+      const unsigned color = colors[index - start];
+      if (color != previous) {
+        if (color == 0x1000000)
+          output << "\x1b[0m";
+        else
+          output << "\x1b[38;2;" << (color >> 16) << ';' << ((color >> 8) & 255) << ';' << (color & 255) << 'm';
+        previous = color;
+      }
+      output << line[index];
+    }
+    if (previous != 0x1000000) output << "\x1b[0m";
+    return output.str();
+  }
+
+  void LineEditor::submit(const std::string &line, std::string_view prompt) {
+    // Put the cursor after the complete command before saving it in scrollback.
+    refresh(line, line.size(), prompt);
+    if (shellIntegration_) {
+      constexpr char digits[] = "0123456789abcdef";
+      std::string escaped;
+      for (unsigned char byte : line) {
+        if (byte <= 32 || byte == ';' || byte == 127) {
+          escaped += "\\x";
+          escaped += digits[byte >> 4];
+          escaped += digits[byte & 15];
+        } else if (byte == '\\')
+          escaped += "\\\\";
+        else
+          escaped += static_cast<char>(byte);
+      }
+      writer_("\x1b]633;E;" + escaped + "\x07");
+    }
+    writer_("\n");
+    if (shellIntegration_) writer_("\x1b]633;C\x07");
+  }
+
+  void LineEditor::refresh(const std::string &line, std::size_t cursor, std::string_view prompt) {
+    const std::size_t columns = std::max<std::size_t>(1, columns_ ? columns_() : 80);
+    const std::size_t promptWidth = displayWidth(prompt);
+    // Track terminal rows, including wide Unicode characters wrapping before
+    // the right margin. ANSI colors are added only after measuring plain text.
+    const auto position = [&](std::size_t end) {
+      std::size_t cells = promptWidth;
+      for (std::size_t index = 0; index < end;) {
+        const auto next = std::min(end, nextCharacter(line, index));
+        const auto width = displayWidth(std::string_view(line).substr(index, next - index));
+        if (width && cells % columns + width > columns) cells += columns - cells % columns;
+        cells += width;
+        index = next;
+      }
+      return cells;
+    };
+    const auto finish = position(line.size());
+    const auto target = position(cursor);
+    std::ostringstream output;
+    output << "\r";
+    if (cursorRow_) output << "\x1b[" << cursorRow_ << 'A';
+    output << "\x1b[J" << prompt;
+    if (shellIntegration_) output << "\x1b]633;B\x07";
+    output << colored(line, 0, line.size());
+    // At the exact right margin terminals defer wrapping until the next byte.
+    if (finish && finish % columns == 0) output << " \r";
+    const auto endRow = finish / columns;
+    const auto targetRow = target / columns;
+    if (endRow > targetRow) output << "\x1b[" << endRow - targetRow << 'A';
+    output << "\r";
+    if (target % columns) output << "\x1b[" << target % columns << 'C';
+    cursorRow_ = targetRow;
     writer_(output.str());
   }
 
@@ -308,13 +377,18 @@ namespace utilities {
     std::string yank;
     std::size_t cursor = 0;
     std::size_t historyPosition = history_.size();
+    cursorRow_ = 0;
+    if (shellIntegration_) writer_("\x1b]633;A\x07");
     refresh(line, cursor, prompt);
 
     while (true) {
       const int byte = reader_(-1);
       if (byte == End) {
-        writer_("\n");
-        if (line.empty()) return {LineStatus::End, {}};
+        if (line.empty()) {
+          writer_("\n");
+          return {LineStatus::End, {}};
+        }
+        submit(line, prompt);
         remember(line);
         return {LineStatus::Line, std::move(line)};
       }
@@ -322,7 +396,7 @@ namespace utilities {
 
       bool redraw = true;
       if (byte == '\r' || byte == '\n') {
-        writer_("\n");
+        submit(line, prompt);
         remember(line);
         return {LineStatus::Line, std::move(line)};
       } else if (byte == '\t' && completer_) {
@@ -349,14 +423,18 @@ namespace utilities {
             line.replace(completion.start, cursor - completion.start, common);
             cursor = completion.start + common.size();
           } else if (candidates.size() > 1) {
+            refresh(line, line.size(), prompt);
             writer_("\n");
             for (const auto &candidate : candidates) {
               writer_(candidate);
               writer_("\n");
             }
+            cursorRow_ = 0;
+            if (shellIntegration_) writer_("\x1b]633;A\x07");
           }
         }
       } else if (byte == 3) {
+        refresh(line, line.size(), prompt);
         writer_("^C\n");
         return {LineStatus::Interrupt, {}};
       } else if (byte == 4) {
@@ -378,6 +456,8 @@ namespace utilities {
         line.erase(cursor);
       } else if (byte == 12) {
         writer_("\x1b[H\x1b[2J");
+        cursorRow_ = 0;
+        if (shellIntegration_) writer_("\x1b]633;A\x07");
       } else if (byte == 14) {
         historyMove(line, cursor, historyPosition, draft, 1);
       } else if (byte == 16) {

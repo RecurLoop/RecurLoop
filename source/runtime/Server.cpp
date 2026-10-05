@@ -15,6 +15,7 @@
 #include <cctype>
 #include <csignal>
 #include <cstring>
+#include <cstdlib>
 #include <iostream>
 #include <thread>
 #include <array>
@@ -95,23 +96,33 @@ namespace recurloop {
               completed = true;
               return bytes.empty();
             }
-            if (header_[0] != 'O' || remaining_ == 0 || remaining_ > 4096) return false;
+            if ((header_[0] != 'O' && header_[0] != 'S') || remaining_ == 0 || remaining_ > 4096) return false;
+            if (header_[0] == 'S') statusText_.clear();
           }
           const auto count = std::min<std::size_t>(remaining_, bytes.size());
-          if (!writer_(bytes.substr(0, count))) return false;
+          if (header_[0] == 'S')
+            statusText_.append(bytes.substr(0, count));
+          else if (!writer_(bytes.substr(0, count)))
+            return false;
           remaining_ -= count;
+          if (header_[0] == 'S' && remaining_ == 0) {
+            const auto parsed = std::from_chars(statusText_.data(), statusText_.data() + statusText_.size(), status);
+            if (parsed.ec != std::errc{} || parsed.ptr != statusText_.data() + statusText_.size()) return false;
+          }
           bytes.remove_prefix(count);
         }
         return true;
       }
 
       bool completed = false;
+      int status = 0;
 
     private:
       utilities::LineEditor::Writer writer_;
       std::array<std::uint8_t, 5> header_{};
       std::size_t headerSize_ = 0;
       std::uint32_t remaining_ = 0;
+      std::string statusText_;
     };
 
     class IgnoreInteractiveInterrupt {
@@ -172,6 +183,68 @@ namespace recurloop {
     bool parseSize(std::string_view text, std::size_t &value) {
       const auto parsed = std::from_chars(text.data(), text.data() + text.size(), value);
       return parsed.ec == std::errc{} && parsed.ptr == text.data() + text.size();
+    }
+
+    bool consoleIntegration() {
+      const char *program = std::getenv("TERM_PROGRAM");
+      return program && std::string_view(program) == "vscode" && isatty(STDIN_FILENO) && isatty(STDOUT_FILENO);
+    }
+
+    void consoleStatus(bool integration, int status) {
+      if (integration)
+        utilities::LineEditor::writeDescriptor(STDOUT_FILENO, "\x1b]633;D;" + std::to_string(status) + "\x07");
+    }
+
+    utilities::LineEditor::Highlighter consoleHighlighter(std::function<std::string(std::string_view)> inspect) {
+      const char *noColor = std::getenv("NO_COLOR");
+      if (noColor && *noColor) return {};
+      return [inspect = std::move(inspect)](std::string_view source) {
+        std::vector<utilities::LineEditor::ColorSpan> result;
+        if (source.empty() || source.size() > 8192) return result;
+        // Inspection spans count Unicode code points; rendering uses byte offsets.
+        std::vector<std::size_t> offsets;
+        for (std::size_t index = 0; index < source.size(); ++index)
+          if ((static_cast<unsigned char>(source[index]) & 0xc0) != 0x80) offsets.push_back(index);
+        offsets.push_back(source.size());
+        std::istringstream input(inspect(source));
+        std::string line;
+        while (std::getline(input, line)) {
+          if (!line.starts_with("S\t")) continue;
+          std::istringstream fields(line);
+          std::string kind, beginText, endText, group, colorText;
+          if (!std::getline(fields, kind, '\t') || !std::getline(fields, beginText, '\t') ||
+              !std::getline(fields, endText, '\t') || !std::getline(fields, group, '\t') ||
+              !std::getline(fields, colorText, '\t'))
+            continue;
+          std::size_t begin = 0, end = 0;
+          if (!parseSize(beginText, begin) || !parseSize(endText, end) || begin >= end || begin >= offsets.size() - 1)
+            continue;
+          if (end >= offsets.size()) continue;
+          const auto color = unhex(colorText);
+          if (color.size() != 7 || color[0] != '#') continue;
+          unsigned rgb = 0;
+          const auto parsed = std::from_chars(color.data() + 1, color.data() + 7, rgb, 16);
+          if (parsed.ec == std::errc{} && parsed.ptr == color.data() + 7)
+            result.push_back({offsets[begin], offsets[end], rgb});
+        }
+        return result;
+      };
+    }
+
+    std::string remoteHighlight(int fd, std::string_view line) {
+      if (!sendBytes(fd, ":highlight\t" + hex(line) + '\n')) return {};
+      std::string payload;
+      ConsoleFrames response([&](std::string_view bytes) {
+        payload += bytes;
+        return true;
+      });
+      char bytes[4096];
+      while (!response.completed) {
+        const ssize_t count = recv(fd, bytes, sizeof(bytes), 0);
+        if (count < 0 && errno == EINTR) continue;
+        if (count <= 0 || !response.consume({bytes, static_cast<std::size_t>(count)})) return {};
+      }
+      return payload;
     }
 
     utilities::Completion remoteCompletion(int fd, std::string_view line, std::size_t cursor) {
@@ -253,6 +326,9 @@ namespace recurloop {
       constexpr std::string_view tracePrefix = ":trace\t";
       constexpr std::string_view inspectFilePrefix = ":inspect-file\t";
       constexpr std::string_view traceFilePrefix = ":trace-file\t";
+      if (line.starts_with(":highlight\t")) {
+        return {session.highlight(unhex(line.substr(11))), false, 0};
+      }
       if (line.starts_with(":complete\t")) {
         const std::string_view payload = line.substr(10);
         const auto separator = payload.find('\t');
@@ -331,11 +407,15 @@ namespace recurloop {
       return status;
     }
 
+    const bool integration = consoleIntegration();
+    if (integration)
+      utilities::LineEditor::writeDescriptor(STDOUT_FILENO, "\x1b]633;P;HasRichCommandDetection=True\x07");
     utilities::LineEditor editor(
         [](int timeout) { return utilities::LineEditor::readDescriptor(STDIN_FILENO, timeout); },
         [](std::string_view text) { return utilities::LineEditor::writeDescriptor(STDOUT_FILENO, text); },
         [] { return utilities::LineEditor::descriptorColumns(STDIN_FILENO); },
-        [&session](std::string_view line, std::size_t cursor) { return session->complete(line, cursor); });
+        [&session](std::string_view line, std::size_t cursor) { return session->complete(line, cursor); },
+        consoleHighlighter([&session](std::string_view line) { return session->highlight(line); }), integration);
 
     int status = 0;
     while (!stopping_) {
@@ -352,7 +432,10 @@ namespace recurloop {
         }
       }
 
-      if (line.status == utilities::LineStatus::Interrupt) continue;
+      if (line.status == utilities::LineStatus::Interrupt) {
+        consoleStatus(integration, 130);
+        continue;
+      }
       if (line.status == utilities::LineStatus::End) break;
 
       CommandResult result;
@@ -362,6 +445,7 @@ namespace recurloop {
       }
       if (!result.text.empty()) std::cout << result.text << std::flush;
       status = result.status;
+      consoleStatus(integration, status);
       if (result.quit) break;
     }
     return status;
@@ -585,16 +669,20 @@ namespace recurloop {
     }
     if (!initial.empty()) utilities::LineEditor::writeDescriptor(STDOUT_FILENO, initial);
 
-    if (!writeAll(fd, std::string(streamHandshake) + '\n')) {
+    if (!writeAll(fd, std::string(statusStreamHandshake) + '\n')) {
       close(fd);
       return 1;
     }
 
+    const bool integration = consoleIntegration();
+    if (integration)
+      utilities::LineEditor::writeDescriptor(STDOUT_FILENO, "\x1b]633;P;HasRichCommandDetection=True\x07");
     utilities::LineEditor editor(
         [](int timeout) { return utilities::LineEditor::readDescriptor(STDIN_FILENO, timeout); },
         [](std::string_view text) { return utilities::LineEditor::writeDescriptor(STDOUT_FILENO, text); },
         [] { return utilities::LineEditor::descriptorColumns(STDIN_FILENO); },
-        [fd](std::string_view line, std::size_t cursor) { return remoteCompletion(fd, line, cursor); });
+        [fd](std::string_view line, std::size_t cursor) { return remoteCompletion(fd, line, cursor); },
+        consoleHighlighter([fd](std::string_view line) { return remoteHighlight(fd, line); }), integration);
 
     while (true) {
       utilities::LineResult input;
@@ -610,7 +698,10 @@ namespace recurloop {
         }
       }
 
-      if (input.status == utilities::LineStatus::Interrupt) continue;
+      if (input.status == utilities::LineStatus::Interrupt) {
+        consoleStatus(integration, 130);
+        continue;
+      }
       if (input.status == utilities::LineStatus::End) break;
 
       std::string request = std::move(input.line);
@@ -660,8 +751,10 @@ namespace recurloop {
         }
       }
       if (!received) {
+        consoleStatus(integration, 1);
         break;
       }
+      consoleStatus(integration, response.status);
     }
 
     shutdown(fd, SHUT_RDWR);

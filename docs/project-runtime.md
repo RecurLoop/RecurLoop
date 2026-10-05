@@ -214,3 +214,18 @@ output and completion frames. Invalid cursor offsets are rejected.
 
 After updating the executable, restart the VS Code language runtime and reopen
 its terminals so both the server and console client use the new version.
+
+### Interactive console presentation
+
+The local console and `--connect` client render input colors from the active
+session's phrase/type metadata and inspection's lexical coloring, including
+session-local phrases. The `:highlight<TAB>hex(source)` request returns ordinary
+`S` inspection spans without elaborating input or running language actions.
+Colors use RGB ANSI sequences and respect a nonempty `NO_COLOR` on the client.
+Input wraps across terminal rows, and Enter retains the complete command in
+scrollback. Cursor movement and history operate on the uncolored source.
+
+In VS Code (`TERM_PROGRAM=vscode`), the console emits OSC 633 prompt, command,
+execution and completion markers. The socket client negotiates transport v2 to
+obtain the actual command status. These markers support command decorations,
+navigation and sticky scroll, subject to VS Code's terminal settings.

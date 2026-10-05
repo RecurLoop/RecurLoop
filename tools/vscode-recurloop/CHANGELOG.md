@@ -2,6 +2,10 @@
 
 ## 0.1.2
 
+- Enable console input colors from the current runtime's semantic metadata.
+- Add VS Code shell integration markers for commands and their exit status.
+- Wrap long console commands during editing and retain their full text in scrollback.
+
 - Require RecurLoop 0.2.4 or a newer patch in the 0.2 series.
 - Recheck runtime versions on selection even when a replaced executable retains
   the same timestamps and size.

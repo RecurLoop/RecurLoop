@@ -590,3 +590,16 @@ TEST(RecurloopGeneration, CompletionWithoutShellOnlyUsesLexicon) {
   EXPECT_EQ(files.candidates, (std::vector<std::string>{"unique_completion_phrase"}));
   EXPECT_EQ(arguments.candidates, (std::vector<std::string>{"unique_completion_phrase"}));
 }
+
+TEST(RecurloopGeneration, ConsoleHighlightingDoesNotCommitInput) {
+  auto session = project()->openSession();
+  ASSERT_EQ(session->evaluate("var console_answer = 41\n").status, 0);
+  const auto before = session->generations();
+  const auto spans = session->highlight("console_answer = 42");
+  EXPECT_NE(spans.find("S\t"), std::string::npos);
+  EXPECT_EQ(session->generations().request, before.request);
+  EXPECT_EQ(session->evaluate("print console_answer\n").output, "41\n");
+  session->highlight("var console_uncommitted = 99");
+  EXPECT_NE(session->evaluate("print console_uncommitted\n").status, 0);
+  EXPECT_EQ(session->generations().session, before.session);
+}

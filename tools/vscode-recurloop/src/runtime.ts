@@ -67,7 +67,7 @@ class WorkspaceRuntime implements vscode.Disposable {
   public async terminalOptions(uri: vscode.Uri): Promise<vscode.TerminalOptions> {
     await this.ensureStarted(uri);
     return { name: 'RecurLoop', cwd: workspaceRoot(uri), shellPath: resolveExecutable(uri),
-      shellArgs: ['--connect', this.socketPath!], env: { NO_COLOR: '1' } };
+      shellArgs: ['--connect', this.socketPath!], env: { NO_COLOR: null } };
   }
 
   private async ensureStarted(uri: vscode.Uri): Promise<void> {

@@ -31,7 +31,7 @@ foreach(fragment
     "debugger_executable.rl:18:1 phrase \"assignment\" function \"debugger_program\""
     "[debug] answer:i64 = 41"
     "debugger_executable.rl:19:1 phrase \"return\" function \"debugger_program\""
-    "[debug] answer:i64 = 42"
+    "[debug] int 42"
     "[debug] executable exited with status 42"
 )
     string(FIND "${out}" "${fragment}" position)

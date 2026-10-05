@@ -57,8 +57,15 @@ namespace utilities {
 
     using Completion = utilities::Completion;
     using Completer = std::function<Completion(std::string_view line, std::size_t cursor)>;
+    struct ColorSpan {
+      std::size_t start;
+      std::size_t end;
+      unsigned rgb;
+    };
+    using Highlighter = std::function<std::vector<ColorSpan>(std::string_view)>;
 
-    LineEditor(Reader reader, Writer writer, Columns columns = {}, Completer completer = {});
+    LineEditor(Reader reader, Writer writer, Columns columns = {}, Completer completer = {},
+               Highlighter highlighter = {}, bool shellIntegration = false);
 
     LineResult readLine(std::string_view prompt);
     const std::vector<std::string> &history() const {
@@ -74,6 +81,8 @@ namespace utilities {
 
   private:
     void refresh(const std::string &line, std::size_t cursor, std::string_view prompt);
+    std::string colored(const std::string &line, std::size_t start, std::size_t end);
+    void submit(const std::string &line, std::string_view prompt);
     void historyMove(std::string &line, std::size_t &cursor, std::size_t &historyPosition, std::string &draft,
                      int direction);
     void historySearchBackward(std::string &line, std::size_t &cursor, std::size_t &historyPosition);
@@ -94,6 +103,11 @@ namespace utilities {
     Writer writer_;
     Columns columns_;
     Completer completer_;
+    Highlighter highlighter_;
+    bool shellIntegration_ = false;
+    std::size_t cursorRow_ = 0;
+    std::string highlightedLine_;
+    std::vector<ColorSpan> colors_;
     std::vector<std::string> history_;
   };
 } // namespace utilities
