@@ -6,6 +6,7 @@ const path = require('node:path');
 const Module = require('node:module');
 const { execFileSync } = require('node:child_process');
 let terminalLibraries = ['shell', 'inferred'];
+let projectEntry = 'recurloop.project.rl';
 const repo = path.resolve(__dirname, '../../..');
 const root = fs.mkdtempSync(path.join(os.tmpdir(), 'rl-extension-test-'));
 process.env.RECURLOOP_LIBRARY_PATH = process.env.RECURLOOP_TEST_LIBRARIES || path.join(repo, 'build/Release/libraries');
@@ -14,16 +15,26 @@ const folder = { uri: { fsPath: root }, name: 'fixture', index: 0 };
 const vscode = { workspace: {
   workspaceFolders: [folder], getWorkspaceFolder: () => folder, saveAll: async () => true,
   getConfiguration: () => ({ get: (key, fallback) => key === 'executablePath'
-    ? testProgram : key === 'terminal.libraries' ? terminalLibraries : fallback })
-} };
+    ? testProgram : key === 'terminal.libraries' ? terminalLibraries : key === 'projectFile' ? projectEntry : fallback })
+}, window: { showErrorMessage: async () => undefined } };
 const original = Module._load;
 Module._load = function(name, ...rest) { return name === 'vscode' ? vscode : original.call(this, name, ...rest); };
 const { RecurLoopRuntime } = require('../out/runtime');
+const { RuntimeSetup } = require('../out/runtimeSetup');
 const { ProjectController } = require('../out/project');
 const log = [];
-const runtime = new RecurLoopRuntime({ appendLine: text => log.push(text), append: text => log.push(text) });
+const output = { appendLine: text => log.push(text), append: text => log.push(text) };
+const setup = new RuntimeSetup({ globalStorageUri: { fsPath: path.join(root, 'extension-storage') },
+  asAbsolutePath: relative => path.join(__dirname, '..', relative) }, output);
+const runtime = new RecurLoopRuntime(output, uri => setup.ensureExecutable(uri));
 const project = new ProjectController(runtime);
 (async () => {
+  await runtime.restart(folder.uri);
+  assert.deepEqual(await project.targets(folder.uri), []);
+  assert.equal(await runtime.inspect({ uri: folder.uri, getText: () => 'print 42' }), '');
+  await assert.rejects(runtime.execute(folder.uri, ['print 42']), /saved project entry/);
+  await assert.rejects(runtime.terminalOptions(folder.uri), /saved project entry/);
+  assert.ok(!log.some(line => line.includes('[analysis] starting')));
   fs.writeFileSync(path.join(root, 'grammar.rl'), 'syntax greeting <value:expr> => print ${value}\n');
   fs.writeFileSync(path.join(root, 'main.rl'), 'greeting 42\n');
   const contract = { targets: [
@@ -56,10 +67,25 @@ const project = new ProjectController(runtime);
   assert.equal((await runtime.terminalOptions(folder.uri)).shellArgs[1], terminal.shellArgs[1]);
   await runtime.restart(folder.uri);
   assert.equal((await project.targets(folder.uri)).length, 4);
+  fs.unlinkSync(entryPath);
+  await runtime.reload(folder.uri);
+  assert.ok(!fs.existsSync(terminal.shellArgs[1]));
+  await runtime.restart(folder.uri);
+  assert.deepEqual(await project.targets(folder.uri), []);
+  // An arbitrary configured filename opts this folder back in.
+  projectEntry = 'project-entry.config';
+  fs.writeFileSync(path.join(root, projectEntry), '');
+  await runtime.restart(folder.uri);
+  assert.equal((await runtime.execute(folder.uri, ['print 42'])).trim(), '42');
+  assert.deepEqual(await project.targets(folder.uri), []);
+  fs.writeFileSync(path.join(root, projectEntry), validEntry);
+  await runtime.reload(folder.uri);
+  assert.equal((await project.targets(folder.uri)).length, 4);
   terminalLibraries = [];
   await runtime.restart(folder.uri);
   await assert.rejects(runtime.execute(folder.uri, ['echo missing-shell']));
   terminalLibraries = ['shell', 'inferred'];
+  projectEntry = 'recurloop.project.rl';
   folder.uri = { fsPath: repo };
   assert.equal((await project.targets(folder.uri)).length, 5);
   await project.run(folder.uri, 'check');
@@ -70,4 +96,4 @@ const project = new ProjectController(runtime);
   assert.ok(fs.existsSync(path.join(repo, '.cache/recurloop-vscode/application-debug')));
   console.log('Runtime integration passed: project graph, custom syntax, targets, failure, cycle, console and restart.');
 })().catch(error => { console.error(error, log.join('\n')); process.exitCode = 1; })
-  .finally(() => { runtime.dispose(); fs.rmSync(root, { recursive: true, force: true }); });
+  .finally(() => { runtime.dispose(); setup.dispose(); fs.rmSync(root, { recursive: true, force: true }); });

@@ -10,6 +10,7 @@ import {
   likelyExecutableLine,
   libraryArguments,
   resolveExecutable,
+  requireProject,
   rlString,
   stripAnsi,
   workspaceRoot
@@ -309,6 +310,7 @@ export class RecurLoopDebugAdapter implements vscode.DebugAdapter, vscode.Dispos
     const workspaceUri = (this.configuration.cwd
       ? vscode.workspace.getWorkspaceFolder(vscode.Uri.file(this.configuration.cwd))?.uri : undefined)
       ?? vscode.workspace.workspaceFolders?.[0]?.uri;
+    requireProject(workspaceUri);
     const program = path.resolve(expandWorkspaceVariables(rawProgram, workspaceUri));
     const cwd = path.resolve(expandWorkspaceVariables(String(this.configuration?.cwd ?? workspaceRoot(workspaceUri)), workspaceUri));
     const executable = resolveExecutable(workspaceUri, this.configuration?.recurloop);

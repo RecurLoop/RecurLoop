@@ -10,7 +10,7 @@ in TypeScript.
 - TextMate fallback highlighting for comments, strings, numbers, declarations,
   common core phrases and operators.
 - Runtime semantic colors using the exact `color` metadata returned by
-  RecurLoop `:trace` (or standalone `:trace-file`).
+  RecurLoop `:trace` in initialized projects.
 - Diagnostics from runtime inspection.
 - Hover documentation from phrase `docs` metadata.
 - Completion from the live phrase/type/function catalog.
@@ -37,6 +37,27 @@ imports stay as configured.
 
 ## Runtime requirements
 
+Runtime-backed features require a saved `recurloop.project.rl` in the workspace
+folder, or the entry selected by `recurloop.projectFile`. An empty file is enough.
+Use **RecurLoop: Initialize Project** to create and open the configured entry;
+the command preserves an existing file. You can also create it manually with
+`touch recurloop.project.rl`. In a multi-folder workspace each folder opts in
+independently. A loose `.rl` file does not enable the runtime.
+
+Without the entry, the extension provides basic syntax highlighting and the
+initialization command, but does not launch RecurLoop for version checks,
+installation, analysis, tasks, consoles, Run or Debug. It watches for creation
+of the entry, including custom filenames, and stops the shared server when the
+entry is removed. Until a project is present, only passive activation callbacks
+and the initialization command are registered: no output channel, setup service,
+language analysis providers or runtime are created. Commands without a project
+do nothing; debug launches cancel silently. Missing entries are not errors.
+There is no generic startup activation. With a custom entry name, open a RecurLoop
+source file or use Initialize Project to let the extension discover the entry.
+The repository selects RecurLoop as its default Linux terminal profile. With a
+project entry it opens the project console; without an entry it opens the normal
+shell (`SHELL`, or `/bin/sh`) without starting any RecurLoop processes.
+
 The extension must run in the same environment as the RecurLoop executable.
 For WSL, open the repository through **Remote - WSL** so this extension runs in
 the workspace extension host and can launch the Linux RecurLoop binary.
@@ -44,10 +65,36 @@ the workspace extension host and can launch the Linux RecurLoop binary.
 Default executable:
 
 ```text
-${workspaceFolder}/build/Release/bin/recurloop
+recurloop
 ```
 
-Override it with `recurloop.executablePath` if necessary.
+The extension first looks on the extension host's `PATH`. If the default is
+missing, it offers **Install**, **Choose Executable**, or **Later** in an initialized project.
+Installation requires your confirmation and downloads the complete official
+GitHub Release, including the `.rli` libraries. The bundled installer verifies
+the archive SHA-256 and internal file manifest. Its version is pinned to the
+runtime version in the source tree's `CMakeLists.txt` when the extension is built.
+Existing runtimes must be at least that patch version in the same major/minor
+series; incompatible runtimes produce an error rather than being replaced.
+
+Managed installations live below the extension's global storage directory in
+`runtime/<version>/`. They require no administrator access and do not modify
+your terminal `PATH`. Runtime selection is an explicit configured path, otherwise
+`recurloop` on `PATH`, otherwise the managed installation. A missing explicit
+path produces an error; the extension never substitutes another local build.
+Use **RecurLoop: Install Runtime** to retry after choosing **Later**. On unsupported
+platforms the setup offers a file picker instead of a download.
+
+Automatic installation currently supports Linux x86-64 with glibc >= 2.35.
+In WSL, SSH or a container, installation occurs on the workspace extension host,
+not on the machine displaying the editor. For an ordinary terminal command,
+use the repository's standalone installer and add its bin directory to `PATH`.
+Clang/LLD for native file output remain separate optional host tools.
+
+Override `recurloop.executablePath` with your own executable if necessary. The
+extension does not rewrite project settings when it installs a managed runtime;
+choosing a file explicitly saves its path in the current workspace folder's
+settings, or user settings when no workspace folder is available.
 
 ## Install from a release or source
 
@@ -68,7 +115,7 @@ From the repository root:
 
 ```bash
 cd tools/vscode-recurloop
-npm install
+npm ci
 npm run compile
 cd ../..
 ```
@@ -81,6 +128,13 @@ Run and Debug -> RecurLoop: Extension Development Host
 
 or press `F5` and select that configuration. A second VS Code window opens with
 the extension loaded directly from `tools/vscode-recurloop`.
+
+This repository's `.vscode/settings.json` overrides `recurloop.executablePath`
+with `${workspaceFolder}/build/Release/bin/recurloop`. Build it with `make build`.
+The override applies both to an installed VSIX and to the Extension Development
+Host when that window opens this repository. Other workspaces use the public
+`recurloop` default; set a workspace path explicitly to test a repository build
+against another project. No separate development VSIX is required.
 
 In the Extension Development Host, open any `.rl` file. `Ctrl+Space` triggers
 completion; hover shows RecurLoop docs; ordinary VS Code breakpoints work with
@@ -101,20 +155,18 @@ Package the extension:
 
 ```bash
 cd tools/vscode-recurloop
-npm install
+npm ci
 npm run package
 ```
 
 Then install the generated VSIX:
 
 ```bash
-code --install-extension recurloop-vscode-0.1.0.vsix
+code --install-extension recurloop-vscode-0.1.1.vsix
 ```
 
 When using Remote - WSL, install/enable the extension in WSL because it needs to
 spawn the RecurLoop workspace executable.
-
-See `PUBLISHING.md` for Marketplace publication.
 
 ## Executable project entry and shared console
 
@@ -128,7 +180,31 @@ engine imports in the entry define the processing graph and language dependencie
 Project analysis uses `:trace`/`:inspect` to reconstruct the state immediately
 before each graph source, including its unsaved editor buffer. Files outside that
 graph report analysis unavailable; without a project entry, standalone analysis
-uses `:trace-file`. TextMate remains the fallback while the runtime starts.
+is disabled. TextMate remains the fallback while the runtime starts.
+
+The entry is ordinary executable RecurLoop source, not a separate configuration
+format. For a simple project it can just select the starting source:
+
+```rl
+include "src/main.rl"
+```
+
+An empty entry enables the server and console without task targets. Outside
+VS Code, select the same entry using the existing CLI options, from the project
+directory:
+
+```bash
+recurloop --file recurloop.project.rl
+recurloop --file recurloop.project.rl --serve
+recurloop --file config/my-project.rl --serve
+```
+
+The first command executes once; `--serve` publishes the loaded environment and
+opens a project console. Select libraries before `--file` to match the editor's
+baseline, for example `--library shell --library inferred`. To serve additional
+clients, also pass `--unix /tmp/my-project.sock`; connect another console with
+`recurloop --connect /tmp/my-project.sock`. Standalone CLI use does not require
+the VS Code project marker.
 
 The entry provides the executable phrase `VSCode:describe project`, which writes
 a JSON object with a `targets` array. Each target has `name`, `command` (one line

@@ -1,7 +1,8 @@
+import * as fs from 'fs';
 import * as path from 'path';
 import * as vscode from 'vscode';
 import { RecurLoopRuntime, projectFile } from './runtime';
-import { workspaceRoot } from './util';
+import { hasProject, workspaceRoot } from './util';
 
 export interface ProjectTarget {
   name: string;
@@ -15,6 +16,8 @@ export class ProjectController implements vscode.TaskProvider {
   constructor(private readonly runtime: RecurLoopRuntime) {}
 
   async targets(uri: vscode.Uri): Promise<ProjectTarget[]> {
+    if (!hasProject(uri)) return [];
+    if (!fs.readFileSync(projectFile(uri), 'utf8').trim()) return [];
     const response = await this.runtime.execute(uri, ['VSCode:describe project']);
     const value = JSON.parse(response.trim());
     const data = typeof value === 'string' ? JSON.parse(value) : value;

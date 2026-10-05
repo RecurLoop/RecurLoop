@@ -3,7 +3,7 @@ import * as os from 'os';
 import * as path from 'path';
 import * as vscode from 'vscode';
 import { RecurLoopRuntime } from './runtime';
-import { codePointToUtf16Map, hexDecode, positionFromCodePoint, rlString, resolveLibraryImage, utf16OffsetToCodePoint } from './util';
+import { codePointToUtf16Map, hasProject, hexDecode, positionFromCodePoint, rlString, resolveLibraryImage, utf16OffsetToCodePoint } from './util';
 
 interface Match { location: vscode.Location; label: string; role: number; kind: string; signature: string }
 
@@ -12,6 +12,7 @@ export class NavigationController {
   constructor(private readonly runtime: RecurLoopRuntime) {}
 
   async query(document: vscode.TextDocument, position: vscode.Position, operation: string, argument = ''): Promise<Match[]> {
+    if (!hasProject(document.uri)) return [];
     const sources = (await this.runtime.execute(document.uri, [':cache-dependencies']))
       .split(/\r?\n/).filter(file => file.endsWith('.rl') && fs.existsSync(file));
     if (!sources.includes(document.uri.fsPath)) sources.push(document.uri.fsPath);

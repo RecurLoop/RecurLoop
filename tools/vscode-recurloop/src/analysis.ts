@@ -4,6 +4,7 @@ import { NavigationController } from './navigation';
 import {
   codePointToUtf16Map,
   hexDecode,
+  hasProject,
   positionFromCodePoint,
   stripAnsi,
   utf16OffsetToCodePoint
@@ -186,7 +187,7 @@ export class AnalysisController implements vscode.Disposable {
 
   public async get(document: vscode.TextDocument): Promise<AnalysisResult> {
     const enabled = vscode.workspace.getConfiguration('recurloop', document.uri).get('analysis.enabled', true) as boolean;
-    if (!enabled) {
+    if (!enabled || !hasProject(document.uri)) {
       const source = document.getText();
       return { version: document.version, source, mapping: codePointToUtf16Map(source), spans: [], symbols: [], occurrences: [] };
     }
@@ -224,6 +225,7 @@ export class AnalysisController implements vscode.Disposable {
         if (editor.document.uri.toString() === document.uri.toString()) this.applyColors(editor, result);
       }
     } catch (error) {
+      if (!hasProject(document.uri)) return;
       const message = error instanceof Error ? error.message : String(error);
       this.output.appendLine(`[analysis] ${document.uri.fsPath}: ${message}`);
       this.diagnostics.set(document.uri, [new vscode.Diagnostic(new vscode.Range(0, 0, 0, 1), message, vscode.DiagnosticSeverity.Warning)]);

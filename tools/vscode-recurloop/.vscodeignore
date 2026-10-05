@@ -4,7 +4,7 @@ src/**
 **/*.map
 tsconfig.json
 .gitignore
-PUBLISHING.md
 node_modules/.cache/**
 
 tests/**
+scripts/**

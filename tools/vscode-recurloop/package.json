@@ -2,7 +2,7 @@
   "name": "recurloop-vscode",
   "displayName": "RecurLoop",
   "description": "Language intelligence and debugging for RecurLoop.",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "publisher": "recurloop",
   "license": "Apache-2.0",
   "engines": {
@@ -62,6 +62,14 @@
     ],
     "commands": [
       {
+        "command": "recurloop.initializeProject",
+        "title": "RecurLoop: Initialize Project"
+      },
+      {
+        "command": "recurloop.installRuntime",
+        "title": "RecurLoop: Install Runtime"
+      },
+      {
         "command": "recurloop.runCurrentFile",
         "title": "RecurLoop: Run Current File"
       },
@@ -87,8 +95,8 @@
       "properties": {
         "recurloop.executablePath": {
           "type": "string",
-          "default": "${workspaceFolder}/build/Release/bin/recurloop",
-          "description": "Path to the RecurLoop executable. ${workspaceFolder} is expanded by the extension."
+          "default": "recurloop",
+          "description": "RecurLoop executable name on PATH or an explicit path. If the default is missing, the extension offers to install its compatible runtime. ${workspaceFolder} is expanded by the extension."
         },
         "recurloop.analysis.enabled": {
           "type": "boolean",
@@ -112,7 +120,7 @@
         "recurloop.projectFile": {
           "type": "string",
           "default": "recurloop.project.rl",
-          "description": "Executable RecurLoop project entry, relative to the workspace folder."
+          "description": "Executable RecurLoop project entry, relative to the workspace folder. Its saved presence enables runtime-backed extension features; an empty file is sufficient."
         },
         "recurloop.terminal.libraries": {
           "type": "array",
@@ -211,12 +219,13 @@
   },
   "scripts": {
     "vscode:prepublish": "npm run compile",
-    "compile": "tsc -p ./",
-    "watch": "tsc -watch -p ./",
+    "compile": "node scripts/prepare-runtime.cjs && tsc -p ./",
+    "watch": "node scripts/prepare-runtime.cjs && tsc -watch -p ./",
     "check": "tsc -p ./ --noEmit",
     "package": "vsce package --no-dependencies",
     "publish": "vsce publish --no-dependencies",
-    "test": "npm run compile && node tests/runtime.cjs && node tests/editor.cjs"
+    "test": "npm run test:setup && node tests/runtime.cjs && node tests/editor.cjs",
+    "test:setup": "npm run compile && node tests/setup.cjs"
   },
   "devDependencies": {
     "@types/node": "^22.15.0",

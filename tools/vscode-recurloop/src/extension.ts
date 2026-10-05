@@ -1,17 +1,22 @@
+import * as fs from 'fs';
+import * as path from 'path';
 import * as vscode from 'vscode';
 import { AnalysisController } from './analysis';
 import { RecurLoopDebugAdapter } from './debugAdapter';
 import { ProjectController, TargetRunAdapter } from './project';
 import { RecurLoopRuntime } from './runtime';
-import { resolveExecutable, shellQuote, workspaceRoot } from './util';
+import { RuntimeSetup } from './runtimeSetup';
+import { hasProject, projectFile, resolveExecutable, shellQuote, workspaceRoot } from './util';
 
 export class DebugConfigurationProvider implements vscode.DebugConfigurationProvider {
-  constructor(private readonly project: ProjectController) {}
+  constructor(private readonly project: ProjectController,
+    private readonly prepareExecutable: (uri?: vscode.Uri, override?: string) => Promise<string> = async (uri, override) => resolveExecutable(uri, override)) {}
   provideDebugConfigurations(folder: vscode.WorkspaceFolder | undefined): vscode.ProviderResult<vscode.DebugConfiguration[]> {
     return folder ? this.project.debugConfigurations(folder) : [];
   }
-  async resolveDebugConfiguration(folder: vscode.WorkspaceFolder | undefined, config: vscode.DebugConfiguration): Promise<vscode.DebugConfiguration | undefined> {
+  async resolveDebugConfiguration(folder: vscode.WorkspaceFolder | undefined, config: vscode.DebugConfiguration): Promise<vscode.DebugConfiguration | undefined | null> {
     const editor = vscode.window.activeTextEditor;
+    if (!hasProject(folder?.uri ?? editor?.document.uri)) return null;
     if (config.target && folder) {
       await this.project.resolveTarget(folder, config);
       if (config.projectTarget) return config;
@@ -25,11 +30,11 @@ export class DebugConfigurationProvider implements vscode.DebugConfigurationProv
     if (config.type !== 'recurloop') return config;
     if (!config.program && !config.executable && editor?.document.languageId === 'recurloop') config.program = editor.document.uri.fsPath;
     if (!config.cwd) config.cwd = folder?.uri.fsPath ?? workspaceRoot(editor?.document.uri);
-    if (!config.recurloop) config.recurloop = resolveExecutable(folder?.uri ?? editor?.document.uri);
     if (!config.program && !config.executable) {
       void vscode.window.showErrorMessage('Open a RecurLoop file or set "program"/"executable" in the RecurLoop debug configuration.');
       return undefined;
     }
+    config.recurloop = await this.prepareExecutable(folder?.uri ?? editor?.document.uri, config.recurloop);
     return config;
   }
 }
@@ -60,89 +65,185 @@ class DebugFactory implements vscode.DebugAdapterDescriptorFactory, vscode.Dispo
   }
 }
 
-export function activate(context: vscode.ExtensionContext): void {
+/** Allocate runtime resources and language providers only after a project opts in. */
+function createProjectFeatures(context: vscode.ExtensionContext) {
   const output = vscode.window.createOutputChannel('RecurLoop');
-  const runtime = new RecurLoopRuntime(output);
+  const setup = new RuntimeSetup(context, output);
+  const prepareExecutable = (uri?: vscode.Uri, override?: string) => setup.ensureExecutable(uri, override);
+  const runtime = new RecurLoopRuntime(output, prepareExecutable);
   const analysis = new AnalysisController(runtime, output);
   const project = new ProjectController(runtime);
   const debugFactory = new DebugFactory(output, project);
+  const debugProvider = new DebugConfigurationProvider(project, prepareExecutable);
+  return { output, setup, runtime, analysis, project, debugFactory, debugProvider, prepareExecutable,
+    dispose: () => {
+      debugFactory.dispose();
+      analysis.dispose();
+      runtime.dispose();
+      setup.dispose();
+      output.dispose();
+    }
+  };
+}
 
-  context.subscriptions.push(
-    vscode.tasks.registerTaskProvider('recurloop', project),
-    vscode.debug.registerDebugConfigurationProvider('recurloop', new DebugConfigurationProvider(project), vscode.DebugConfigurationProviderTriggerKind.Dynamic),
-    vscode.window.registerTerminalProfileProvider('recurloop.console', {
-      provideTerminalProfile: async () => {
-        const uri = vscode.window.activeTextEditor?.document.uri ?? vscode.workspace.workspaceFolders?.[0]?.uri;
-        if (!uri) throw new Error('Open a workspace for the RecurLoop project console.');
-        return new vscode.TerminalProfile(await runtime.terminalOptions(uri));
-      }
-    }),
-    vscode.commands.registerCommand('recurloop.openConsole', async () => {
-      const uri = vscode.window.activeTextEditor?.document.uri ?? vscode.workspace.workspaceFolders?.[0]?.uri;
-      if (uri) vscode.window.createTerminal(await runtime.terminalOptions(uri)).show();
-    }),
-    output,
-    runtime,
-    analysis,
-    debugFactory,
-    vscode.debug.registerDebugConfigurationProvider('recurloop', new DebugConfigurationProvider(project)),
-    vscode.debug.registerDebugAdapterDescriptorFactory('recurloop', debugFactory),
-    vscode.commands.registerCommand('recurloop.runCurrentFile', () => runCurrentFile()),
-    vscode.commands.registerCommand('recurloop.debugCurrentFile', () => debugCurrentFile()),
-    vscode.commands.registerCommand('recurloop.restartLanguageRuntime', async () => {
-      const uri = vscode.window.activeTextEditor?.document.uri;
-      try {
-        await runtime.restart(uri);
-        analysis.invalidate();
-        void vscode.window.showInformationMessage('RecurLoop language runtime restarted.');
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        output.appendLine(`[analysis] restart failed: ${message}`);
-        output.show(true);
-        void vscode.window.showErrorMessage(message);
-      }
-    }),
-    vscode.commands.registerCommand('recurloop.showRuntimeInfo', () => {
-      const uri = vscode.window.activeTextEditor?.document.uri;
-      output.appendLine(runtime.info(uri));
-      output.show(true);
-    }),
-    vscode.workspace.onDidChangeConfiguration(event => {
-      if (event.affectsConfiguration('recurloop.executablePath') || event.affectsConfiguration('recurloop.analysis') || event.affectsConfiguration('recurloop.projectFile') || event.affectsConfiguration('recurloop.terminal.libraries')) {
-        for (const folder of vscode.workspace.workspaceFolders ?? []) {
-          if (event.affectsConfiguration('recurloop', folder.uri)) {
-            void runtime.restart(folder.uri).then(() => analysis.invalidate()).catch(error => output.appendLine(String(error)));
-          }
-        }
-      }
-    })
-  );
+export function activate(context: vscode.ExtensionContext): void {
+  let features: ReturnType<typeof createProjectFeatures> | undefined;
   const pending = new Map<string, NodeJS.Timeout>();
+  const selectedUri = () => vscode.window.activeTextEditor?.document.uri ?? vscode.workspace.workspaceFolders?.[0]?.uri;
+  const synchronize = () => {
+    const enabled = (vscode.workspace.workspaceFolders ?? []).some(folder => hasProject(folder.uri));
+    if (enabled && !features) features = createProjectFeatures(context);
+    if (!enabled && features) { features.dispose(); features = undefined; }
+    return features;
+  };
+  const report = (error: unknown, uri: vscode.Uri) => {
+    if (hasProject(uri)) features?.output.appendLine(String(error));
+  };
+  const inProject = async (action: (active: NonNullable<typeof features>, uri: vscode.Uri) => Promise<void> | void) => {
+    const uri = selectedUri();
+    if (!uri || !hasProject(uri)) return;
+    const active = synchronize();
+    if (!active) return;
+    try { await action(active, uri); }
+    catch (error) {
+      if (!hasProject(uri)) return;
+      active.output.appendLine(String(error));
+      if (!String(error).includes('setup was deferred')) void vscode.window.showErrorMessage(String(error));
+    }
+  };
   const changed = (uri: vscode.Uri) => {
-    if (/[\\/](?:\.cache|node_modules|\.git)[\\/]/.test(uri.fsPath)) return;
+    if (!vscode.workspace.getWorkspaceFolder(uri)) return;
+    const entryChanged = uri.fsPath === projectFile(uri);
+    if (!entryChanged && (!hasProject(uri) || !/\.(rl|rli)$/.test(uri.fsPath))) return;
+    if (!entryChanged && /[\\/](?:\.cache|node_modules|\.git)[\\/]/.test(uri.fsPath)) return;
     const root = workspaceRoot(uri);
     clearTimeout(pending.get(root));
+    pending.delete(root);
+    const active = synchronize();
+    if (!active) return;
+    if (!hasProject(uri)) {
+      void active.runtime.reload(uri).then(() => active.analysis.invalidate()).catch(error => report(error, uri));
+      return;
+    }
     pending.set(root, setTimeout(() => {
       pending.delete(root);
-      void runtime.reload(uri).then(() => analysis.invalidate()).catch(error => output.appendLine(String(error)));
+      const current = synchronize();
+      if (!current || !hasProject(uri)) return;
+      void current.runtime.reload(uri).then(() => current.analysis.invalidate()).catch(error => report(error, uri));
     }, 250));
   };
-  const watcher = vscode.workspace.createFileSystemWatcher('**/*.{rl,rli}');
-  context.subscriptions.push(watcher, watcher.onDidChange(changed), watcher.onDidCreate(changed),
-    watcher.onDidDelete(changed), { dispose: () => { for (const timer of pending.values()) clearTimeout(timer); } });
-  for (const folder of vscode.workspace.workspaceFolders ?? []) {
-    void runtime.restart(folder.uri).catch(error => output.appendLine(String(error)));
+  const debugProvider: vscode.DebugConfigurationProvider = {
+    provideDebugConfigurations: folder => folder && hasProject(folder.uri)
+      ? synchronize()?.debugProvider.provideDebugConfigurations(folder) ?? [] : [],
+    // null tells VS Code to cancel silently, rather than attempt another launch.
+    resolveDebugConfiguration: (folder, config) => hasProject(folder?.uri ?? selectedUri())
+      ? synchronize()?.debugProvider.resolveDebugConfiguration(folder, config) ?? null : null
+  };
+  const watcher = vscode.workspace.createFileSystemWatcher('**/*');
+  context.subscriptions.push(
+    watcher, watcher.onDidChange(changed), watcher.onDidCreate(changed), watcher.onDidDelete(changed),
+    vscode.tasks.registerTaskProvider('recurloop', {
+      provideTasks: () => synchronize()?.project.provideTasks() ?? [],
+      resolveTask: task => typeof task.scope === 'object' && hasProject(task.scope.uri)
+        ? synchronize()?.project.resolveTask(task) : undefined
+    }),
+    vscode.debug.registerDebugConfigurationProvider('recurloop', debugProvider, vscode.DebugConfigurationProviderTriggerKind.Dynamic),
+    vscode.debug.registerDebugConfigurationProvider('recurloop', debugProvider),
+    vscode.debug.registerDebugAdapterDescriptorFactory('recurloop', {
+      createDebugAdapterDescriptor: session => hasProject(session.workspaceFolder?.uri ?? selectedUri())
+        ? synchronize()?.debugFactory.createDebugAdapterDescriptor(session) : undefined
+    }),
+    vscode.window.registerTerminalProfileProvider('recurloop.console', {
+      provideTerminalProfile: async () => {
+        const uri = selectedUri();
+        // A default terminal profile must still resolve in non-project folders.
+        const shellProfile = () => new vscode.TerminalProfile({
+          name: 'Terminal', shellPath: process.env.SHELL || '/bin/sh',
+          cwd: uri ? vscode.workspace.getWorkspaceFolder(uri)?.uri.fsPath : undefined
+        });
+        if (!uri || !hasProject(uri)) return shellProfile();
+        const active = synchronize();
+        if (!active) return shellProfile();
+        try { return new vscode.TerminalProfile(await active.runtime.terminalOptions(uri)); }
+        catch (error) { if (!hasProject(uri)) return shellProfile(); throw error; }
+      }
+    }),
+    vscode.commands.registerCommand('recurloop.initializeProject', async () => {
+      const folders = vscode.workspace.workspaceFolders ?? [];
+      const active = vscode.window.activeTextEditor?.document.uri;
+      const folder = (active ? vscode.workspace.getWorkspaceFolder(active) : undefined)
+        ?? (folders.length === 1 ? folders[0] : await vscode.window.showWorkspaceFolderPick());
+      if (!folder) return;
+      const entry = projectFile(folder.uri);
+      try {
+        fs.mkdirSync(path.dirname(entry), { recursive: true });
+        try { fs.closeSync(fs.openSync(entry, 'wx')); }
+        catch (error) { if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error; }
+        const document = await vscode.workspace.openTextDocument(vscode.Uri.file(entry));
+        await vscode.window.showTextDocument(document);
+        changed(vscode.Uri.file(entry));
+      } catch (error) { void vscode.window.showErrorMessage(String(error)); }
+    }),
+    vscode.commands.registerCommand('recurloop.runCurrentFile', () => inProject(active => runCurrentFile(active.prepareExecutable))),
+    vscode.commands.registerCommand('recurloop.debugCurrentFile', () => inProject(() => debugCurrentFile())),
+    vscode.commands.registerCommand('recurloop.openConsole', () => inProject(async (active, uri) => {
+      vscode.window.createTerminal(await active.runtime.terminalOptions(uri)).show();
+    })),
+    vscode.commands.registerCommand('recurloop.installRuntime', () => inProject(async (active, uri) => {
+      await active.setup.install(uri);
+      for (const folder of vscode.workspace.workspaceFolders ?? []) await active.runtime.restart(folder.uri);
+      active.analysis.invalidate();
+    })),
+    vscode.commands.registerCommand('recurloop.restartLanguageRuntime', () => inProject(async (active, uri) => {
+      await active.runtime.restart(uri);
+      active.analysis.invalidate();
+      void vscode.window.showInformationMessage('RecurLoop language runtime restarted.');
+    })),
+    vscode.commands.registerCommand('recurloop.showRuntimeInfo', () => inProject((active, uri) => {
+      active.output.appendLine(active.runtime.info(uri));
+      active.output.show(true);
+    })),
+    vscode.workspace.onDidChangeConfiguration(event => {
+      if (!event.affectsConfiguration('recurloop')) return;
+      const active = synchronize();
+      if (!active) return;
+      for (const folder of vscode.workspace.workspaceFolders ?? []) {
+        if (event.affectsConfiguration('recurloop', folder.uri)) {
+          void active.runtime.restart(folder.uri).then(() => active.analysis.invalidate()).catch(error => report(error, folder.uri));
+        }
+      }
+    }),
+    vscode.workspace.onDidChangeWorkspaceFolders(() => {
+      const active = synchronize();
+      if (!active) return;
+      // Drop sessions from folders that have been removed as well.
+      void active.runtime.restart().then(async () => {
+        for (const folder of vscode.workspace.workspaceFolders ?? []) {
+          if (hasProject(folder.uri)) await active.runtime.restart(folder.uri);
+        }
+        active.analysis.invalidate();
+      }).catch(error => active.output.appendLine(String(error)));
+    }),
+    { dispose: () => {
+      for (const timer of pending.values()) clearTimeout(timer);
+      features?.dispose();
+      features = undefined;
+    } }
+  );
+  const active = synchronize();
+  if (active) for (const folder of vscode.workspace.workspaceFolders ?? []) {
+    if (hasProject(folder.uri)) void active.runtime.restart(folder.uri).catch(error => report(error, folder.uri));
   }
 }
 
-async function runCurrentFile(): Promise<void> {
+async function runCurrentFile(prepareExecutable: (uri?: vscode.Uri) => Promise<string>): Promise<void> {
   const editor = vscode.window.activeTextEditor;
   if (!editor || editor.document.languageId !== 'recurloop') {
     void vscode.window.showErrorMessage('Open a RecurLoop file first.');
     return;
   }
   if (editor.document.isDirty) await editor.document.save();
-  const executable = resolveExecutable(editor.document.uri);
+  const executable = await prepareExecutable(editor.document.uri);
   const root = workspaceRoot(editor.document.uri);
   const terminal = vscode.window.createTerminal({ name: 'RecurLoop', cwd: root });
   terminal.show();

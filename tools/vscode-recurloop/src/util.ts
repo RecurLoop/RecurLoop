@@ -14,6 +14,22 @@ export function workspaceRoot(uri?: vscode.Uri): string {
   return workspaceFolderFor(uri)?.uri.fsPath ?? process.cwd();
 }
 
+export function projectFile(uri: vscode.Uri): string {
+  const name = vscode.workspace.getConfiguration('recurloop', uri).get('projectFile', 'recurloop.project.rl');
+  return path.resolve(workspaceRoot(uri), name);
+}
+
+/** A saved project entry explicitly opts a workspace folder into execution. */
+export function hasProject(uri?: vscode.Uri): boolean {
+  const folder = uri ? vscode.workspace.getWorkspaceFolder(uri) : vscode.workspace.workspaceFolders?.[0];
+  if (!folder || (uri && uri.scheme !== undefined && uri.scheme !== 'file')) return false;
+  try { return fs.statSync(projectFile(folder.uri)).isFile(); } catch { return false; }
+}
+
+export function requireProject(uri?: vscode.Uri): void {
+  if (!hasProject(uri)) throw new Error('RecurLoop requires a saved project entry in this workspace. Use RecurLoop: Initialize Project or create the file configured by recurloop.projectFile (default: recurloop.project.rl).');
+}
+
 export function expandWorkspaceVariables(value: string, uri?: vscode.Uri): string {
   const root = workspaceRoot(uri);
   return value
@@ -30,26 +46,36 @@ export function configuredExecutable(uri?: vscode.Uri, override?: string): strin
   const configured = vscode.workspace.getConfiguration('recurloop', uri).get('executablePath') as string | undefined;
   const setting = configured?.trim();
   if (setting) return expandWorkspaceVariables(setting, uri);
-  return path.join(workspaceRoot(uri), 'build', 'Release', 'bin', 'recurloop');
+  return 'recurloop';
+}
+
+let managedExecutable: string | undefined;
+
+export function setManagedExecutable(executable?: string): void {
+  managedExecutable = executable;
+}
+
+/** Locate a regular executable, resolving relative paths against the workspace. */
+export function findExecutable(executable: string, uri?: vscode.Uri): string | undefined {
+  const hasPath = path.isAbsolute(executable) || executable.includes('/') || executable.includes(path.sep);
+  const candidates = hasPath ? [path.resolve(workspaceRoot(uri), executable)]
+    : (process.env.PATH ?? '').split(path.delimiter).filter(Boolean).map(directory => path.resolve(directory, executable));
+  for (const candidate of candidates) {
+    try {
+      if (!fs.statSync(candidate).isFile()) continue;
+      fs.accessSync(candidate, fs.constants.X_OK);
+      return fs.realpathSync(candidate);
+    } catch { /* absent or not executable */ }
+  }
+  return undefined;
 }
 
 export function resolveExecutable(uri?: vscode.Uri, override?: string): string {
   const configured = configuredExecutable(uri, override);
-  if (path.isAbsolute(configured) || configured.includes(path.sep)) {
-    if (fs.existsSync(configured)) return configured;
-  } else {
-    return configured;
-  }
-
-  const root = workspaceRoot(uri);
-  const candidates = [
-    configured,
-    path.join(root, 'build', 'Release', 'bin', 'recurloop'),
-    path.join(root, 'build', 'Debug', 'bin', 'recurloop'),
-    path.join(root, 'build', 'bin', 'recurloop')
-  ];
-  for (const candidate of candidates) {
-    if (candidate && fs.existsSync(candidate)) return candidate;
+  const found = findExecutable(configured, uri);
+  if (found) return found;
+  if (configured === 'recurloop' && !override?.trim() && managedExecutable) {
+    return findExecutable(managedExecutable, uri) ?? configured;
   }
   return configured;
 }

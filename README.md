@@ -60,7 +60,7 @@ that downloaded file, then reload the window. You can also install it from the
 command line (use the filename you downloaded):
 
 ```bash
-code --install-extension ./recurloop-vscode-0.1.0.vsix --force
+code --install-extension ./recurloop-vscode-0.1.1.vsix --force
 ```
 
 For a command-line download of the latest release with GitHub CLI:
@@ -72,8 +72,31 @@ gh release download --repo RecurLoop/RecurLoop \
 code --install-extension "$extension_dir"/recurloop-vscode-*.vsix --force
 ```
 
-Install the runtime using the instructions above, and select it in VS Code's
-user or workspace settings:
+The extension starts its runtime only in workspace folders containing a saved
+`recurloop.project.rl` (or the file selected by `recurloop.projectFile`). An empty
+file is enough. Use **RecurLoop: Initialize Project** to create and open that file
+without overwriting an existing entry, or create it yourself:
+
+```bash
+touch recurloop.project.rl
+```
+
+Without a project entry, files retain basic syntax highlighting; analysis,
+runtime installation, consoles, tasks, Run and Debug do not launch RecurLoop.
+The extension stays inactive silently: it creates no runtime resources or
+language providers, and missing projects produce no error notifications.
+Each folder in a multi-folder workspace opts in separately. Creating the entry
+enables the runtime; deleting it stops the shared server.
+
+The extension defaults to `recurloop` on `PATH`. If it is missing, opening an
+initialized project offers to install the compatible runtime and all its
+libraries after confirmation. This managed installation stays in the extension's
+data directory, requires no administrator access, and does not change your shell
+`PATH`. Use **RecurLoop: Install Runtime** to retry later. Automatic installation
+supports Linux x86-64 with glibc >= 2.35, including WSL and remote workspaces.
+
+You can also install the runtime using the instructions above and select it in
+VS Code's user or workspace settings:
 
 ```json
 {
@@ -81,6 +104,11 @@ user or workspace settings:
   "recurloop.terminal.libraries": ["shell", "inferred"]
 }
 ```
+
+For development, this repository's `.vscode/settings.json` explicitly selects
+`${workspaceFolder}/build/Release/bin/recurloop`; run `make build` first. Other
+projects use the `recurloop` default. A missing explicit path is reported without
+silently falling back to a different build.
 
 The extension provides semantic highlighting, project targets in Tasks and Run
 and Debug, and a RecurLoop terminal. The project `debug` target launches the
@@ -96,16 +124,34 @@ The extension uses `recurloop.project.rl` in each workspace folder as the projec
 entry. It is executable RecurLoop source: the shared server loads it and
 publishes the resulting environment for project analysis, tasks, and new console
 sessions. Use `include` and engine imports to define the project's source graph
-and language dependencies. Opening a workspace containing this file activates
-the extension and starts its runtime; opening a project console connects a
+and language dependencies. Opening a workspace containing this file starts
+the runtime; opening a project console connects a
 separate session to that server.
 
 To expose Tasks and Run and Debug targets, define `VSCode:describe project` to
 print JSON with a `targets` array. Each target specifies a `name`, a `command`
 containing one line of RecurLoop source, and optional target `dependencies`.
 See this repository's [project entry](recurloop.project.rl) for build, run,
-debug, and check targets. Set `recurloop.projectFile` to use another entry path;
-without a project entry, the extension analyzes files independently.
+debug, and check targets. Set `recurloop.projectFile` to use another entry path.
+An empty entry enables the console but exposes no task targets. To select the
+project's starting source declaratively, put an ordinary include in the entry:
+
+```rl
+include "src/main.rl"
+```
+
+The same entry works outside VS Code using the ordinary CLI options:
+
+```bash
+recurloop --file recurloop.project.rl             # execute the project once
+recurloop --file recurloop.project.rl --serve     # publish it and open a project console
+recurloop --file config/my-project.rl --serve     # select another entry explicitly
+```
+
+Run these commands from the project directory. Libraries can be selected before
+`--file`, for example `--library shell --library inferred`, as in VS Code.
+The workspace entry requirement applies to extension launches; standalone CLI
+scripts and REPL sessions continue to work normally.
 
 Saved changes to `.rl` and `.rli` files reload and republish the project using
 the module cache under `.cache/recurloop-vscode`. Existing consoles keep their

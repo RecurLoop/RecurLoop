@@ -4,7 +4,8 @@ import * as net from 'net';
 import * as os from 'os';
 import * as path from 'path';
 import * as vscode from 'vscode';
-import { hexEncode, libraryArguments, resolveExecutable, workspaceRoot } from './util';
+import { hasProject, hexEncode, libraryArguments, projectFile, requireProject, resolveExecutable, workspaceRoot } from './util';
+export { projectFile } from './util';
 
 function delay(ms: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms));
@@ -18,15 +19,16 @@ class WorkspaceRuntime implements vscode.Disposable {
   private disposed = false;
   private readonly executions = new Set<Promise<string>>();
 
-  constructor(private readonly output: vscode.OutputChannel) {}
+  constructor(private readonly output: vscode.OutputChannel,
+    private readonly prepareExecutable: (uri: vscode.Uri) => Promise<string>) {}
 
   public async inspect(document: vscode.TextDocument, trace = true): Promise<string> {
+    if (!hasProject(document.uri)) { this.stop(); return ''; }
     await this.ensureStarted(document.uri);
     const socketPath = this.socketPath;
     if (!socketPath) throw new Error('RecurLoop analysis runtime did not create a socket');
 
-    const contextual = fs.existsSync(projectFile(document.uri));
-    const command = `${contextual ? (trace ? ':trace' : ':inspect') : (trace ? ':trace-file' : ':inspect-file')}\t${hexEncode(document.uri.fsPath)}\t${hexEncode(document.getText())}`;
+    const command = `${trace ? ':trace' : ':inspect'}\t${hexEncode(document.uri.fsPath)}\t${hexEncode(document.getText())}`;
     const timeout = vscode.workspace.getConfiguration('recurloop', document.uri).get('analysis.timeoutMs', 5000) as number;
     return this.request(socketPath, command, timeout);
   }
@@ -35,7 +37,7 @@ class WorkspaceRuntime implements vscode.Disposable {
     if (this.starting) await this.starting.catch(() => undefined);
     await Promise.allSettled([...this.executions]);
     this.stop();
-    if (uri) await this.ensureStarted(uri);
+    if (uri && hasProject(uri)) await this.ensureStarted(uri);
   }
 
   public info(uri?: vscode.Uri): string {
@@ -52,6 +54,7 @@ class WorkspaceRuntime implements vscode.Disposable {
   }
 
   public async reload(uri: vscode.Uri): Promise<void> {
+    if (!hasProject(uri)) { this.stop(); return; }
     await this.ensureStarted(uri);
     await Promise.allSettled([...this.executions]);
     const entry = projectFile(uri);
@@ -68,6 +71,8 @@ class WorkspaceRuntime implements vscode.Disposable {
   }
 
   private async ensureStarted(uri: vscode.Uri): Promise<void> {
+    if (!hasProject(uri)) this.stop();
+    requireProject(uri);
     if (this.disposed) throw new Error('RecurLoop runtime is disposed');
     if (this.starting) return this.starting;
     if (this.process && !this.process.killed && this.socketPath && fs.existsSync(this.socketPath)) return;
@@ -77,7 +82,9 @@ class WorkspaceRuntime implements vscode.Disposable {
 
   private async start(uri: vscode.Uri): Promise<void> {
     this.stop();
-    const executable = resolveExecutable(uri);
+    const executable = await this.prepareExecutable(uri);
+    if (this.disposed) throw new Error('RecurLoop runtime is disposed');
+    requireProject(uri);
     const root = workspaceRoot(uri);
     const suffix = `${process.pid}-${Math.random().toString(16).slice(2, 8)}`;
     const socketPath = path.join(os.tmpdir(), `rl-vscode-${suffix}.sock`);
@@ -116,6 +123,7 @@ class WorkspaceRuntime implements vscode.Disposable {
 
     const deadline = Date.now() + 5000;
     while (Date.now() < deadline) {
+      if (!hasProject(uri)) { this.stop(); requireProject(uri); }
       if (fs.existsSync(socketPath)) {
         if (fs.existsSync(project)) {
           try {
@@ -191,19 +199,15 @@ class WorkspaceRuntime implements vscode.Disposable {
   }
 }
 
-export function projectFile(uri: vscode.Uri): string {
-  const name = vscode.workspace.getConfiguration('recurloop', uri).get('projectFile', 'recurloop.project.rl');
-  return path.resolve(workspaceRoot(uri), name);
-}
-
 /** Each workspace owns a separate published language environment. */
 export class RecurLoopRuntime implements vscode.Disposable {
   private readonly workspaces = new Map<string, WorkspaceRuntime>();
-  constructor(private readonly output: vscode.OutputChannel) {}
+  constructor(private readonly output: vscode.OutputChannel,
+    private readonly prepareExecutable: (uri: vscode.Uri) => Promise<string> = async uri => resolveExecutable(uri)) {}
   private runtime(uri: vscode.Uri): WorkspaceRuntime {
     const key = workspaceRoot(uri);
     let runtime = this.workspaces.get(key);
-    if (!runtime) { runtime = new WorkspaceRuntime(this.output); this.workspaces.set(key, runtime); }
+    if (!runtime) { runtime = new WorkspaceRuntime(this.output, this.prepareExecutable); this.workspaces.set(key, runtime); }
     return runtime;
   }
   inspect(document: vscode.TextDocument, trace = true): Promise<string> { return this.runtime(document.uri).inspect(document, trace); }

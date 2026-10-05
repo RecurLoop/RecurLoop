@@ -28,6 +28,7 @@
         }
     },
     "terminal.integrated.defaultProfile.linux": "RecurLoop",
+    // Development override: installed extensions default to recurloop on PATH.
     "recurloop.executablePath": "${workspaceFolder}/build/Release/bin/recurloop",
     "recurloop.terminal.libraries": [
         "shell",

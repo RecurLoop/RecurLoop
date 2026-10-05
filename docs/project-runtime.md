@@ -7,6 +7,20 @@ one of those generations.
 
 ## Session publication
 
+VS Code starts this runtime only for workspace folders containing the saved
+entry selected by `recurloop.projectFile` (default `recurloop.project.rl`). An
+empty entry opts in; **RecurLoop: Initialize Project** simply creates that file
+without overwriting existing source. Deleting the entry stops the editor's
+shared server. Loose source files retain static highlighting without launching
+the host. Custom entry paths and each workspace folder are checked separately.
+
+An entry is normal RecurLoop source and can declare its starting file with
+`include "src/main.rl"`. Outside VS Code the same setup uses ordinary arguments:
+`recurloop --file recurloop.project.rl --serve` loads and publishes the entry,
+then opens a console. Add `--unix <socket>` for other clients, and select library
+imports before `--file` when needed. Without `--serve`, `--file` executes once.
+The CLI continues to support independent scripts and REPLs without a marker.
+
 A session can publish its current portable language state with `:publish`.
 Other sessions keep their existing generation until they execute `:refresh`.
 `Session::refresh()` attaches directly to `Project::current()`, so all transports
