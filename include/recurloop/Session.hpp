@@ -43,6 +43,10 @@ namespace recurloop {
                             bool standalone = false);
     SessionResponse executeFile(const std::string &path, std::ostream *out = nullptr, std::ostream *err = nullptr);
     SessionResponse executeArguments(int startIndex, std::ostream *out = nullptr, std::ostream *err = nullptr);
+    SessionResponse projectTargets();
+    SessionResponse runTarget(std::string_view name, bool prepareDebug = false, std::ostream *out = nullptr,
+                              std::ostream *err = nullptr);
+    SessionResponse debugTarget(std::string_view name, std::ostream *out = nullptr, std::ostream *err = nullptr);
     Generations generations() const;
 
     void refresh();

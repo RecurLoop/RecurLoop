@@ -509,6 +509,31 @@ namespace recurloop {
         return {line, column};
       }
 
+      compiler::DebugLocal debugLocal(std::string name, compiler::TypeId id,
+                                      std::vector<compiler::TypeId> ancestors = {}) {
+        const auto type = context.language().types.get(id);
+        compiler::DebugLocal local{
+            std::move(name), type.name, 0, static_cast<std::uint32_t>(type.size), static_cast<std::uint8_t>(type.kind),
+            type.isSigned};
+        // Recursive types refer back by stable type name. The debugger resolves
+        // their schema from the metadata already present in the executable.
+        if (std::ranges::find(ancestors, id) != ancestors.end()) return local;
+        ancestors.push_back(id);
+        if (type.kind == compiler::TypeKind::Structure) {
+          for (const auto &field : type.fields) {
+            auto child = debugLocal(field.name, field.type, ancestors);
+            child.memberOffset = field.offset;
+            local.children.push_back(std::move(child));
+          }
+        } else if (type.kind == compiler::TypeKind::Array || type.kind == compiler::TypeKind::Pointer) {
+          local.elementCount = type.elementCount;
+          auto child = debugLocal("", type.element, ancestors);
+          if (child.size != 0 && static_cast<compiler::TypeKind>(child.kind) != compiler::TypeKind::Function)
+            local.children.push_back(std::move(child));
+        }
+        return local;
+      }
+
       void recordDebugPoint(const Statement &statement) {
         compiler::DebugPoint point;
         point.symbol = signature.function.signature.symbol;
@@ -526,9 +551,9 @@ namespace recurloop {
         for (auto scope = scopes.rbegin(); scope != scopes.rend(); ++scope) {
           for (const auto &[name, local] : *scope) {
             if (!visible.insert(name).second) continue;
-            const compiler::TypeDescriptor type = context.language().types.get(local.type);
-            point.locals.push_back({name, type.name, local.offset, static_cast<std::uint32_t>(type.size),
-                                    static_cast<std::uint8_t>(type.kind), type.isSigned});
+            auto metadata = debugLocal(name, local.type);
+            metadata.frameOffset = local.offset;
+            point.locals.push_back(std::move(metadata));
           }
         }
         std::sort(

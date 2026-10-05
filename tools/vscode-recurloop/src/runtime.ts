@@ -91,8 +91,8 @@ class WorkspaceRuntime implements vscode.Disposable {
     try { fs.unlinkSync(socketPath); } catch { /* absent */ }
 
     const project = projectFile(uri);
-    const args = [...libraryArguments(uri), '--project-cache',
-      path.join(root, '.cache', 'recurloop-vscode'), '--serve', '--unix', socketPath, '--no-stdio'];
+    const args = ['--library', 'project', ...libraryArguments(uri), '--project-cache',
+      path.join(root, '.cache', 'recurloop'), '--serve', '--unix', socketPath, '--no-stdio'];
     this.output.appendLine(`[analysis] starting ${executable} --serve --unix ${socketPath} --no-stdio`);
     const child = spawn(executable, args, {
       cwd: root,
@@ -143,8 +143,10 @@ class WorkspaceRuntime implements vscode.Disposable {
   private request(socketPath: string, command: string | string[], timeoutMs: number): Promise<string> {
     return new Promise((resolve, reject) => {
       const socket = net.createConnection(socketPath);
-      let buffer = '';
+      let buffer = Buffer.alloc(0);
       let ready = false;
+      let status: number | undefined;
+      let chunks: Buffer[] = [];
       const commands = Array.isArray(command) ? [...command] : [command];
       let result = '';
       const sendNext = () => socket.write(commands.shift()! + '\n');
@@ -160,20 +162,32 @@ class WorkspaceRuntime implements vscode.Disposable {
       };
 
       socket.on('data', chunk => {
-        buffer += chunk.toString('utf8');
+        buffer = Buffer.concat([buffer, chunk]);
         if (!ready) {
-          if (buffer !== '> ' && !buffer.endsWith('> ')) return;
+          if (buffer.length < 2) return;
+          if (buffer.subarray(0, 2).toString() !== '> ') { finish(new Error('Invalid RecurLoop server greeting')); return; }
           ready = true;
-          buffer = '';
+          buffer = buffer.subarray(2);
+          if (!commands.length) { finish(undefined, ''); return; }
+          socket.write(':transport-stream-v2\n');
           sendNext();
-          return;
         }
-        if (buffer.endsWith('> ')) {
-          const reply = buffer.slice(0, -2);
-          if (/^status=[1-9][0-9]*$/m.test(reply)) { finish(new Error(reply.trim())); return; }
-          result += reply;
-          buffer = '';
-          if (commands.length) sendNext(); else finish(undefined, result);
+        while (buffer.length >= 5) {
+          const kind = buffer[0];
+          const length = buffer.readUInt32BE(1);
+          if (length > 4096) { finish(new Error('Invalid RecurLoop response frame')); return; }
+          if (buffer.length < 5 + length) return;
+          const payload = buffer.subarray(5, 5 + length);
+          buffer = buffer.subarray(5 + length);
+          if (kind === 79) chunks.push(payload); // O: output, including arbitrary prompt text and split UTF-8
+          else if (kind === 83 && /^-?\d+$/.test(payload.toString('ascii'))) status = Number(payload.toString('ascii'));
+          else if (kind === 80 && !length && status !== undefined) {
+            const reply = Buffer.concat(chunks).toString('utf8');
+            if (status !== 0) { finish(new Error(`${reply}\nstatus=${status}`)); return; }
+            result += reply;
+            chunks = []; status = undefined;
+            if (commands.length) sendNext(); else { finish(undefined, result); return; }
+          } else { finish(new Error('Invalid RecurLoop response frame')); return; }
         }
       });
       socket.on('error', error => finish(error));

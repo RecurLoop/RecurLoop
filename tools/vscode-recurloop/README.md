@@ -26,9 +26,12 @@ in TypeScript.
   contains debugger messages and expression evaluation.
 
 Native debugging requires Linux x86-64, permission to use `ptrace`, and an
-executable built with `emit executable debug`. Scalar and pointer locals are
-supported; record/array expansion and debugging extra threads are not exposed.
-The current LLVM backend does not emit these source maps. Direct `program`
+executable built with `emit executable debug`. Locals include expandable records, paged arrays and pointer pointees. Newly
+created threads are traced; stacks, Watches, assignments and stepping use the
+selected thread/frame. Stops suspend every traced thread; Continue resumes all
+threads while stepping runs the selected thread alone. Debug emission works
+in LLVM-enabled hosts by rebuilding source functions with the generator that
+provides the exact statement maps. Direct `program`
 launches retain the source-event debugger with one frame; use `debugExecutable`
 for debugging inside compiled functions. Navigation indexes sources in the
 published project dependency graph and includes unsaved editor buffers. When terminal imports omit LanguageKit, the
@@ -194,32 +197,39 @@ VS Code, select the same entry using the existing CLI options, from the project
 directory:
 
 ```bash
-recurloop --file recurloop.project.rl
-recurloop --file recurloop.project.rl --serve
-recurloop --file config/my-project.rl --serve
+recurloop --project recurloop.project.rl
+recurloop --project recurloop.project.rl --serve
+recurloop --project config/my-project.rl --project-root . --serve
 ```
 
-The first command executes once; `--serve` publishes the loaded environment and
-opens a project console. Select libraries before `--file` to match the editor's
-baseline, for example `--library shell --library inferred`. To serve additional
+The first command loads the project once; `--serve` publishes the loaded environment and
+opens a project console. CLI project mode imports Project, Shell and Inferred by default. Explicit
+`--library` options select a different library baseline. To serve additional
 clients, also pass `--unix /tmp/my-project.sock`; connect another console with
 `recurloop --connect /tmp/my-project.sock`. Standalone CLI use does not require
 the VS Code project marker.
 
-The entry provides the executable phrase `VSCode:describe project`, which writes
-a JSON object with a `targets` array. Each target has `name`, `command` (one line
-of ordinary RecurLoop source), optional `dependencies` (target names), and optional
-`debugProgram` (a source entry) or `debugExecutable` (an emitted Debug executable),
-both relative to the workspace. TypeScript reads the
-runtime response; it does not parse the `.rl` configuration. Additional fields
-such as `workspace` and `application` document the project; the extension uses
-the VS Code workspace folder as the server working directory and includes as the
-source graph. Target commands run after their dependencies in one server session;
-unknown targets, duplicate names, dependency cycles and failed commands fail the task.
+The entry declares targets with source-defined syntax:
+
+```rl
+target build-debug {
+    emit executable debug ".cache/recurloop/app-debug" app_main = fn () -> i64 {
+        return Application:main()
+    }
+}
+target debug depends [build-debug] debug executable ".cache/recurloop/app-debug" {}
+```
+
+The project runtime lists these through `:project-targets` and executes them
+through `:project-run`, validating the dependency graph and running shared
+dependencies once in one session. VS Code consumes this common protocol;
+project files are never parsed in TypeScript. Target bodies can contain
+multiline source and arbitrary project-defined syntax. See the
+[project guide](../../docs/projects.md) for the CLI and complete contract.
 
 The supplied repository overlay exposes `build-release`, `build-debug`, `run`,
 `debug`, and `check` for the IDE example application. Build artifacts go below
-`.cache/recurloop-vscode`. Tasks are discovered automatically and can also be
+`.cache/recurloop`. Tasks are discovered automatically and can also be
 configured explicitly:
 
 ```json
@@ -234,7 +244,7 @@ Run and Debug discovers project targets dynamically. A saved launch entry is:
 
 Targets with `debugExecutable` build their dependencies, then launch the native
 executable under the debugger. The supplied `debug` target depends on
-`build-debug` and uses `.cache/recurloop-vscode/application-debug`. Its application
+`build-debug` and uses `.cache/recurloop/application-debug`. Its application
 uses a real terminal for input and output; debugging controls use a separate
 channel. Ctrl+C in that terminal pauses the target. Closing the terminal ends the
 debug session. Other targets execute on the shared server and show their results
@@ -244,14 +254,14 @@ in a task terminal. `noDebug: true` executes the target on the server.
 A native executable can also be launched directly:
 
 ```json
-{"type":"recurloop","request":"launch","name":"Native application","executable":"${workspaceFolder}/.cache/recurloop-vscode/application-debug","stopOnEntry":true}
+{"type":"recurloop","request":"launch","name":"Native application","executable":"${workspaceFolder}/.cache/recurloop/application-debug","stopOnEntry":true}
 ```
 
 Breakpoint conditions are RecurLoop expressions. Hit conditions accept a count,
 `>= N`, `> N`, `== N`, or `% N`. Logpoints interpolate expressions in `{...}`.
 Watches and assignments run in the selected frame. Native source/function
-breakpoints stop only at emitted RecurLoop statements, with scalar local values
-read from the actual target process.
+breakpoints stop only at emitted RecurLoop statements, with local values and aggregate layouts
+read from the actual target process and its embedded metadata.
 
 **RecurLoop: Open Project Console** and the **RecurLoop** terminal profile use
 `recurloop --connect` to attach persistent sessions to the same server. The

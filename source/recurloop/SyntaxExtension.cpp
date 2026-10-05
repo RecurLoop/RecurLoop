@@ -360,15 +360,18 @@ namespace recurloop {
   }
 
   const std::uint8_t *SyntaxExtension::path(context::Context &context) {
+    if (!active(context)) return reinterpret_cast<const std::uint8_t *>(context.source.path.c_str());
     return reinterpret_cast<const std::uint8_t *>(frame(context).origin.path.c_str());
   }
 
   std::uint64_t SyntaxExtension::line(context::Context &context) {
+    if (!active(context)) return context.source.line;
     ExpansionFrame &current = frame(context);
     return sourceLocationAt(current.origin, current.originalSource, current.originalOffsets[current.cursor]).line;
   }
 
   std::uint64_t SyntaxExtension::position(context::Context &context) {
+    if (!active(context)) return context.source.position;
     ExpansionFrame &current = frame(context);
     return sourceLocationAt(current.origin, current.originalSource, current.originalOffsets[current.cursor]).column;
   }

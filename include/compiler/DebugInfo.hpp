@@ -19,6 +19,11 @@ namespace compiler {
     std::uint32_t size = 0;
     std::uint8_t kind = 0;
     bool signedValue = false;
+    // Children use byte offsets relative to their parent. Arrays store a single
+    // element schema, pointers a pointee schema; neither stores process pointers.
+    std::uint64_t memberOffset = 0;
+    std::uint64_t elementCount = 0;
+    std::vector<DebugLocal> children;
   };
 
   struct DebugPoint {

@@ -12,6 +12,8 @@
 #include <elf.h>
 #include <fcntl.h>
 #include <sys/ptrace.h>
+#include <sys/syscall.h>
+#include <signal.h>
 #include <sys/types.h>
 #include <sys/user.h>
 #include <sys/wait.h>
@@ -59,10 +61,24 @@ namespace recurloop {
       bool installed = false;
     };
 
+    struct NativeThread {
+      bool stopped = true;
+      int pendingSignal = 0;
+      std::uintptr_t instruction = 0;
+      std::optional<std::uintptr_t> breakpoint;
+      std::optional<std::size_t> point;
+    };
+
     struct ExecutableState {
-      pid_t pid = -1;
+      pid_t pid = -1; // selected thread
+      pid_t leader = -1;
+      std::unordered_map<pid_t, NativeThread> threads;
+      bool controllerTerminal = false;
+      bool initialStop = true;
+      std::optional<int> exitStatus;
       std::filesystem::path path;
       std::vector<compiler::DebugPoint> points;
+      std::unordered_map<std::string, const compiler::DebugLocal *> schemas;
       bool positionIndependent = false;
       std::uintptr_t loadBias = 0;
       std::unordered_map<std::uintptr_t, NativeBreakpoint> breakpoints;
@@ -252,6 +268,8 @@ namespace recurloop {
       const int error = errno;
       std::ostringstream message;
       message << "executable debugger " << operation << " failed: " << std::strerror(error);
+      if (error == EPERM || error == EACCES)
+        message << " (the operating system denied ptrace; check the workspace/container tracing policy)";
       throw Exception(__FILE__, __LINE__, __PRETTY_FUNCTION__, message.str());
     }
 
@@ -387,7 +405,8 @@ namespace recurloop {
       // `where` is an inspection command, not a new execution stop.
       if (reason != "at")
         *context.io.out << "[debug-event]\tstop\t" << reason << "\t" << hexText(path) << "\t" << point.line << "\t"
-                        << point.column << "\t" << hexText(point.phrase) << "\t" << hexText(point.function) << "\n";
+                        << point.column << "\t" << hexText(point.phrase) << "\t" << hexText(point.function) << "\t"
+                        << target.pid << "\n";
     }
 
     bool finishExecutable(context::Context &context, int status) {
@@ -400,6 +419,8 @@ namespace recurloop {
       else
         return false;
       target.pid = -1;
+      target.leader = -1;
+      target.threads.clear();
       target.breakpoints.clear();
       target.currentBreakpoint.reset();
       target.currentPoint.reset();
@@ -456,117 +477,387 @@ namespace recurloop {
         target.currentBreakpoint = target.instruction;
       else if (target.currentBreakpoint && !target.breakpoints.contains(*target.currentBreakpoint))
         target.currentBreakpoint.reset();
+      for (auto &[pid, thread] : target.threads) {
+        if (target.breakpoints.contains(thread.instruction))
+          thread.breakpoint = thread.instruction;
+        else
+          thread.breakpoint.reset();
+      }
+    }
+
+    pid_t waitTrace(pid_t pid, int &status) {
+      pid_t result;
+      do {
+        result = waitpid(pid, &status, __WALL);
+      } while (result == -1 && errno == EINTR);
+      if (result == -1) ptraceFailure("wait");
+      return result;
+    }
+
+    void saveThread(ExecutableState &target) {
+      if (!target.threads.contains(target.pid)) return;
+      auto &thread = target.threads.at(target.pid);
+      thread.instruction = target.instruction;
+      thread.point = target.currentPoint;
+      thread.breakpoint = target.currentBreakpoint;
+      thread.pendingSignal = target.pendingSignal;
+    }
+
+    void selectThread(ExecutableState &target, pid_t pid) {
+      saveThread(target);
+      const auto found = target.threads.find(pid);
+      if (found == target.threads.end() || !found->second.stopped) THROW(, "debug thread is not stopped")
+      target.pid = pid;
+      target.instruction = found->second.instruction;
+      target.currentPoint = found->second.point;
+      target.currentBreakpoint = found->second.breakpoint;
+      target.pendingSignal = found->second.pendingSignal;
+      target.selectedFrame = 0;
+      target.selectedPoint.reset();
+    }
+
+    // Normalize every stopped thread before exposing the all-stop snapshot.
+    // More than one thread may have hit the same shared INT3 before interruption.
+    void recordThreadStop(ExecutableState &target, pid_t pid, int status) {
+      auto &thread = target.threads[pid];
+      thread.stopped = true;
+      user_regs_struct registers{};
+      if (ptrace(PTRACE_GETREGS, pid, nullptr, &registers) == -1) ptraceFailure("get thread registers");
+      const auto signal = WSTOPSIG(status);
+      const unsigned event = static_cast<unsigned>(status) >> 16;
+      thread.pendingSignal = event || signal == SIGSTOP ? 0 : signal;
+      if (!event && signal == SIGINT && target.controllerTerminal) {
+        siginfo_t information{};
+        if (ptrace(PTRACE_GETSIGINFO, pid, nullptr, &information) == 0 && information.si_code == SI_KERNEL)
+          thread.pendingSignal = 0;
+      }
+      thread.breakpoint.reset();
+      if (!event && signal == SIGTRAP) {
+        siginfo_t information{};
+        if (ptrace(PTRACE_GETSIGINFO, pid, nullptr, &information) == -1) ptraceFailure("get trap information");
+        if (information.si_code == TRAP_TRACE)
+          thread.pendingSignal = 0;
+        else if (registers.rip && (information.si_code == TRAP_BRKPT || information.si_code == SI_KERNEL)) {
+          const auto address = registers.rip - 1;
+          auto found = target.breakpoints.find(address);
+          if (found != target.breakpoints.end()) {
+            // The shared byte may already have been restored by another stop.
+            const auto selected = target.pid;
+            target.pid = pid;
+            restoreBreakpoint(target, found->second);
+            target.pid = selected;
+            registers.rip = address;
+            if (ptrace(PTRACE_SETREGS, pid, nullptr, &registers) == -1) ptraceFailure("rewind thread breakpoint");
+            thread.breakpoint = address;
+            thread.pendingSignal = 0;
+          }
+        }
+      }
+      thread.instruction = registers.rip;
+      thread.point = pointAt(target, registers.rip);
+      if (pid == target.pid) {
+        target.instruction = thread.instruction;
+        target.currentPoint = thread.point;
+        target.currentBreakpoint = thread.breakpoint;
+        target.pendingSignal = thread.pendingSignal;
+      }
+    }
+
+    bool acceptThread(ExecutableState &target, pid_t pid) {
+      std::ifstream information("/proc/" + std::to_string(pid) + "/status");
+      std::string line;
+      while (std::getline(information, line)) {
+        if (!line.starts_with("Tgid:")) continue;
+        std::istringstream input(line.substr(5));
+        pid_t group = -1;
+        input >> group;
+        if (group == target.leader) return true;
+        if (ptrace(PTRACE_DETACH, pid, nullptr, nullptr) == -1) ptraceFailure("detach cloned process");
+        return false;
+      }
+      THROW(, "cannot determine cloned thread group")
+    }
+
+    void registerClone(ExecutableState &target, pid_t parent) {
+      unsigned long child = 0;
+      if (ptrace(PTRACE_GETEVENTMSG, parent, nullptr, &child) == -1) ptraceFailure("get cloned thread");
+      // The newborn is auto-attached and initially stopped. Await that stop
+      // before any CONT or memory/register operation is attempted.
+      if (target.threads.contains(static_cast<pid_t>(child))) return;
+      int status = 0;
+      waitTrace(static_cast<pid_t>(child), status);
+      if (WIFSTOPPED(status)) {
+        if (!acceptThread(target, static_cast<pid_t>(child))) return;
+        recordThreadStop(target, static_cast<pid_t>(child), status);
+      }
+    }
+
+    void resumeThread(ExecutableState &target, pid_t pid) {
+      auto &thread = target.threads.at(pid);
+      if (ptrace(PTRACE_CONT, pid, nullptr,
+                 reinterpret_cast<void *>(static_cast<std::intptr_t>(thread.pendingSignal))) == -1)
+        ptraceFailure("continue thread");
+      thread.pendingSignal = 0;
+      thread.stopped = false;
+    }
+
+    bool recordExit(context::Context &context, pid_t pid, int status) {
+      auto &target = executableState(context);
+      if (pid == target.leader) target.exitStatus = status;
+      target.threads.erase(pid);
+      if (target.threads.empty()) {
+        finishExecutable(context, target.exitStatus.value_or(status));
+        return true;
+      }
+      if (target.pid == pid) {
+        const auto &[survivor, thread] = *target.threads.begin();
+        target.pid = survivor;
+        target.instruction = thread.instruction;
+        target.currentBreakpoint = thread.breakpoint;
+        target.currentPoint = thread.point;
+        target.pendingSignal = thread.pendingSignal;
+        target.selectedFrame = 0;
+        target.selectedPoint.reset();
+      }
+      return false;
+    }
+
+    void stopOtherThreads(context::Context &context, pid_t selected) {
+      auto &target = executableState(context);
+      for (const auto &[pid, thread] : target.threads) {
+        if (!thread.stopped && ptrace(PTRACE_INTERRUPT, pid, nullptr, nullptr) == -1 && errno != ESRCH)
+          ptraceFailure("interrupt thread");
+      }
+      while (std::ranges::any_of(target.threads, [](const auto &entry) { return !entry.second.stopped; })) {
+        int status = 0;
+        const auto pid = waitTrace(-target.leader, status);
+        if (WIFEXITED(status) || WIFSIGNALED(status)) {
+          if (recordExit(context, pid, status)) return;
+          continue;
+        }
+        if (!WIFSTOPPED(status)) continue;
+        if (!target.threads.contains(pid) && !acceptThread(target, pid)) continue;
+        recordThreadStop(target, pid, status);
+        if ((static_cast<unsigned>(status) >> 16) == PTRACE_EVENT_CLONE) registerClone(target, pid);
+      }
+      if (target.threads.contains(selected))
+        selectThread(target, selected);
+      else if (!target.threads.empty())
+        selectThread(target, target.threads.begin()->first);
     }
 
     bool waitForExecutable(context::Context &context) {
-      ExecutableState &target = executableState(context);
-      int status = 0;
-      if (waitpid(target.pid, &status, 0) == -1) ptraceFailure("wait");
-      if (finishExecutable(context, status)) return false;
-      if (!WIFSTOPPED(status)) THROW(, "executable debugger received an unexpected wait status")
-
-      const int stopSignal = WSTOPSIG(status);
-      // A debugger client can pause the tracee with SIGSTOP to inspect it or
-      // update breakpoints. Consuming this stop lets the next continue resume
-      // the target instead of putting it straight back into a stopped state.
-      target.pendingSignal = stopSignal == SIGTRAP || stopSignal == SIGSTOP ? 0 : stopSignal;
-      user_regs_struct registers = registersOf(target);
-      target.instruction = registers.rip;
-      target.currentPoint = pointAt(target, target.instruction);
-      if (WSTOPSIG(status) == SIGTRAP && registers.rip != 0) {
-        const std::uintptr_t address = registers.rip - 1;
-        auto found = target.breakpoints.find(address);
-        if (found != target.breakpoints.end() && found->second.installed) {
-          restoreBreakpoint(target, found->second);
-          registers.rip = address;
-          writeRegisters(target, registers);
-          target.instruction = address;
-          target.currentBreakpoint = address;
-          target.currentPoint = pointAt(target, address);
-          printExecutablePoint(context, "breakpoint");
-          return true;
+      auto &target = executableState(context);
+      while (!target.threads.empty()) {
+        int status = 0;
+        const auto pid = waitTrace(-target.leader, status);
+        if (WIFEXITED(status) || WIFSIGNALED(status)) {
+          if (recordExit(context, pid, status)) return false;
+          continue;
         }
+        if (!WIFSTOPPED(status)) continue;
+        const bool newborn = !target.threads.contains(pid);
+        if (newborn && !acceptThread(target, pid)) continue;
+        recordThreadStop(target, pid, status);
+        if (newborn) {
+          resumeThread(target, pid);
+          continue;
+        }
+        const auto event = static_cast<unsigned>(status) >> 16;
+        if (event == PTRACE_EVENT_CLONE) {
+          registerClone(target, pid);
+          std::vector<pid_t> stopped;
+          for (const auto &[tid, thread] : target.threads)
+            if (thread.stopped) stopped.push_back(tid);
+          for (const auto tid : stopped) resumeThread(target, tid);
+          continue;
+        }
+        // INTERRUPT creates a distinct ptrace event, without injecting a
+        // process-wide signal into the application's thread group.
+        stopOtherThreads(context, pid);
+        if (target.pid <= 0) return false;
+        printExecutablePoint(context, target.currentBreakpoint                                    ? "breakpoint"
+                                      : target.pendingSignal                                      ? "signal"
+                                      : event == PTRACE_EVENT_STOP || WSTOPSIG(status) == SIGSTOP ? "paused"
+                                                                                                  : "stopped");
+        return true;
       }
-      target.currentBreakpoint.reset();
-      printExecutablePoint(context, target.pendingSignal == 0 ? "stopped" : "signal");
-      return true;
+      return false;
     }
 
     bool stepOverCurrentBreakpoint(context::Context &context, bool reinsert) {
-      ExecutableState &target = executableState(context);
+      auto &target = executableState(context);
       if (!target.currentBreakpoint) return true;
-      const std::uintptr_t address = *target.currentBreakpoint;
-      NativeBreakpoint &breakpoint = target.breakpoints.at(address);
+      const auto address = *target.currentBreakpoint;
+      auto &breakpoint = target.breakpoints.at(address);
       restoreBreakpoint(target, breakpoint);
-      errno = 0;
-      if (ptrace(PTRACE_SINGLESTEP, target.pid, nullptr, nullptr) == -1) ptraceFailure("step over breakpoint");
+      const auto pid = target.pid;
+      if (ptrace(PTRACE_SINGLESTEP, pid, nullptr, nullptr) == -1) ptraceFailure("step over breakpoint");
       int status = 0;
-      if (waitpid(target.pid, &status, 0) == -1) ptraceFailure("wait after breakpoint");
-      if (finishExecutable(context, status)) return false;
-      if (!WIFSTOPPED(status)) THROW(, "executable debugger received an unexpected step status")
-      if (reinsert) reinsertBreakpoint(target, breakpoint);
-      const int stopSignal = WSTOPSIG(status);
-      target.pendingSignal = stopSignal == SIGTRAP || stopSignal == SIGSTOP ? 0 : stopSignal;
+      waitTrace(pid, status);
+      if (WIFEXITED(status) || WIFSIGNALED(status)) {
+        recordExit(context, pid, status);
+        return false;
+      }
+      if (!WIFSTOPPED(status)) THROW(, "unexpected breakpoint-step wait status")
+      recordThreadStop(target, pid, status);
+      if ((static_cast<unsigned>(status) >> 16) == PTRACE_EVENT_CLONE) registerClone(target, pid);
       target.currentBreakpoint.reset();
-      target.instruction = registersOf(target).rip;
-      target.currentPoint = pointAt(target, target.instruction);
+      selectThread(target, pid);
+      if (reinsert) reinsertBreakpoint(target, breakpoint);
       return true;
     }
 
+    volatile sig_atomic_t interruptedThread = -1;
+
+    void pauseNativeTarget(int) {
+      const auto saved = errno;
+      const auto pid = interruptedThread;
+      if (pid > 0) syscall(SYS_ptrace, PTRACE_INTERRUPT, pid, nullptr, nullptr);
+      errno = saved;
+    }
+
+    struct NativeInterruptScope {
+      struct sigaction previous{}, previousPause{};
+      bool installed = false, pauseInstalled = false;
+      sig_atomic_t previousThread = -1;
+      explicit NativeInterruptScope(pid_t pid) {
+        // Only a terminal CLI owns SIGINT. Editor controllers use their own
+        // pause channel; background server threads never change signal policy.
+        struct sigaction action{};
+        action.sa_handler = pauseNativeTarget;
+        sigemptyset(&action.sa_mask);
+        if (isatty(STDIN_FILENO)) installed = sigaction(SIGINT, &action, &previous) == 0;
+        pauseInstalled = sigaction(SIGUSR1, &action, &previousPause) == 0;
+        previousThread = interruptedThread;
+        if (installed || pauseInstalled) interruptedThread = pid;
+      }
+      ~NativeInterruptScope() {
+        interruptedThread = previousThread;
+        if (installed) sigaction(SIGINT, &previous, nullptr);
+        if (pauseInstalled) sigaction(SIGUSR1, &previousPause, nullptr);
+      }
+    };
+
+    struct NativeForegroundScope {
+      pid_t previous = -1;
+      sigset_t previousMask{};
+      explicit NativeForegroundScope(const ExecutableState &target) {
+        if (!target.controllerTerminal || !isatty(STDIN_FILENO)) return;
+        previous = tcgetpgrp(STDIN_FILENO);
+        if (previous != getpgrp()) {
+          previous = -1;
+          return;
+        }
+        sigset_t mask;
+        sigemptyset(&mask);
+        sigaddset(&mask, SIGTTOU);
+        sigprocmask(SIG_BLOCK, &mask, &previousMask);
+        if (tcsetpgrp(STDIN_FILENO, target.leader) == -1) {
+          previous = -1;
+          sigprocmask(SIG_SETMASK, &previousMask, nullptr);
+        }
+      }
+      ~NativeForegroundScope() {
+        if (previous < 0) return;
+        tcsetpgrp(STDIN_FILENO, previous);
+        sigprocmask(SIG_SETMASK, &previousMask, nullptr);
+      }
+    };
+
     void continueExecutable(context::Context &context) {
-      ExecutableState &target = executableState(context);
+      auto &target = executableState(context);
       if (target.pid <= 0) THROW(, "no executable target is stopped")
-      if (!stepOverCurrentBreakpoint(context, true)) return;
-      errno = 0;
-      if (ptrace(PTRACE_CONT, target.pid, nullptr,
-                 reinterpret_cast<void *>(static_cast<std::intptr_t>(target.pendingSignal))) == -1)
-        ptraceFailure("continue");
-      target.pendingSignal = 0;
+      target.initialStop = false;
+      const auto selected = target.pid;
+      NativeInterruptScope interrupt(selected);
+      NativeForegroundScope foreground(target);
+      saveThread(target);
+      std::vector<pid_t> ids;
+      for (const auto &[pid, thread] : target.threads) ids.push_back(pid);
+      // Move every thread past its pending INT3 while the others stay stopped.
+      for (const auto pid : ids) {
+        if (!target.threads.contains(pid)) continue;
+        selectThread(target, pid);
+        stepOverCurrentBreakpoint(context, true);
+        if (target.pid <= 0) return;
+        saveThread(target);
+      }
+      if (target.threads.contains(selected)) selectThread(target, selected);
+      for (const auto &[pid, thread] : target.threads) resumeThread(target, pid);
       waitForExecutable(context);
     }
 
     void stepExecutable(context::Context &context, DebuggerState::Mode mode) {
-      ExecutableState &target = executableState(context);
+      auto &target = executableState(context);
       if (target.pid <= 0) THROW(, "no executable target is stopped")
-      const user_regs_struct initial = registersOf(target);
-      const std::uintptr_t startAddress =
-          target.currentPoint ? target.points[*target.currentPoint].address : initial.rip;
+      if (target.initialStop && !target.currentPoint) {
+        // Reach the first source statement without single-stepping the dynamic
+        // loader. Temporary statement breakpoints are removed before exposing
+        // the stopped target to subsequent controller commands.
+        for (const auto &point : target.points) installBreakpoint(target, point.address);
+        continueExecutable(context);
+        if (target.pid > 0) {
+          installConfiguredBreakpoints(context);
+          saveThread(target);
+        }
+        return;
+      }
+      target.initialStop = false;
+      NativeInterruptScope interrupt(target.pid);
+      NativeForegroundScope foreground(target);
+      const auto initial = registersOf(target);
+      bool moved = target.currentBreakpoint.has_value();
       if (!stepOverCurrentBreakpoint(context, false)) return;
       restoreAllBreakpoints(target);
-
       while (target.pid > 0) {
-        errno = 0;
-        if (ptrace(PTRACE_SINGLESTEP, target.pid, nullptr,
+        // SINGLESTEP used to pass an INT3 can itself reach the next statement.
+        // Inspect that location before executing another instruction.
+        if (moved) {
+          const auto current = registersOf(target);
+          const auto point = pointAt(target, current.rip);
+          const bool breakpoint = target.breakpoints.contains(current.rip);
+          if (point && (breakpoint || mode == DebuggerState::Mode::Step ||
+                        (mode == DebuggerState::Mode::Next && current.rsp >= initial.rsp) ||
+                        (mode == DebuggerState::Mode::Finish && current.rsp > initial.rsp))) {
+            target.currentPoint = point;
+            installConfiguredBreakpoints(context);
+            if (target.breakpoints.contains(current.rip)) target.currentBreakpoint = current.rip;
+            saveThread(target);
+            printExecutablePoint(context, breakpoint ? "breakpoint" : "stopped");
+            return;
+          }
+        }
+        moved = true;
+        const auto pid = target.pid;
+        if (ptrace(PTRACE_SINGLESTEP, pid, nullptr,
                    reinterpret_cast<void *>(static_cast<std::intptr_t>(target.pendingSignal))) == -1)
           ptraceFailure("source step");
         target.pendingSignal = 0;
         int status = 0;
-        if (waitpid(target.pid, &status, 0) == -1) ptraceFailure("wait during source step");
-        if (finishExecutable(context, status)) return;
-        if (!WIFSTOPPED(status)) THROW(, "executable debugger received an unexpected source-step status")
-        if (WSTOPSIG(status) != SIGTRAP) {
-          target.pendingSignal = WSTOPSIG(status);
-          target.instruction = registersOf(target).rip;
-          target.currentPoint = pointAt(target, target.instruction);
-          installConfiguredBreakpoints(context);
-          printExecutablePoint(context, "signal");
+        waitTrace(pid, status);
+        if (WIFEXITED(status) || WIFSIGNALED(status)) {
+          if (!recordExit(context, pid, status)) {
+            selectThread(target, target.pid);
+            installConfiguredBreakpoints(context);
+            printExecutablePoint(context, "stopped");
+          }
           return;
         }
-
-        const user_regs_struct current = registersOf(target);
-        const std::optional<std::size_t> point = pointAt(target, current.rip);
-        if (!point || target.points[*point].address == startAddress) continue;
-        const bool stop = mode == DebuggerState::Mode::Step ||
-                          (mode == DebuggerState::Mode::Next && current.rsp >= initial.rsp) ||
-                          (mode == DebuggerState::Mode::Finish && current.rsp > initial.rsp);
-        if (!stop) continue;
-
-        target.instruction = current.rip;
-        target.currentPoint = point;
-        installConfiguredBreakpoints(context);
-        if (target.breakpoints.contains(current.rip)) target.currentBreakpoint = current.rip;
-        printExecutablePoint(context, "stopped");
-        return;
+        if (!WIFSTOPPED(status)) THROW(, "unexpected source-step wait status")
+        recordThreadStop(target, pid, status);
+        target.currentBreakpoint.reset();
+        selectThread(target, pid);
+        const auto event = static_cast<unsigned>(status) >> 16;
+        if (event == PTRACE_EVENT_CLONE) {
+          registerClone(target, pid);
+          continue;
+        }
+        if (target.pendingSignal || event == PTRACE_EVENT_STOP) {
+          installConfiguredBreakpoints(context);
+          printExecutablePoint(context, target.pendingSignal ? "signal" : "stopped");
+          return;
+        }
       }
     }
 
@@ -577,46 +868,139 @@ namespace recurloop {
       return target.points[*point];
     }
 
-    std::uint64_t readLocalValue(const ExecutableState &target, const compiler::DebugLocal &local) {
-      if (local.size == 0 || local.size > sizeof(long))
-        THROW(, "debugger cannot read local '" << local.name << "' with size " << local.size)
-      const user_regs_struct registers = registersOf(target);
-      const std::uintptr_t base = target.selectedFrame ? target.selectedFrame : registers.rbp;
+    std::uintptr_t localAddress(const ExecutableState &target, const compiler::DebugLocal &local) {
+      const auto base = target.selectedFrame ? target.selectedFrame : registersOf(target).rbp;
       if (base < local.frameOffset) THROW(, "invalid frame offset for local '" << local.name << "'")
-      errno = 0;
-      const long word =
-          ptrace(PTRACE_PEEKDATA, target.pid, reinterpret_cast<void *>(base - local.frameOffset), nullptr);
-      if (word == -1 && errno != 0) ptraceFailure("read local");
-      std::uint64_t value = static_cast<std::uint64_t>(word);
-      if (local.size < sizeof(value)) value &= (std::uint64_t{1} << (local.size * 8)) - 1;
-      return value;
+      return base - local.frameOffset;
+    }
+
+    std::uint64_t readScalar(const ExecutableState &target, std::uintptr_t address, std::uint32_t size) {
+      if (size == 0 || size > sizeof(long)) THROW(, "debugger scalar size is invalid")
+      std::uint64_t result = 0;
+      // Aligned reads also handle packed fields at page boundaries.
+      for (std::uint32_t at = 0; at < size;) {
+        const auto aligned = (address + at) & ~(sizeof(long) - 1);
+        const auto offset = (address + at) - aligned;
+        errno = 0;
+        const auto word =
+            static_cast<unsigned long>(ptrace(PTRACE_PEEKDATA, target.pid, reinterpret_cast<void *>(aligned), nullptr));
+        if (errno) ptraceFailure("read variable");
+        for (auto byte = offset; byte < sizeof(long) && at < size; ++byte, ++at)
+          result |= ((word >> (byte * 8)) & 255) << (at * 8);
+      }
+      return result;
+    }
+
+    std::uint64_t readLocalValue(const ExecutableState &target, const compiler::DebugLocal &local) {
+      return readScalar(target, localAddress(target, local), local.size);
+    }
+
+    const compiler::DebugLocal &schemaOf(const ExecutableState &target, const compiler::DebugLocal &local) {
+      if (!local.children.empty()) return local;
+      const auto found = target.schemas.find(local.type);
+      return found == target.schemas.end() ? local : *found->second;
+    }
+
+    struct VariableView {
+      compiler::DebugLocal local;
+      std::uintptr_t address;
+      std::string path;
+    };
+
+    std::uint64_t childCount(const ExecutableState &target, const VariableView &view) {
+      const auto &schema = schemaOf(target, view.local);
+      if (schema.children.empty()) return 0;
+      const auto kind = static_cast<compiler::TypeKind>(schema.kind);
+      if (kind == compiler::TypeKind::Array) return schema.elementCount;
+      if (kind == compiler::TypeKind::Pointer) return readScalar(target, view.address, view.local.size) ? 1 : 0;
+      return schema.children.size();
+    }
+
+    VariableView variableAt(context::Context &context, std::string path) {
+      const auto &target = executableState(context);
+      const auto &locals = currentExecutablePoint(context).locals;
+      // Pointer member spelling is accepted alongside explicit [0] expansion.
+      for (std::size_t at; (at = path.find("->")) != std::string::npos;) path.replace(at, 2, "[0].");
+      const auto end = path.find_first_of(".[");
+      const auto root = path.substr(0, end);
+      const auto found = std::ranges::find(locals, root, &compiler::DebugLocal::name);
+      if (found == locals.end()) THROW(, "unknown debug variable '" << root << "'")
+      VariableView view{*found, localAddress(target, *found), root};
+      std::size_t at = root.size();
+      while (at < path.size()) {
+        const auto &schema = schemaOf(target, view.local);
+        const auto kind = static_cast<compiler::TypeKind>(schema.kind);
+        if (path[at] == '.' && kind == compiler::TypeKind::Structure) {
+          const auto begin = ++at;
+          const auto next = path.find_first_of(".[", at);
+          at = next == std::string::npos ? path.size() : next;
+          const auto name = path.substr(begin, at - begin);
+          const auto child = std::ranges::find(schema.children, name, &compiler::DebugLocal::name);
+          if (child == schema.children.end()) THROW(, "unknown debug record member '" << name << "'")
+          view.address += child->memberOffset;
+          auto metadata = *child;
+          view.local = std::move(metadata);
+          view.path += '.' + name;
+        } else if (path[at] == '[' && (kind == compiler::TypeKind::Array || kind == compiler::TypeKind::Pointer)) {
+          const auto begin = ++at;
+          const auto close = path.find(']', at);
+          if (close == std::string::npos || schema.children.empty()) THROW(, "invalid debug array access")
+          std::uint64_t index = 0;
+          const auto parsed = std::from_chars(path.data() + begin, path.data() + close, index);
+          const auto count = kind == compiler::TypeKind::Pointer ? 1 : schema.elementCount;
+          if (parsed.ec != std::errc{} || parsed.ptr != path.data() + close || index >= count)
+            THROW(, "debug array index is out of bounds")
+          if (kind == compiler::TypeKind::Pointer) {
+            view.address = readScalar(target, view.address, view.local.size);
+            if (!view.address) THROW(, "cannot dereference a null debug pointer")
+          }
+          auto metadata = schema.children.front();
+          view.local = std::move(metadata);
+          view.address += index * view.local.size;
+          view.path += '[' + std::to_string(index) + ']';
+          at = close + 1;
+        } else
+          THROW(, "invalid debug variable path '" << path << "'")
+      }
+      return view;
+    }
+
+    std::string formatVariable(const ExecutableState &target, const VariableView &view) {
+      const auto &local = view.local;
+      const auto kind = static_cast<compiler::TypeKind>(local.kind);
+      if (kind == compiler::TypeKind::Structure) return "{" + std::to_string(childCount(target, view)) + " fields}";
+      if (kind == compiler::TypeKind::Array) return "[" + std::to_string(local.elementCount) + " elements]";
+      if (local.size == 0 || local.size > sizeof(long)) return "<" + std::to_string(local.size) + " bytes>";
+      const auto bits = readScalar(target, view.address, local.size);
+      std::ostringstream text;
+      if (kind == compiler::TypeKind::FloatingPoint && local.size == sizeof(float))
+        text << std::bit_cast<float>(static_cast<std::uint32_t>(bits));
+      else if (kind == compiler::TypeKind::FloatingPoint && local.size == sizeof(double))
+        text << std::bit_cast<double>(bits);
+      else if (kind == compiler::TypeKind::Pointer)
+        text << "0x" << std::hex << bits;
+      else if (local.type == "bool")
+        text << (bits == 0 ? "false" : "true");
+      else if (local.signedValue) {
+        const unsigned width = local.size * 8;
+        text << (width == 64 ? static_cast<std::int64_t>(bits)
+                             : static_cast<std::int64_t>(bits << (64 - width)) >> (64 - width));
+      } else
+        text << bits;
+      return text.str();
+    }
+
+    void printVariable(context::Context &context, const VariableView &view) {
+      const auto &target = executableState(context);
+      const auto value = formatVariable(target, view);
+      *context.io.out << "[debug] " << view.path << ":" << view.local.type << " = " << value << "\n";
+      *context.io.out << "[debug-variable]\t" << hexText(view.path) << "\t" << hexText(view.local.name) << "\t"
+                      << hexText(view.local.type) << "\t" << hexText(value) << "\t" << childCount(target, view) << "\t"
+                      << static_cast<unsigned>(view.local.kind) << "\n";
     }
 
     void printLocal(context::Context &context, const compiler::DebugLocal &local) {
-      if (local.size == 0 || local.size > sizeof(long)) {
-        *context.io.out << "[debug] " << local.name << ":" << local.type << " = <" << local.size << " bytes>\n";
-        return;
-      }
-      const std::uint64_t bits = readLocalValue(executableState(context), local);
-      *context.io.out << "[debug] " << local.name << ":" << local.type << " = ";
-      const auto kind = static_cast<compiler::TypeKind>(local.kind);
-      if (kind == compiler::TypeKind::FloatingPoint && local.size == sizeof(float)) {
-        *context.io.out << std::bit_cast<float>(static_cast<std::uint32_t>(bits));
-      } else if (kind == compiler::TypeKind::FloatingPoint && local.size == sizeof(double)) {
-        *context.io.out << std::bit_cast<double>(bits);
-      } else if (kind == compiler::TypeKind::Pointer) {
-        *context.io.out << "0x" << std::hex << bits << std::dec;
-      } else if (local.type == "bool") {
-        *context.io.out << (bits == 0 ? "false" : "true");
-      } else if (local.signedValue) {
-        const unsigned width = local.size * 8;
-        const std::int64_t value = width == 64 ? static_cast<std::int64_t>(bits)
-                                               : static_cast<std::int64_t>(bits << (64 - width)) >> (64 - width);
-        *context.io.out << value;
-      } else {
-        *context.io.out << bits;
-      }
-      *context.io.out << "\n";
+      printVariable(context, {local, localAddress(executableState(context), local), local.name});
     }
 
     struct NativeFrame {
@@ -654,30 +1038,94 @@ namespace recurloop {
       return frames;
     }
 
+    context::Value scalarValue(const ExecutableState &target, const VariableView &view) {
+      const auto &local = view.local;
+      const auto kind = static_cast<compiler::TypeKind>(local.kind);
+      if (kind == compiler::TypeKind::Structure || kind == compiler::TypeKind::Array)
+        THROW(, "aggregate values require debug value/children")
+      const auto bits = readScalar(target, view.address, local.size);
+      if (kind == compiler::TypeKind::FloatingPoint && local.size == 4)
+        return context::Value(static_cast<double>(std::bit_cast<float>(static_cast<std::uint32_t>(bits))));
+      if (kind == compiler::TypeKind::FloatingPoint && local.size == 8)
+        return context::Value(std::bit_cast<double>(bits));
+      if (local.type == "bool") return context::Value(bits != 0);
+      const unsigned width = local.size * 8;
+      return context::Value(local.signedValue && width < 64
+                                ? static_cast<std::int64_t>(bits << (64 - width)) >> (64 - width)
+                                : static_cast<std::int64_t>(bits));
+    }
+
     context::Value evaluateNative(context::Context &context, const std::string &expression) {
       auto values = context.values();
       values.pushScope();
       try {
-        for (const auto &local : currentExecutablePoint(context).locals) {
-          if (local.size == 0 || local.size > sizeof(long)) continue;
-          const auto bits = readLocalValue(executableState(context), local);
+        const auto &target = executableState(context);
+        const auto &locals = currentExecutablePoint(context).locals;
+        for (const auto &local : locals) {
           const auto kind = static_cast<compiler::TypeKind>(local.kind);
-          if (kind == compiler::TypeKind::FloatingPoint && local.size == 4)
-            values.define(local.name,
-                          context::Value(static_cast<double>(std::bit_cast<float>(static_cast<std::uint32_t>(bits)))));
-          else if (kind == compiler::TypeKind::FloatingPoint && local.size == 8)
-            values.define(local.name, context::Value(std::bit_cast<double>(bits)));
-          else if (local.type == "bool")
-            values.define(local.name, context::Value(bits != 0));
-          else {
-            const unsigned width = local.size * 8;
-            const auto value = local.signedValue && width < 64
-                                   ? static_cast<std::int64_t>(bits << (64 - width)) >> (64 - width)
-                                   : static_cast<std::int64_t>(bits);
-            values.define(local.name, context::Value(value));
-          }
+          if (local.size == 0 || local.size > sizeof(long) || kind == compiler::TypeKind::Structure ||
+              kind == compiler::TypeKind::Array)
+            continue;
+          values.define(local.name, scalarValue(target, {local, localAddress(target, local), local.name}));
         }
-        auto result = Expressions::evaluate(context, expression);
+        // Resolve native member/index paths to scalar bindings before using the
+        // ordinary expression evaluator. No target function is invoked.
+        std::string rewritten;
+        std::size_t sequence = 0;
+        for (std::size_t at = 0; at < expression.size();) {
+          const auto begin = at;
+          if (expression[at] == '\'' || expression[at] == '"') {
+            const char quote = expression[at++];
+            while (at < expression.size()) {
+              if (expression[at++] == '\\' && at < expression.size()) {
+                ++at;
+                continue;
+              }
+              if (expression[at - 1] == quote) break;
+            }
+            rewritten += expression.substr(begin, at - begin);
+            continue;
+          }
+          if (!std::isalpha(static_cast<unsigned char>(expression[at])) && expression[at] != '_') {
+            rewritten += expression[at++];
+            continue;
+          }
+          while (at < expression.size() &&
+                 (std::isalnum(static_cast<unsigned char>(expression[at])) || expression[at] == '_'))
+            ++at;
+          const auto name = expression.substr(begin, at - begin);
+          const auto root = std::ranges::find(locals, name, &compiler::DebugLocal::name);
+          if (root == locals.end()) {
+            rewritten += name;
+            continue;
+          }
+          std::string path = name;
+          while (at < expression.size()) {
+            if (expression[at] == '.' || expression.substr(at, 2) == "->") {
+              const bool pointer = expression[at] == '-';
+              at += pointer ? 2 : 1;
+              const auto member = at;
+              while (at < expression.size() &&
+                     (std::isalnum(static_cast<unsigned char>(expression[at])) || expression[at] == '_'))
+                ++at;
+              if (member == at) THROW(, "debug expression requires a member name")
+              path += (pointer ? "->" : ".") + expression.substr(member, at - member);
+            } else if (expression[at] == '[') {
+              const auto end = expression.find(']', ++at);
+              if (end == std::string::npos) THROW(, "debug expression has an unterminated index")
+              const auto index = Expressions::evaluate(context, expression.substr(at, end - at));
+              if (!index.isInteger() || index.asInteger() < 0)
+                THROW(, "debug array index must be a nonnegative integer")
+              path += '[' + std::to_string(index.asInteger()) + ']';
+              at = end + 1;
+            } else
+              break;
+          }
+          const auto binding = "__recurloop_debug_value_" + std::to_string(sequence++);
+          values.define(binding, scalarValue(target, variableAt(context, path)));
+          rewritten += binding;
+        }
+        auto result = Expressions::evaluate(context, rewritten);
         values.popScope();
         return result;
       } catch (...) {
@@ -687,10 +1135,20 @@ namespace recurloop {
     }
 
     void terminateExecutable(ExecutableState &target) {
-      if (target.pid <= 0) return;
-      ptrace(PTRACE_KILL, target.pid, nullptr, nullptr);
-      waitpid(target.pid, nullptr, 0);
+      if (target.leader <= 0) return;
+      // SIGKILL works for running, signal-stopped and ptrace-stopped tracees.
+      kill(target.leader, SIGKILL);
+      int status = 0;
+      while (true) {
+        const auto pid = waitpid(-target.leader, &status, __WALL);
+        if (pid < 0) {
+          if (errno == EINTR) continue;
+          break;
+        }
+      }
       target.pid = -1;
+      target.leader = -1;
+      target.threads.clear();
     }
 
     void controller(context::Context &context, DebuggerState &state) {
@@ -772,6 +1230,10 @@ namespace recurloop {
     actions.define("debugger.evaluate", evaluate);
     actions.define("debugger.executable-run", runExecutable);
     actions.define("debugger.locals", locals);
+    actions.define("debugger.children", children);
+    actions.define("debugger.value", value);
+    actions.define("debugger.threads", threads);
+    actions.define("debugger.thread", thread);
     actions.define("debugger.registers", registers);
     actions.define("debugger.terminal", terminal);
     actions.define("debugger.stack", stack);
@@ -1047,58 +1509,108 @@ namespace recurloop {
     target = {};
     target.path = path;
     target.points = std::move(points);
+    const auto schema = [&](const auto &self, const compiler::DebugLocal &local) -> void {
+      if (!local.children.empty()) target.schemas.try_emplace(local.type, &local);
+      for (const auto &child : local.children) self(self, child);
+    };
+    for (const auto &point : target.points)
+      for (const auto &local : point.locals) schema(schema, local);
     target.positionIndependent = positionIndependent;
 
+    int gate[2], failures[2];
+    if (pipe2(gate, O_CLOEXEC) == -1) ptraceFailure("create launch gate");
+    if (pipe2(failures, O_CLOEXEC) == -1) {
+      const auto error = errno;
+      close(gate[0]);
+      close(gate[1]);
+      errno = error;
+      ptraceFailure("create launch error pipe");
+    }
+    const auto terminal = debugRuntime(context).terminal;
+    target.controllerTerminal = terminal.empty();
     const pid_t pid = fork();
-    if (pid == -1) THROW(, "debug executable run cannot fork: " << std::strerror(errno))
+    if (pid == -1) {
+      const auto error = errno;
+      for (const auto fd : {gate[0], gate[1], failures[0], failures[1]}) close(fd);
+      errno = error;
+      ptraceFailure("fork target");
+    }
     if (pid == 0) {
-      const auto &terminal = debugRuntime(context).terminal;
+      close(gate[1]);
+      close(failures[0]);
+      const auto fail = [&](int stage) {
+        const int record[2]{stage, errno};
+        const auto ignored = write(failures[1], record, sizeof(record));
+        (void)ignored;
+        _exit(127);
+      };
+      if (setpgid(0, 0) == -1) fail(1);
+      char ready;
+      ssize_t bytes;
+      do {
+        bytes = read(gate[0], &ready, 1);
+      } while (bytes == -1 && errno == EINTR);
+      if (bytes != 1) _exit(127);
+      close(gate[0]);
       if (!terminal.empty()) {
         const int fd = open(terminal.c_str(), O_RDWR | O_NOCTTY);
-        if (fd < 0) _exit(125);
+        if (fd < 0) fail(2);
         for (int standard = 0; standard < 3; ++standard)
-          if (dup2(fd, standard) < 0) _exit(125);
+          if (dup2(fd, standard) < 0) fail(2);
         if (fd > 2) close(fd);
       }
-      if (ptrace(PTRACE_TRACEME, 0, nullptr, nullptr) == -1) _exit(126);
       execl(path.c_str(), path.c_str(), static_cast<char *>(nullptr));
-      _exit(127);
+      fail(3);
     }
-    target.pid = pid;
+    close(gate[0]);
+    close(failures[1]);
+    target.pid = target.leader = pid;
+    // A private process group keeps waitpid from consuming unrelated children.
+    setpgid(pid, pid);
     runtime.active = true;
     runtime.target = DebuggerState::Target::Executable;
     runtime.paused = true;
-
-    int status = 0;
-    if (waitpid(pid, &status, 0) == -1) ptraceFailure("initial wait");
-    if (!WIFSTOPPED(status)) {
-      target.pid = -1;
-      runtime.active = false;
-      runtime.target = DebuggerState::Target::None;
-      if (WIFEXITED(status))
-        THROW(, "executable target exited before its initial stop with status " << WEXITSTATUS(status)
-                                                                                << " (ptrace or exec failed)")
-      if (WIFSIGNALED(status))
-        THROW(, "executable target terminated before its initial stop with signal " << WTERMSIG(status))
-      THROW(, "executable target did not stop after exec")
-    }
     try {
-      // If the debugger controller is terminated (stop/exit/crash), never
-      // leave a traced application orphaned or permanently stopped.
-      errno = 0;
-      if (ptrace(PTRACE_SETOPTIONS, target.pid, nullptr,
-                 reinterpret_cast<void *>(static_cast<std::uintptr_t>(PTRACE_O_EXITKILL))) == -1)
-        ptraceFailure("set exit-kill option");
+      NativeInterruptScope interrupt(pid);
+      const auto options = static_cast<std::uintptr_t>(PTRACE_O_EXITKILL | PTRACE_O_TRACECLONE | PTRACE_O_TRACEEXEC);
+      if (ptrace(PTRACE_SEIZE, pid, nullptr, reinterpret_cast<void *>(options)) == -1) ptraceFailure("seize target");
+      if (ptrace(PTRACE_INTERRUPT, pid, nullptr, nullptr) == -1) ptraceFailure("initial interrupt");
+      int status = 0;
+      waitTrace(pid, status);
+      if (!WIFSTOPPED(status)) THROW(, "debug target did not stop before exec")
+      const char ready = 1;
+      if (write(gate[1], &ready, 1) != 1) ptraceFailure("release launch gate");
+      close(gate[1]);
+      gate[1] = -1;
+      if (ptrace(PTRACE_CONT, pid, nullptr, nullptr) == -1) ptraceFailure("continue to exec");
+      waitTrace(pid, status);
+      if (!WIFSTOPPED(status) || (static_cast<unsigned>(status) >> 16) != PTRACE_EVENT_EXEC) {
+        if (WIFSTOPPED(status)) THROW(, "debug target received signal " << WSTOPSIG(status) << " before exec")
+        int record[2]{};
+        const auto bytes = read(failures[0], record, sizeof(record));
+        if (bytes == sizeof(record))
+          THROW(, "debug target launch failed at " << (record[0] == 1   ? "process group"
+                                                       : record[0] == 2 ? "terminal"
+                                                                        : "exec")
+                                                   << ": " << std::strerror(record[1]))
+        THROW(, "debug target exited before exec stop")
+      }
+      close(failures[0]);
+      failures[0] = -1;
+      target.threads.emplace(pid, NativeThread{});
       target.loadBias = executableLoadBias(target);
       if (target.loadBias != 0)
         for (compiler::DebugPoint &point : target.points) point.address += target.loadBias;
       installConfiguredBreakpoints(context);
       target.instruction = registersOf(target).rip;
       target.currentPoint = pointAt(target, target.instruction);
+      saveThread(target);
       *context.io.out << "[debug] executable started pid " << target.pid << "\n";
       printExecutablePoint(context, "stopped");
       controller(context, runtime);
     } catch (...) {
+      if (gate[1] >= 0) close(gate[1]);
+      if (failures[0] >= 0) close(failures[0]);
       terminateExecutable(target);
       runtime.active = false;
       runtime.target = DebuggerState::Target::None;
@@ -1115,6 +1627,63 @@ namespace recurloop {
       return;
     }
     for (const compiler::DebugLocal &local : point.locals) printLocal(context, local);
+  }
+
+  void Debugger::value(context::Context &context, lexicon::Phrase &) {
+    printVariable(context, variableAt(context, stringArgument(context, "debug value")));
+  }
+
+  void Debugger::threads(context::Context &context, lexicon::Phrase &) {
+    auto &target = executableState(context);
+    if (target.pid <= 0) THROW(, "debug threads requires an active executable")
+    std::vector<pid_t> ids;
+    for (const auto &[pid, thread] : target.threads) ids.push_back(pid);
+    std::ranges::sort(ids);
+    for (const auto pid : ids) {
+      std::string name;
+      std::ifstream input("/proc/" + std::to_string(pid) + "/comm");
+      std::getline(input, name);
+      *context.io.out << "[debug-thread]\t" << pid << "\t" << hexText(name) << "\t" << (pid == target.pid) << "\n";
+    }
+  }
+
+  void Debugger::thread(context::Context &context, lexicon::Phrase &) {
+    const auto text = readLine(context);
+    pid_t pid = 0;
+    const auto parsed = std::from_chars(text.data(), text.data() + text.size(), pid);
+    if (parsed.ec != std::errc{} || parsed.ptr != text.data() + text.size())
+      THROW(, "debug thread requires a thread id")
+    selectThread(executableState(context), pid);
+  }
+
+  void Debugger::children(context::Context &context, lexicon::Phrase &) {
+    auto source = readLine(context);
+    const auto comma = source.find(',');
+    const auto value = Expressions::evaluate(context, source.substr(0, comma));
+    if (!value.isString()) THROW(, "debug children requires a variable path string")
+    std::uint64_t start = 0, count = 100;
+    if (comma != std::string::npos) {
+      auto range = source.substr(comma + 1);
+      std::replace(range.begin(), range.end(), ',', ' ');
+      std::istringstream input(range);
+      if (!(input >> start >> count) || (input >> std::ws && !input.eof()) || count > 1024)
+        THROW(, "debug children expects path, start, count (at most 1024)")
+    }
+    const auto view = variableAt(context, value.asString());
+    const auto &target = executableState(context);
+    const auto &schema = schemaOf(target, view.local);
+    const auto total = childCount(target, view);
+    const auto end = start >= total ? start : start + std::min(count, total - start);
+    const auto kind = static_cast<compiler::TypeKind>(view.local.kind);
+    for (auto index = start; index < end; ++index) {
+      if (kind == compiler::TypeKind::Structure)
+        printVariable(context, variableAt(context, view.path + '.' + schema.children[index].name));
+      else {
+        auto child = variableAt(context, view.path + '[' + std::to_string(index) + ']');
+        child.local.name = '[' + std::to_string(index) + ']';
+        printVariable(context, child);
+      }
+    }
   }
 
   void Debugger::terminal(context::Context &context, lexicon::Phrase &) {
@@ -1155,10 +1724,12 @@ namespace recurloop {
     const auto separator = text.find('=');
     if (separator == std::string::npos) THROW(, "debug set requires name = expression")
     const auto name = trim(text.substr(0, separator));
-    const auto &point = currentExecutablePoint(context);
-    const auto found =
-        std::find_if(point.locals.begin(), point.locals.end(), [&](const auto &local) { return local.name == name; });
-    if (found == point.locals.end() || found->size == 0 || found->size > sizeof(long)) THROW(, "local is not writable")
+    const auto view = variableAt(context, name);
+    const auto *found = &view.local;
+    if (found->size == 0 || found->size > sizeof(long) ||
+        static_cast<compiler::TypeKind>(found->kind) == compiler::TypeKind::Structure ||
+        static_cast<compiler::TypeKind>(found->kind) == compiler::TypeKind::Array)
+      THROW(, "variable is not a writable scalar")
     const auto value = evaluateNative(context, text.substr(separator + 1));
     std::uint64_t bits;
     if (static_cast<compiler::TypeKind>(found->kind) == compiler::TypeKind::FloatingPoint)
@@ -1167,18 +1738,22 @@ namespace recurloop {
     else
       bits = value.isBoolean() ? value.asBoolean() : value.asInteger();
     auto &target = executableState(context);
-    const auto base = target.selectedFrame ? target.selectedFrame : registersOf(target).rbp;
-    if (base < found->frameOffset) THROW(, "invalid local frame offset")
-    const auto address = base - found->frameOffset;
-    errno = 0;
-    auto word =
-        static_cast<std::uint64_t>(ptrace(PTRACE_PEEKDATA, target.pid, reinterpret_cast<void *>(address), nullptr));
-    if (errno) ptraceFailure("read local for assignment");
-    const auto mask = found->size == 8 ? ~std::uint64_t{0} : (std::uint64_t{1} << (found->size * 8)) - 1;
-    word = (word & ~mask) | (bits & mask);
-    if (ptrace(PTRACE_POKEDATA, target.pid, reinterpret_cast<void *>(address), reinterpret_cast<void *>(word)) == -1)
-      ptraceFailure("write local");
-    printLocal(context, *found);
+    // Read-modify-write each aligned word: packed members may cross words/pages.
+    for (std::uint32_t at = 0; at < found->size;) {
+      const auto aligned = (view.address + at) & ~(sizeof(long) - 1);
+      const auto offset = (view.address + at) - aligned;
+      errno = 0;
+      auto word =
+          static_cast<unsigned long>(ptrace(PTRACE_PEEKDATA, target.pid, reinterpret_cast<void *>(aligned), nullptr));
+      if (errno) ptraceFailure("read variable for assignment");
+      for (auto byte = offset; byte < sizeof(long) && at < found->size; ++byte, ++at) {
+        const auto shift = byte * 8;
+        word = (word & ~(255UL << shift)) | (((bits >> (at * 8)) & 255) << shift);
+      }
+      if (ptrace(PTRACE_POKEDATA, target.pid, reinterpret_cast<void *>(aligned), reinterpret_cast<void *>(word)) == -1)
+        ptraceFailure("write variable");
+    }
+    printVariable(context, view);
   }
 
   void Debugger::registers(context::Context &context, lexicon::Phrase &) {

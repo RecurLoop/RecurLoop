@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased
+
+- Use the shared project target protocol; source-defined target blocks replace
+  editor-specific JSON declarations and the TypeScript dependency walker.
+- Use framed output and an explicit request status for server operations.
+- Share the `.cache/recurloop` module/artifact directory with CLI project actions.
+- Expand records, paged arrays and pointer pointees in locals and Watches;
+  scalar fields/elements support evaluation and assignment.
+- List and select native threads; frame and variable handles retain thread
+  identity. Pause uses the controller's interrupt channel.
+
 ## 0.1.1
 
 - Keep runtime resources and language providers dormant without a project;

@@ -1616,6 +1616,26 @@ phrase debug_locals = "locals" in debug {
   action host "debugger.locals"
 }
 
+phrase debug_children = "children" in debug {
+  type phrase_types_scoped_callable
+  action host "debugger.children"
+}
+
+phrase debug_value = "value" in debug {
+  type phrase_types_scoped_callable
+  action host "debugger.value"
+}
+
+phrase debug_threads = "threads" in debug {
+  type phrase_types_scoped_callable
+  action host "debugger.threads"
+}
+
+phrase debug_thread = "thread" in debug {
+  type phrase_types_scoped_callable
+  action host "debugger.thread"
+}
+
 phrase debug_next = "next" in debug {
   type phrase_types_scoped_callable
   action host "debugger.next"

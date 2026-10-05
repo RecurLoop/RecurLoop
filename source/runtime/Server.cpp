@@ -24,6 +24,7 @@
 namespace recurloop {
   namespace {
     constexpr std::string_view streamHandshake = ":transport-stream-v1";
+    constexpr std::string_view statusStreamHandshake = ":transport-stream-v2";
 
     bool sendBytes(int fd, std::string_view text) {
       while (!text.empty()) {
@@ -208,7 +209,15 @@ namespace recurloop {
       constexpr std::string_view traceFilePrefix = ":trace-file\t";
       const bool exits = languageExit(line);
       SessionResponse response;
-      if (line.starts_with(loadFilePrefix)) {
+      if (line == ":project-targets" || line == ":targets") {
+        response = session.projectTargets();
+      } else if (line.starts_with(":target ")) {
+        response = session.runTarget(line.substr(8), false, out, err);
+      } else if (line.starts_with(":project-run\t")) {
+        response = session.runTarget(unhex(line.substr(13)), false, out, err);
+      } else if (line.starts_with(":project-debug-prepare\t")) {
+        response = session.runTarget(unhex(line.substr(23)), true, out, err);
+      } else if (line.starts_with(loadFilePrefix)) {
         const std::string_view path = line.substr(loadFilePrefix.size());
         if (path.empty()) return {"load-file requires a path\nstatus=1\n", false, 1};
         response = session.executeFile(std::string(path), out, err);
@@ -312,6 +321,7 @@ namespace recurloop {
     bool done = false;
     bool interruptBuffered = false;
     bool framed = false;
+    bool framedStatus = false;
     while (!done) {
       const ssize_t bytes = recv(fd, chunk, sizeof(chunk), 0);
       if (bytes < 0) {
@@ -333,8 +343,9 @@ namespace recurloop {
         const std::string line = trimLine(buffer.substr(0, newline + 1));
         buffer.erase(0, newline + 1);
 
-        if (!framed && line == streamHandshake) {
+        if (!framed && (line == streamHandshake || line == statusStreamHandshake)) {
           framed = true;
+          framedStatus = line == statusStreamHandshake;
           continue;
         }
 
@@ -380,14 +391,16 @@ namespace recurloop {
           done = true;
           break;
         }
-        if (result.quit) {
+        if (result.quit && !framedStatus) {
           done = true;
           break;
         }
+        if (framedStatus && !sendFrame(fd, 'S', std::to_string(result.status))) { done = true; break; }
         if (!(framed ? sendFrame(fd, 'P', {}) : writeAll(fd, utilities::prompt::Default))) {
           done = true;
           break;
         }
+        if (result.quit) { done = true; break; }
       }
     }
     {

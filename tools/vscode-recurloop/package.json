@@ -167,7 +167,7 @@
               },
               "target": {
                 "type": "string",
-                "description": "Project target returned by VSCode:describe project; accepts program as an alternative."
+                "description": "Target declared in the RecurLoop project; accepts program as an alternative."
               },
               "executable": {
                 "type": "string",
@@ -202,7 +202,7 @@
         "properties": {
           "target": {
             "type": "string",
-            "description": "Target name returned by VSCode:describe project in the project entry."
+            "description": "Target name declared in the RecurLoop project entry."
           }
         }
       }

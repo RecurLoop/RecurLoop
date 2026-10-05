@@ -2,7 +2,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as vscode from 'vscode';
 import { RecurLoopRuntime, projectFile } from './runtime';
-import { hasProject, workspaceRoot } from './util';
+import { hasProject, hexEncode, workspaceRoot } from './util';
 
 export interface ProjectTarget {
   name: string;
@@ -18,19 +18,19 @@ export class ProjectController implements vscode.TaskProvider {
   async targets(uri: vscode.Uri): Promise<ProjectTarget[]> {
     if (!hasProject(uri)) return [];
     if (!fs.readFileSync(projectFile(uri), 'utf8').trim()) return [];
-    const response = await this.runtime.execute(uri, ['VSCode:describe project']);
+    const response = await this.runtime.execute(uri, [':project-targets']);
     const value = JSON.parse(response.trim());
     const data = typeof value === 'string' ? JSON.parse(value) : value;
-    if (!Array.isArray(data.targets)) throw new Error('VSCode:describe project must return JSON with a targets array.');
+    if (!Array.isArray(data.targets)) throw new Error(':project-targets must return JSON with a targets array.');
     const names = new Set<string>();
     for (const target of data.targets) {
       if (typeof target.name !== 'string' || !target.name || names.has(target.name) ||
-          typeof target.command !== 'string' || /[\r\n]/.test(target.command) ||
+          typeof target.command !== 'string' ||
           (target.debugExecutable !== undefined && typeof target.debugExecutable !== 'string') ||
           (target.debugProgram !== undefined && typeof target.debugProgram !== 'string') ||
           (target.dependencies !== undefined && (!Array.isArray(target.dependencies) ||
             target.dependencies.some((name: unknown) => typeof name !== 'string')))) {
-        throw new Error('Invalid or duplicate target returned by VSCode:describe project.');
+        throw new Error('Invalid or duplicate target returned by :project-targets.');
       }
       names.add(target.name);
     }
@@ -41,23 +41,7 @@ export class ProjectController implements vscode.TaskProvider {
     await vscode.workspace.saveAll(false);
     // Allow the file watcher to begin publishing saved project changes first.
     await new Promise(resolve => setTimeout(resolve, 300));
-    const targets = await this.targets(uri);
-    const commands: string[] = [];
-    const done = new Set<string>();
-    const visiting = new Set<string>();
-    const visit = (name: string) => {
-      if (done.has(name)) return;
-      if (visiting.has(name)) throw new Error(`Cyclic target dependency: ${name}`);
-      const target = targets.find(target => target.name === name);
-      if (!target) throw new Error(`Unknown RecurLoop target: ${name}`);
-      visiting.add(name);
-      for (const dependency of target.dependencies ?? []) visit(dependency);
-      visiting.delete(name);
-      done.add(name);
-      if (target.command) commands.push(target.command);
-    };
-    visit(name);
-    return commands.length ? this.runtime.execute(uri, commands) : '';
+    return this.runtime.execute(uri, [`:project-run\t${hexEncode(name)}`]);
   }
 
   private task(folder: vscode.WorkspaceFolder, name: string, definition = { type: 'recurloop', target: name }): vscode.Task {
@@ -104,7 +88,7 @@ export class ProjectController implements vscode.TaskProvider {
     const target = (await this.targets(folder.uri)).find(target => target.name === config.target);
     if (!target) throw new Error(`Unknown RecurLoop target: ${config.target}`);
     if ((target.debugProgram || target.debugExecutable) && !config.noDebug) {
-      for (const dependency of target.dependencies ?? []) await this.run(folder.uri, dependency);
+      await this.runtime.execute(folder.uri, [`:project-debug-prepare\t${hexEncode(target.name)}`]);
       if (target.debugProgram) config.program = path.resolve(workspaceRoot(folder.uri), target.debugProgram);
       if (target.debugExecutable) config.executable = path.resolve(workspaceRoot(folder.uri), target.debugExecutable);
       config.projectFile = projectFile(folder.uri);

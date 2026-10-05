@@ -1,13 +1,7 @@
 get_filename_component(REPOSITORY_ROOT "${CMAKE_CURRENT_LIST_DIR}/../../../.." ABSOLUTE)
 
-# Optimized LLVM objects do not carry RecurLoop's built-in instruction-level
-# debugger map. The Debug backend owns this feature until the LLVM backend emits
-# an equivalent map.
-if (LLVM_BACKEND)
-    message(STATUS "native debugger test skipped for the optimized LLVM backend")
-    return()
-endif()
-
+# Debug executable emission includes precise maps from both production and
+# built-in hosts; optimized release output is intentionally outside this test.
 execute_process(
     COMMAND "${PROGRAM}" --file "${REPOSITORY_ROOT}/examples/07-workflows/source-debugger/debugger_executable.rl"
     INPUT_FILE "${CMAKE_CURRENT_LIST_DIR}/_debugger_executable_commands.txt"
@@ -16,9 +10,9 @@ execute_process(
     ERROR_VARIABLE err
 )
 
-# Some containers prohibit PTRACE_TRACEME. Keep the feature test portable while
+# Some containers deny native ptrace calls. Keep the feature test portable while
 # still exercising emission and the complete backend wherever policy permits.
-if (NOT rc EQUAL 0 AND err MATCHES "ptrace or exec failed")
+if (NOT rc EQUAL 0 AND err MATCHES "operating system denied ptrace")
     message(STATUS "native debugger test skipped: ptrace is unavailable")
     return()
 endif()

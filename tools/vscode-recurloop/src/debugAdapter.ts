@@ -22,7 +22,8 @@ interface StopLocation {
   column: number;
   phrase: string;
   depth: number;
-  reason: 'breakpoint' | 'step' | 'pause' | 'entry';
+  threadId?: number;
+  reason: 'breakpoint' | 'step' | 'pause' | 'entry' | 'exception';
 }
 
 interface RuntimeBreakpoint {
@@ -50,6 +51,10 @@ export class RecurLoopDebugAdapter implements vscode.DebugAdapter, vscode.Dispos
   private terminalSocket?: net.Socket;
   private terminalSocketPath?: string;
   private targetPid?: number;
+  private readonly nativeFrames = new Map<number, { thread: number; frame: number }>();
+  private readonly nativeVariables = new Map<number, { thread: number; frame: number; path: string }>();
+  private nextFrame = 2;
+  private nextVariable = 1000000;
   private initialStop = true;
   private entryPending = false;
   private resumeAfterBreakpointUpdate = false;
@@ -116,8 +121,11 @@ export class RecurLoopDebugAdapter implements vscode.DebugAdapter, vscode.Dispos
         this.sendResponse(request, { breakpoints: this.functionBreakpoints.map(() => ({ verified: true })) });
         return;
       case 'setVariable': {
-        await this.selectFrame(Number(request.arguments?.variablesReference ?? 1) - 1);
-        const response = await this.sendInspectionCommand(`set ${String(request.arguments.name).replace(/[\r\n]/g, '')} = ${String(request.arguments.value).replace(/[\r\n]/g, '')}`);
+        const scope = this.nativeScope(Number(request.arguments?.variablesReference ?? 1));
+        await this.selectFrame(scope.frame, scope.thread);
+        const name = String(request.arguments.name).replace(/[\r\n]/g, '');
+        const variable = scope.path ? scope.path + (name.startsWith('[') ? '' : '.') + name : name;
+        const response = await this.sendInspectionCommand(`set ${variable} = ${String(request.arguments.value).replace(/[\r\n]/g, '')}`);
         const value = response.match(/\[debug\] (.+):([^ ]+) = (.*)/);
         if (!value) throw new Error(response || 'Cannot update variable');
         this.sendResponse(request, { value: value[3], type: value[2], variablesReference: 0 });
@@ -130,9 +138,19 @@ export class RecurLoopDebugAdapter implements vscode.DebugAdapter, vscode.Dispos
         await this.start();
         this.sendResponse(request);
         return;
-      case 'threads':
-        this.sendResponse(request, { threads: [{ id: 1, name: 'RecurLoop' }] });
+      case 'threads': {
+        if (!this.configuration?.executable || !this.stopped || !this.atPrompt) {
+          this.sendResponse(request, { threads: [{ id: this.stopped?.threadId ?? this.targetPid ?? 1, name: 'RecurLoop' }] });
+          return;
+        }
+        const response = await this.sendInspectionCommand('threads');
+        const threads = response.split('\n').filter(line => line.startsWith('[debug-thread]\t')).map(line => {
+          const fields = line.split('\t');
+          return { id: Number(fields[1]), name: `${hexDecode(fields[2]) || 'RecurLoop'} (${fields[1]})` };
+        });
+        this.sendResponse(request, { threads });
         return;
+      }
       case 'stackTrace':
         await this.stackTrace(request);
         return;
@@ -148,20 +166,20 @@ export class RecurLoopDebugAdapter implements vscode.DebugAdapter, vscode.Dispos
         await this.evaluate(request);
         return;
       case 'continue':
-        this.control(request, 'continue');
+        await this.control(request, 'continue');
         return;
       case 'next':
-        this.control(request, 'next');
+        await this.control(request, 'next');
         return;
       case 'stepIn':
-        this.control(request, 'step');
+        await this.control(request, 'step');
         return;
       case 'stepOut':
-        this.control(request, 'finish');
+        await this.control(request, 'finish');
         return;
       case 'pause':
         if (!this.targetPid) throw new Error('Pause requires an emitted executable target.');
-        process.kill(this.targetPid, 'SIGSTOP');
+        if (this.child?.pid) process.kill(this.child.pid, 'SIGUSR1');
         this.sendResponse(request);
         return;
       case 'restart':
@@ -217,11 +235,13 @@ export class RecurLoopDebugAdapter implements vscode.DebugAdapter, vscode.Dispos
       return;
     }
     if (this.configuration.executable) {
+      const thread = Number(request.arguments?.threadId ?? this.stopped.threadId ?? this.targetPid);
+      await this.sendInspectionCommand(`thread ${thread}`);
       const response = await this.sendInspectionCommand('stack');
       const frames = response.split('\n').filter(line => line.startsWith('[debug-frame]\t')).map(line => {
         const fields = line.split('\t');
         const file = hexDecode(fields[2]);
-        return { id: Number(fields[1]) + 1, name: hexDecode(fields[5]) || '<recurloop>',
+        return { id: this.frameHandle(thread, Number(fields[1])), name: hexDecode(fields[5]) || '<recurloop>',
           ...(file.startsWith('<') ? { presentationHint: 'subtle' } : { source: { name: path.basename(file), path: file } }),
           line: Number(fields[3]), column: Number(fields[4]) };
       });
@@ -249,12 +269,13 @@ export class RecurLoopDebugAdapter implements vscode.DebugAdapter, vscode.Dispos
       return;
     }
     if (this.configuration.executable) {
-      await this.selectFrame(Number(request.arguments?.variablesReference ?? 1) - 1);
-      const response = await this.sendInspectionCommand('locals');
-      const variables = response.split('\n').flatMap(line => {
-        const match = line.match(/^\[debug\] (.+):([^ ]+) = (.*)$/);
-        return match ? [{ name: match[1], type: match[2], value: match[3], variablesReference: 0 }] : [];
-      });
+      const scope = this.nativeScope(Number(request.arguments?.variablesReference ?? 1));
+      await this.selectFrame(scope.frame, scope.thread);
+      const start = Math.max(0, Number(request.arguments?.start ?? 0));
+      const count = Math.min(1024, Math.max(0, Number(request.arguments?.count ?? 100)));
+      const response = await this.sendInspectionCommand(scope.path
+        ? `children ${rlString(scope.path)}, ${start}, ${count}` : 'locals');
+      const variables = this.parseNativeVariables(response, scope.thread, scope.frame);
       this.sendResponse(request, { variables });
       return;
     }
@@ -281,7 +302,17 @@ export class RecurLoopDebugAdapter implements vscode.DebugAdapter, vscode.Dispos
       this.sendError(request, 'RecurLoop expressions can be evaluated only while the target is stopped.');
       return;
     }
-    await this.selectFrame(Number(request.arguments?.frameId ?? 1) - 1);
+    const scope = this.nativeScope(Number(request.arguments?.frameId ?? 1));
+    await this.selectFrame(scope.frame, scope.thread);
+    if (this.configuration.executable && /^[A-Za-z_]\w*(?:(?:\.|->)[A-Za-z_]\w*|\[\d+\])*$/.test(expression)) {
+      const response = await this.sendInspectionCommand(`value ${rlString(expression)}`);
+      const variable = this.parseNativeVariables(response, scope.thread, scope.frame)[0];
+      if (!variable) throw new Error(`Could not inspect '${expression}'.`);
+      this.sendResponse(request, { result: variable.value, type: variable.type,
+        variablesReference: variable.variablesReference, namedVariables: variable.namedVariables,
+        indexedVariables: variable.indexedVariables });
+      return;
+    }
     const result = await this.evaluateExpression(expression);
     if (!result) {
       this.sendError(request, `Could not evaluate '${expression}'.`);
@@ -290,17 +321,19 @@ export class RecurLoopDebugAdapter implements vscode.DebugAdapter, vscode.Dispos
     this.sendResponse(request, { result: result.value, type: result.type, variablesReference: 0 });
   }
 
-  private control(request: any, command: 'continue' | 'next' | 'step' | 'finish'): void {
+  private async control(request: any, command: 'continue' | 'next' | 'step' | 'finish'): Promise<void> {
     if (!this.child || !this.stopped || !this.atPrompt) {
       this.sendError(request, 'RecurLoop target is not stopped.');
       return;
     }
+    const threadId = Number(request.arguments?.threadId ?? this.stopped.threadId ?? this.targetPid ?? 1);
+    if (this.configuration.executable) await this.sendInspectionCommand(`thread ${threadId}`);
     this.stopped = undefined;
     this.pendingStop = undefined;
     this.atPrompt = false;
     this.child.stdin.write(command + '\n');
     this.sendResponse(request, command === 'continue' ? { allThreadsContinued: true } : undefined);
-    this.sendEvent('continued', { threadId: 1, allThreadsContinued: true });
+    this.sendEvent('continued', { threadId, allThreadsContinued: command === 'continue' });
   }
 
   private async start(): Promise<void> {
@@ -408,7 +441,7 @@ export class RecurLoopDebugAdapter implements vscode.DebugAdapter, vscode.Dispos
   private handleLine(rawLine: string): void {
     const line = stripAnsi(rawLine);
     if (this.pendingInspection) this.pendingInspection.stdout.push(line);
-    if (line && !line.startsWith('[debug-event]') && !line.startsWith('[debug-frame]')) {
+    if (line && !/^\[debug-(?:event|frame|variable|thread)\]/.test(line)) {
       if (!this.configuration.executable && !line.startsWith('[debug]')) this.sourceTerminalWrite.fire(line + '\r\n');
       else this.sendEvent('output', { category: 'console', output: line + '\n' });
     }
@@ -417,9 +450,9 @@ export class RecurLoopDebugAdapter implements vscode.DebugAdapter, vscode.Dispos
     if (pid) { this.targetPid = Number(pid[1]); this.breakpointDirty = true; }
     if (line.startsWith('[debug-event]\tstop\t')) {
       const fields = line.split('\t');
-      this.pendingStop = { reason: fields[2] === 'breakpoint' ? 'breakpoint' : 'step',
+      this.pendingStop = { reason: fields[2] === 'breakpoint' ? 'breakpoint' : fields[2] === 'signal' ? 'exception' : fields[2] === 'paused' ? 'pause' : 'step',
         path: hexDecode(fields[3]), line: Number(fields[4]), column: Number(fields[5]),
-        phrase: hexDecode(fields[7]) || hexDecode(fields[6]), depth: 0 };
+        phrase: hexDecode(fields[7]) || hexDecode(fields[6]), depth: 0, threadId: Number(fields[8]) || this.targetPid };
       return;
     }
     const stop = line.match(/^\[debug\] (breakpoint|stopped) (.+):(\d+):(\d+) phrase "(.*)" depth (\d+)$/);
@@ -455,6 +488,8 @@ export class RecurLoopDebugAdapter implements vscode.DebugAdapter, vscode.Dispos
       if (this.breakpointDirty) await this.applyLiveBreakpoints();
       this.stopped = this.pendingStop;
       this.pendingStop = undefined;
+      this.nativeFrames.clear(); this.nativeVariables.clear(); this.nextFrame = 2; this.nextVariable = 1000000;
+      this.nativeFrames.set(1, { thread: this.stopped.threadId ?? this.targetPid ?? 1, frame: 0 });
       if (this.resumeAfterBreakpointUpdate) {
         this.resumeAfterBreakpointUpdate = false;
         this.stopped = undefined;
@@ -482,12 +517,12 @@ export class RecurLoopDebugAdapter implements vscode.DebugAdapter, vscode.Dispos
         this.child?.stdin.write('continue\n');
         return;
       }
-      if (!this.stopped.path) this.stopped.reason = 'pause';
-      this.sendEvent('stopped', { reason: this.stopped.reason, threadId: 1, allThreadsStopped: true });
+      if (!this.stopped.path && this.stopped.reason !== 'exception') this.stopped.reason = 'pause';
+      this.sendEvent('stopped', { reason: this.stopped.reason, threadId: this.stopped.threadId ?? 1, allThreadsStopped: true });
     } catch (error) {
       this.sendEvent('output', { category: 'stderr', output: `[debug] ${String(error)}\n` });
       this.pendingStop = undefined;
-      if (this.stopped) this.sendEvent('stopped', { reason: 'breakpoint', threadId: 1, allThreadsStopped: true });
+      if (this.stopped) this.sendEvent('stopped', { reason: 'breakpoint', threadId: this.stopped.threadId ?? 1, allThreadsStopped: true });
     } finally {
       this.finalizingStop = false;
     }
@@ -496,7 +531,7 @@ export class RecurLoopDebugAdapter implements vscode.DebugAdapter, vscode.Dispos
   private pauseForBreakpointUpdate(): void {
     if (this.configuration?.executable && this.targetPid && !this.stopped && !this.pendingStop && !this.atPrompt) {
       this.resumeAfterBreakpointUpdate = true;
-      process.kill(this.targetPid, 'SIGSTOP');
+      if (this.child?.pid) process.kill(this.child.pid, 'SIGUSR1');
     }
   }
 
@@ -543,8 +578,36 @@ export class RecurLoopDebugAdapter implements vscode.DebugAdapter, vscode.Dispos
     return undefined;
   }
 
-  private selectFrame(frame: number): Promise<unknown> {
-    return this.configuration.executable ? this.sendInspectionCommand(`frame ${frame}`) : Promise.resolve();
+  private nativeScope(reference: number): { thread: number; frame: number; path?: string } {
+    return this.nativeVariables.get(reference) ?? this.nativeFrames.get(reference)
+      ?? { thread: this.stopped?.threadId ?? this.targetPid ?? 1, frame: Math.max(0, reference - 1) };
+  }
+
+  private frameHandle(thread: number, frame: number): number {
+    for (const [id, scope] of this.nativeFrames) if (scope.thread === thread && scope.frame === frame) return id;
+    const id = this.nextFrame++; this.nativeFrames.set(id, { thread, frame }); return id;
+  }
+
+  private parseNativeVariables(response: string, thread: number, frame: number): any[] {
+    return response.split('\n').filter(line => line.startsWith('[debug-variable]\t')).map(line => {
+      const fields = line.split('\t');
+      const variablePath = hexDecode(fields[1]);
+      const children = Number(fields[5]);
+      let reference = 0;
+      if (children) {
+        reference = this.nextVariable++;
+        this.nativeVariables.set(reference, { thread, frame, path: variablePath });
+      }
+      return { name: hexDecode(fields[2]), type: hexDecode(fields[3]), value: hexDecode(fields[4]),
+        evaluateName: variablePath, variablesReference: reference,
+        ...(Number(fields[6]) === 4 ? { indexedVariables: children } : { namedVariables: children }) };
+    });
+  }
+
+  private async selectFrame(frame: number, thread = this.stopped?.threadId ?? this.targetPid ?? 1): Promise<void> {
+    if (!this.configuration.executable) return;
+    await this.sendInspectionCommand(`thread ${thread}`);
+    await this.sendInspectionCommand(`frame ${frame}`);
   }
 
   private sendInspectionCommand(command: string): Promise<string> {
@@ -619,7 +682,7 @@ export class RecurLoopDebugAdapter implements vscode.DebugAdapter, vscode.Dispos
             const end = buffer.indexOf('\n');
             const line = buffer.slice(0, end); buffer = buffer.slice(end + 1);
             if (line.startsWith('/dev/pts/')) { clearTimeout(timer); resolve(line); }
-            else if (line === 'interrupt' && this.targetPid) process.kill(this.targetPid, 'SIGSTOP');
+            else if (line === 'interrupt' && this.child?.pid) process.kill(this.child.pid, 'SIGUSR1');
           }
         });
         socket.on('close', () => {

@@ -291,8 +291,10 @@ emit executable debug "/tmp/app-debug" app_debug_main = fn () -> i64 {
 `emit executable` defaults to release output: PIE, immediate binding with
 full RELRO, a non-executable stack, x86-64 CET/IBT metadata and landing pads,
 stack canaries in generated `fn` code, and a stripped static symbol table.
-The `debug` form retains symbols and disables optimization for the LLVM
-function compiled by that directive while retaining the security properties.
+The `debug` form retains symbols and exact statement/local-layout metadata while
+retaining the security properties. LLVM-enabled hosts use the built-in debug
+generator for the entry and reachable source functions, linked by the configured
+Clang/LLD toolchain. See [projects.md](projects.md) for native debugging.
 Hand-written `asm` remains responsible for valid indirect-branch landing
 pads inside the user-controlled instruction stream.
 

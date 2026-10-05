@@ -128,33 +128,35 @@ and language dependencies. Opening a workspace containing this file starts
 the runtime; opening a project console connects a
 separate session to that server.
 
-To expose Tasks and Run and Debug targets, define `VSCode:describe project` to
-print JSON with a `targets` array. Each target specifies a `name`, a `command`
-containing one line of RecurLoop source, and optional target `dependencies`.
-See this repository's [project entry](recurloop.project.rl) for build, run,
-debug, and check targets. Set `recurloop.projectFile` to use another entry path.
-An empty entry enables the console but exposes no task targets. To select the
-project's starting source declaratively, put an ordinary include in the entry:
+Declare build, run and debug targets using ordinary source blocks:
 
 ```rl
-include "src/main.rl"
+target build-debug {
+    emit executable debug ".cache/recurloop/app-debug" app_main = fn () -> i64 {
+        return Application:main()
+    }
+}
+target debug depends [build-debug] debug executable ".cache/recurloop/app-debug" {}
 ```
 
-The same entry works outside VS Code using the ordinary CLI options:
+The same project works from the command line:
 
 ```bash
-recurloop --file recurloop.project.rl             # execute the project once
-recurloop --file recurloop.project.rl --serve     # publish it and open a project console
-recurloop --file config/my-project.rl --serve     # select another entry explicitly
+recurloop --targets
+recurloop --target build-debug
+recurloop --debug-target debug
+recurloop --trace src/main.rl
+recurloop --project recurloop.project.rl --serve
 ```
 
-Run these commands from the project directory. Libraries can be selected before
-`--file`, for example `--library shell --library inferred`, as in VS Code.
-The workspace entry requirement applies to extension launches; standalone CLI
-scripts and REPL sessions continue to work normally.
+Actions discover `recurloop.project.rl` in parent directories; `--project`
+selects another entry. The CLI and editors share graph validation, dependency
+execution and semantic inspection. Project mode defaults to the Project,
+Shell and Inferred libraries. See [docs/projects.md](docs/projects.md) for the
+source-defined grammar, custom roots/imports and client protocol.
 
 Saved changes to `.rl` and `.rli` files reload and republish the project using
-the module cache under `.cache/recurloop-vscode`. Existing consoles keep their
+the module cache under `.cache/recurloop`. Existing consoles keep their
 session state; run `:refresh` to adopt the published environment. After replacing
 the host or installed libraries, use **RecurLoop: Restart Language Runtime**
 and reopen the consoles.
@@ -844,9 +846,12 @@ continue
 Static executables emitted by RecurLoop can also be debugged when they contain
 RecurLoop source metadata.
 
-The built-in backend currently provides the precise instruction map used by
-the source debugger. LLVM debug-map emission is not implemented yet, so a
-Debug build is the recommended debugger workflow.
+`emit executable debug` supplies precise statement maps and local layouts from
+both LLVM-enabled and built-in hosts. LLVM-enabled hosts rebuild debug entry
+points and reachable source functions with the built-in debug generator.
+Records, arrays and pointer pointees can be expanded, and new threads are
+traced automatically. See [docs/projects.md](docs/projects.md) for CLI debugging,
+thread selection and aggregate inspection.
 
 See [`examples/07-workflows/source-debugger/`](examples/07-workflows/source-debugger/).
 
@@ -958,7 +963,7 @@ RecurLoop is deliberately experimental. In particular:
 - the engine-image wire format is not stable;
 - the built-in native backend currently targets Linux x86-64;
 - runtime LLVM compilation targets the host;
-- LLVM source-debug mapping is not implemented yet;
+- source debugging requires `emit executable debug`; release output stays optimized;
 - foreign-language experiments implement deliberately limited compatibility
   subsets rather than claiming complete language implementations;
 - the current shared root lexicon can cause collisions between a foreign

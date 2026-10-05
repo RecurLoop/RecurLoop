@@ -4,6 +4,7 @@
 #include <recurloop/Project.hpp>
 #include <recurloop/SessionRequest.hpp>
 #include <recurloop/Semantic.hpp>
+#include <recurloop/Targets.hpp>
 #include <utilities/Exception.hpp>
 
 #include <algorithm>
@@ -530,6 +531,45 @@ namespace recurloop {
           context.io.in = nullptr;
           context.source = {"", 1, 1, true, {}};
           executeInputs(context);
+        },
+        out, err);
+  }
+
+  SessionResponse Session::projectTargets() {
+    return runRequest([](context::Context &context) { *context.io.out << Targets::describe(Targets::read(context)); });
+  }
+
+  SessionResponse Session::runTarget(std::string_view name, bool prepareDebug, std::ostream *out, std::ostream *err) {
+    return runRequest(
+        [&](context::Context &context) {
+          const auto target = Targets::run(context, name, prepareDebug);
+          if (prepareDebug) *context.io.out << Targets::describe({target});
+        },
+        out, err);
+  }
+
+  SessionResponse Session::debugTarget(std::string_view name, std::ostream *out, std::ostream *err) {
+    return runRequest(
+        [&](context::Context &context) {
+          const auto target = Targets::run(context, name, true);
+          const bool native = !target.debugExecutable.empty();
+          const auto &entry = native ? target.debugExecutable : target.debugProgram;
+          // Paths are data. Encode them as a source literal without allowing code injection.
+          std::string literal = "\"";
+          for (const char ch : entry) {
+            if (ch == '\\' || ch == '"') literal += '\\';
+            if (ch == '\n')
+              literal += "\\n";
+            else if (ch == '\r')
+              literal += "\\r";
+            else if (ch == '\t')
+              literal += "\\t";
+            else
+              literal += ch;
+          }
+          literal += '"';
+          executeSource(context, std::string(native ? "debug:executable run " : "debug:run ") + literal + '\n',
+                        "<project-debug>", 1, 1);
         },
         out, err);
   }

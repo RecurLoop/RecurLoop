@@ -5,6 +5,9 @@ terminals, and the source-defined IDE. A Project owns immutable published
 lexicon generations; each client owns an independent mutable Session attached to
 one of those generations.
 
+Executable entries, target syntax, CLI actions and debugging are documented in
+[projects.md](projects.md). These operations are shared by all clients.
+
 ## Session publication
 
 VS Code starts this runtime only for workspace folders containing the saved
@@ -14,19 +17,19 @@ without overwriting existing source. Deleting the entry stops the editor's
 shared server. Loose source files retain static highlighting without launching
 the host. Custom entry paths and each workspace folder are checked separately.
 
-An entry is normal RecurLoop source and can declare its starting file with
-`include "src/main.rl"`. Outside VS Code the same setup uses ordinary arguments:
-`recurloop --file recurloop.project.rl --serve` loads and publishes the entry,
-then opens a console. Add `--unix <socket>` for other clients, and select library
-imports before `--file` when needed. Without `--serve`, `--file` executes once.
-The CLI continues to support independent scripts and REPLs without a marker.
+An entry is normal RecurLoop source. `recurloop --project recurloop.project.rl
+--serve` loads it with the project vocabulary and publishes its environment,
+then opens a console. Add `--unix <socket>` for other clients. `--targets`,
+`--target <name>`, `--debug-target <name>`, `--inspect <file>` and `--trace <file>`
+discover the entry in parent directories or use an explicit `--project` path.
+Independent scripts and REPLs continue to work without a project marker.
 
 A session can publish its current portable language state with `:publish`.
 Other sessions keep their existing generation until they execute `:refresh`.
 `Session::refresh()` attaches directly to `Project::current()`, so all transports
 observe the same publication graph.
 
-The IDE uses one persistent `recurloop --library project --serve --unix ...`
+The IDE uses one persistent `recurloop --library project --library ide --serve --unix ...`
 process for its entire lifetime. Candidate rebuild sessions and integrated
 terminals connect to that same server. Publishing a candidate does not refresh
 already-open terminal sessions: each terminal keeps its local state and current
@@ -55,6 +58,12 @@ command completion. Payloads may include NUL bytes and prompt-looking text.
 Status diagnostics remain output text. Input commands and Ctrl+C retain their
 existing line/control-byte format. Clients that do not select framing retain
 plain text responses and prompts.
+
+Clients that send `:transport-stream-v2` use the same `O` output and empty `P`
+completion frames. An `S` frame immediately before `P` contains the decimal
+request status. VS Code uses this version so application output containing
+`> `, `status=1`, NUL bytes or split UTF-8 cannot be mistaken for protocol state.
+The v1 handshake and plain prompt transport remain available to existing clients.
 
 ## Source-module cache
 

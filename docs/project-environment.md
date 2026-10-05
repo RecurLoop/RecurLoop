@@ -73,7 +73,7 @@ modifying the host or rebuilding `ide.rli`.
 `app.reload("hot")` recursively watches the configured watch tree with inotify,
 skipping `.git`, `build`, `.cache`, and `node_modules`. Stable write, rename and
 delete events schedule a rebuild only when their canonical path belongs to the
-active source dependency graph. Rebuilds start from the immutable `project.rli`
+active source dependency graph. Rebuilds start from the immutable Project/IDE
 baseline and restore unchanged source modules through their linked `.rli` graph.
 
 `app.reload("manual")` records source changes but does not rebuild automatically;

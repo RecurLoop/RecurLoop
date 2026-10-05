@@ -424,6 +424,7 @@ add_library(RecurloopRuntimeLib STATIC
     "${RECURLOOP_SOURCE_DIR}/runtime/Generation.cpp"
     "${RECURLOOP_SOURCE_DIR}/runtime/Project.cpp"
     "${RECURLOOP_SOURCE_DIR}/runtime/Session.cpp"
+    "${RECURLOOP_SOURCE_DIR}/runtime/Targets.cpp"
     "${RECURLOOP_SOURCE_DIR}/runtime/Server.cpp"
     "${RECURLOOP_EMBEDDED_CORE_CPP}")
 target_include_directories(RecurloopRuntimeLib PRIVATE "${RECURLOOP_INCLUDE_DIR}" "${RECURLOOP_SOURCE_DIR}")
@@ -522,9 +523,7 @@ recurloop_add_language_library(ide
     "${RECURLOOP_IDE_IMAGE}"
     gui)
 
-# project.rli is the shared standard environment opened by the IDE.  It is
-# intentionally one image for every ordinary workspace: per-project files are
-# applied later as a tiny Project generation overlay.
+# Project vocabulary is independent of any editor or graphics environment.
 file(GLOB_RECURSE RECURLOOP_PROJECT_LIBRARY_SOURCES CONFIGURE_DEPENDS
     "${CMAKE_CURRENT_SOURCE_DIR}/libraries/project/*.rl")
 add_custom_command(
@@ -532,12 +531,9 @@ add_custom_command(
     COMMAND "${CMAKE_COMMAND}" -E rm -f "${RECURLOOP_PROJECT_IMAGE}"
     COMMAND "$<TARGET_FILE:Recurloop>"
             --library-path "${RECURLOOP_LIBRARY_OUTPUT_DIR}"
-            --library language-kit
-            --library gui
-            --library ide
             --file "libraries/project/library.rl"
             -- "${RECURLOOP_PROJECT_IMAGE}"
-    DEPENDS Recurloop "${RECURLOOP_IDE_IMAGE}"
+    DEPENDS Recurloop
             ${RECURLOOP_PROJECT_LIBRARY_SOURCES}
             ${RECURLOOP_LIBRARY_BUILD_SOURCES}
     WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"

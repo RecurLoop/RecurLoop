@@ -11,7 +11,7 @@ namespace compiler {
     constexpr std::uint64_t ModuleRecordMagic = 0x314D4742444C52ull; // RLDBGM1
     constexpr std::uint64_t ExecutableMagic = 0x31454742444C52ull;   // RLDBGE1
     constexpr std::uint64_t ExecutableFooter = 0x31464742444C52ull;  // RLDBGF1
-    constexpr std::uint32_t Version = 1;
+    constexpr std::uint32_t Version = 2;
 
     class Writer {
     public:
@@ -74,6 +74,40 @@ namespace compiler {
       std::size_t cursor = 0;
     };
 
+    void writeLocal(Writer &writer, const DebugLocal &local) {
+      writer.text(local.name);
+      writer.text(local.type);
+      writer.number(local.frameOffset);
+      writer.number(local.size);
+      writer.number(local.kind);
+      writer.number(static_cast<std::uint8_t>(local.signedValue));
+      writer.number(local.memberOffset);
+      writer.number(local.elementCount);
+      if (local.children.size() > std::numeric_limits<std::uint32_t>::max()) THROW(, "too many debug members")
+      writer.number(static_cast<std::uint32_t>(local.children.size()));
+      for (const auto &child : local.children) writeLocal(writer, child);
+    }
+
+    DebugLocal readLocal(Reader &reader, std::uint32_t version, unsigned depth = 0) {
+      if (depth > 32) THROW(, "debug type nesting is too deep")
+      DebugLocal local;
+      local.name = reader.text();
+      local.type = reader.text();
+      local.frameOffset = reader.number<std::uint64_t>();
+      local.size = reader.number<std::uint32_t>();
+      local.kind = reader.number<std::uint8_t>();
+      local.signedValue = reader.number<std::uint8_t>() != 0;
+      if (version >= 2) {
+        local.memberOffset = reader.number<std::uint64_t>();
+        local.elementCount = reader.number<std::uint64_t>();
+        const auto count = reader.number<std::uint32_t>();
+        if (count > reader.remaining() / 22) THROW(, "invalid debug member count")
+        for (std::uint32_t index = 0; index < count; ++index)
+          local.children.push_back(readLocal(reader, version, depth + 1));
+      }
+      return local;
+    }
+
     void writePoint(Writer &writer, const DebugPoint &point, bool resolved) {
       writer.number(resolved ? point.address : point.offset);
       writer.number(point.line);
@@ -84,19 +118,12 @@ namespace compiler {
       writer.text(point.phrase);
       if (point.locals.size() > std::numeric_limits<std::uint32_t>::max()) THROW(, "too many debug locals")
       writer.number(static_cast<std::uint32_t>(point.locals.size()));
-      for (const DebugLocal &local : point.locals) {
-        writer.text(local.name);
-        writer.text(local.type);
-        writer.number(local.frameOffset);
-        writer.number(local.size);
-        writer.number(local.kind);
-        writer.number(static_cast<std::uint8_t>(local.signedValue));
-      }
+      for (const DebugLocal &local : point.locals) writeLocal(writer, local);
     }
 
-    DebugPoint readPoint(Reader &reader, bool resolved) {
-      constexpr std::size_t MinimumLocalBytes = sizeof(std::uint32_t) * 2 + sizeof(std::uint64_t) +
-                                                sizeof(std::uint32_t) + sizeof(std::uint8_t) * 2;
+    DebugPoint readPoint(Reader &reader, bool resolved, std::uint32_t version) {
+      constexpr std::size_t MinimumLocalBytes =
+          sizeof(std::uint32_t) * 2 + sizeof(std::uint64_t) + sizeof(std::uint32_t) + sizeof(std::uint8_t) * 2;
       DebugPoint point;
       if (resolved)
         point.address = reader.number<std::uint64_t>();
@@ -112,14 +139,7 @@ namespace compiler {
       if (count > reader.remaining() / MinimumLocalBytes) THROW(, "invalid RecurLoop debug local count")
       point.locals.reserve(count);
       for (std::uint32_t index = 0; index < count; ++index) {
-        DebugLocal local;
-        local.name = reader.text();
-        local.type = reader.text();
-        local.frameOffset = reader.number<std::uint64_t>();
-        local.size = reader.number<std::uint32_t>();
-        local.kind = reader.number<std::uint8_t>();
-        local.signedValue = reader.number<std::uint8_t>() != 0;
-        point.locals.push_back(std::move(local));
+        point.locals.push_back(readLocal(reader, version));
       }
       return point;
     }
@@ -148,9 +168,10 @@ namespace compiler {
     std::vector<DebugPoint> result;
     while (!input.done()) {
       if (input.number<std::uint64_t>() != ModuleRecordMagic) THROW(, "invalid RecurLoop module debug magic")
-      if (input.number<std::uint32_t>() != Version) THROW(, "unsupported RecurLoop module debug version")
+      const auto version = input.number<std::uint32_t>();
+      if (version < 1 || version > Version) THROW(, "unsupported RecurLoop module debug version")
       Reader record(input.take(input.number<std::uint32_t>()));
-      result.push_back(readPoint(record, false));
+      result.push_back(readPoint(record, false, version));
       if (!record.done()) THROW(, "RecurLoop module debug record has trailing bytes")
     }
     return result;
@@ -189,13 +210,14 @@ namespace compiler {
       THROW(, "executable has no RecurLoop debug metadata")
     Reader input(executable.subspan(executable.size() - FooterBytes - payloadBytes, payloadBytes));
     if (input.number<std::uint64_t>() != ExecutableMagic) THROW(, "invalid RecurLoop executable debug magic")
-    if (input.number<std::uint32_t>() != Version) THROW(, "unsupported RecurLoop executable debug version")
+    const auto version = input.number<std::uint32_t>();
+    if (version < 1 || version > Version) THROW(, "unsupported RecurLoop executable debug version")
     const std::uint32_t count = input.number<std::uint32_t>();
     constexpr std::size_t MinimumPointBytes = sizeof(std::uint64_t) * 3 + sizeof(std::uint32_t) * 5;
     if (count > input.remaining() / MinimumPointBytes) THROW(, "invalid RecurLoop executable debug point count")
     std::vector<DebugPoint> result;
     result.reserve(count);
-    for (std::uint32_t index = 0; index < count; ++index) result.push_back(readPoint(input, true));
+    for (std::uint32_t index = 0; index < count; ++index) result.push_back(readPoint(input, true, version));
     if (!input.done()) THROW(, "RecurLoop executable debug metadata has trailing bytes")
     std::sort(result.begin(), result.end(), [](const DebugPoint &left, const DebugPoint &right) {
       if (left.address != right.address) return left.address < right.address;

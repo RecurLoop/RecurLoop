@@ -37,15 +37,13 @@ const project = new ProjectController(runtime);
   assert.ok(!log.some(line => line.includes('[analysis] starting')));
   fs.writeFileSync(path.join(root, 'grammar.rl'), 'syntax greeting <value:expr> => print ${value}\n');
   fs.writeFileSync(path.join(root, 'main.rl'), 'greeting 42\n');
-  const contract = { targets: [
-    { name: 'prepare', command: 'var target_value = 41' },
-    { name: 'check', dependencies: ['prepare'], command: 'assert target_value + 1 == 42' },
-    { name: 'bad', command: 'assert false' },
-    { name: 'cycle', dependencies: ['cycle'], command: '' }
-  ] };
-  fs.writeFileSync(path.join(root, 'recurloop.project.rl'),
-    'include "grammar.rl"\ninclude "main.rl"\nlet VSCode = phrase { dictionary = true }\n' +
-    `syntax VSCode:describe "project" => print ${JSON.stringify(JSON.stringify(contract))}\n`);
+  fs.writeFileSync(path.join(root, 'recurloop.project.rl'), `include "grammar.rl"
+include "main.rl"
+target prepare { var target_value = 41 }
+target check depends [prepare] { assert target_value + 1 == 42 }
+target bad { assert false }
+target cycle depends [cycle] {}
+`);
   assert.equal((await project.targets(folder.uri)).length, 4);
   await project.run(folder.uri, 'check'); // dependency state must survive in the same session
   await assert.rejects(project.run(folder.uri, 'bad'));
@@ -92,8 +90,8 @@ const project = new ProjectController(runtime);
   await project.run(folder.uri, 'build-release');
   await project.run(folder.uri, 'build-debug');
   await project.run(folder.uri, 'run');
-  assert.ok(fs.existsSync(path.join(repo, '.cache/recurloop-vscode/application')));
-  assert.ok(fs.existsSync(path.join(repo, '.cache/recurloop-vscode/application-debug')));
+  assert.ok(fs.existsSync(path.join(repo, '.cache/recurloop/application')));
+  assert.ok(fs.existsSync(path.join(repo, '.cache/recurloop/application-debug')));
   console.log('Runtime integration passed: project graph, custom syntax, targets, failure, cycle, console and restart.');
 })().catch(error => { console.error(error, log.join('\n')); process.exitCode = 1; })
   .finally(() => { runtime.dispose(); setup.dispose(); fs.rmSync(root, { recursive: true, force: true }); });

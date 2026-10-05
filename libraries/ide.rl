@@ -1786,7 +1786,7 @@ let IDE:Runner:start_server = fn (self:IDE:Runner*) -> i64 {
     let library_path = IDE:resolve_library_directory(self.program)
     var cache_directory = IDE:copy(self.cache_directory)
     if !cache_directory { cache_directory = IDE:project_cache_directory(self.root) }
-    let args = cast(u8**, malloc(18 * sizeof(u8*)))
+    let args = cast(u8**, malloc(22 * sizeof(u8*)))
     if !args {
         if library_path { free(library_path) }
         if cache_directory { free(cache_directory) }
@@ -1798,11 +1798,13 @@ let IDE:Runner:start_server = fn (self:IDE:Runner*) -> i64 {
         args[at] = "--library-path"; at += 1
         args[at] = library_path; at += 1
     }
-    // project.rli is the immutable shared baseline. No workspace source is
+    // Project and IDE images form the immutable baseline. No workspace source is
     // parsed before the server socket is ready; the local overlay is published
     // later as one transaction from the GTK event loop.
     args[at] = "--library"; at += 1
     args[at] = "project"; at += 1
+    args[at] = "--library"; at += 1
+    args[at] = "ide"; at += 1
     if cache_directory {
         args[at] = "--project-cache"; at += 1
         args[at] = cache_directory; at += 1
