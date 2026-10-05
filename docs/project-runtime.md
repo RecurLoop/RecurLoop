@@ -229,3 +229,9 @@ In VS Code (`TERM_PROGRAM=vscode`), the console emits OSC 633 prompt, command,
 execution and completion markers. The socket client negotiates transport v2 to
 obtain the actual command status. These markers support command decorations,
 navigation and sticky scroll, subject to VS Code's terminal settings.
+
+Console palettes are cached per session generation and rebuilt after committed
+requests, refresh/publish, or custom completion. Keystrokes scan only the current
+input against the cached palette. Highlight requests use a synchronous socket
+path without command-worker interrupt polling; queued input is coalesced before
+redrawing, so pasted text does not make one request per byte.

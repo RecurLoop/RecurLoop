@@ -2,6 +2,7 @@
 
 #include <recurloop/Generation.hpp>
 #include <recurloop/Project.hpp>
+#include <recurloop/Semantic.hpp>
 #include <utilities/Completion.hpp>
 
 #include <functional>
@@ -74,6 +75,8 @@ namespace recurloop {
     std::unique_ptr<ContextGeneration> inspectionContextGeneration_;
     std::unique_ptr<ContextGeneration> standaloneInspectionContextGeneration_;
     std::vector<std::uint8_t> rollbackBuffer_;
+    std::unique_ptr<Semantic::ConsoleHighlighter> consoleHighlighter_;
+    GenerationId consolePaletteGeneration_ = 0;
     bool cacheEnabled_ = false;
     ProjectCacheState cacheState_;
     std::string inspectionPreparedPath_;

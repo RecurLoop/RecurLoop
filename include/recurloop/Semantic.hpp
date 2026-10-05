@@ -40,6 +40,20 @@ namespace recurloop {
     static void applyPending(context::Context &context, lexicon::Phrase phrase);
     static void clearPending(context::Context &context);
 
+    // Reusable console palette: resolve language metadata once, then scan only
+    // the edited text. Recreate after the owning session's language changes.
+    class ConsoleHighlighter {
+    public:
+      explicit ConsoleHighlighter(context::Context &context);
+      ~ConsoleHighlighter();
+      ConsoleHighlighter(const ConsoleHighlighter &) = delete;
+      ConsoleHighlighter &operator=(const ConsoleHighlighter &) = delete;
+      std::string highlight(std::string_view source);
+
+    private:
+      void *state_ = nullptr;
+    };
+
     class InspectionScope {
     public:
       InspectionScope(context::Context &context, std::string_view source, std::string_view path);

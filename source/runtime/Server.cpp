@@ -493,6 +493,31 @@ namespace recurloop {
           continue;
         }
 
+        // Highlighting only reads a cached session palette. It cannot launch
+        // a process, so skip the async task and its 20 ms interrupt polling.
+        if (framed && line.starts_with(":highlight\t")) {
+          const auto result = handle(*session, line);
+          std::string frames;
+          const auto appendFrame = [&](char kind, std::string_view payload) {
+            const auto size = static_cast<std::uint32_t>(payload.size());
+            frames.push_back(kind);
+            frames.push_back(static_cast<char>(size >> 24));
+            frames.push_back(static_cast<char>(size >> 16));
+            frames.push_back(static_cast<char>(size >> 8));
+            frames.push_back(static_cast<char>(size));
+            frames.append(payload);
+          };
+          for (std::size_t offset = 0; offset < result.text.size(); offset += 4096)
+            appendFrame('O', std::string_view(result.text).substr(offset, 4096));
+          if (framedStatus) appendFrame('S', std::to_string(result.status));
+          appendFrame('P', {});
+          if (!sendBytes(fd, frames)) {
+            done = true;
+            break;
+          }
+          continue;
+        }
+
         ProcessControl processes;
         SocketOutput socketOutput(fd, framed);
         std::ostream output(&socketOutput);

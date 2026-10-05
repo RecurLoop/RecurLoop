@@ -10,6 +10,7 @@
 #include <utilities/Exception.hpp>
 
 #include <algorithm>
+#include <memory>
 #include <array>
 #include <cstddef>
 #include <cctype>
@@ -463,8 +464,7 @@ namespace recurloop {
       return result;
     }
 
-    void recordLexicalBaseline(TraceState &trace) {
-      const LexicalBaselineCatalog catalog = buildLexicalBaselineCatalog(trace);
+    void recordLexicalBaseline(TraceState &trace, const LexicalBaselineCatalog &catalog) {
       const std::string_view source(trace.source);
       std::size_t cursor = 0;
       while (cursor < source.size()) {
@@ -551,7 +551,52 @@ namespace recurloop {
         ++cursor;
       }
     }
+    struct ConsoleHighlightState {
+      TraceState trace;
+      LexicalBaselineCatalog palette;
+    };
   } // namespace
+
+  Semantic::ConsoleHighlighter::ConsoleHighlighter(context::Context &context) {
+    auto state = std::make_unique<ConsoleHighlightState>();
+    state->trace.context = &context;
+    state->trace.metadata = catalog(context);
+    state->palette = buildLexicalBaselineCatalog(state->trace);
+    for (auto &phrase : state->palette.phrases) {
+      phrase.metadata.docs.clear();
+      phrase.metadata.hasDocs = false;
+    }
+    // The palette owns strings and colors, so no phrase pointers or lookup
+    // maps are needed while typing (or after a request replaces the lexicon).
+    state->trace.metadata.clear();
+    state_ = state.release();
+  }
+
+  Semantic::ConsoleHighlighter::~ConsoleHighlighter() {
+    delete static_cast<ConsoleHighlightState *>(state_);
+  }
+
+  std::string Semantic::ConsoleHighlighter::highlight(std::string_view source) {
+    auto &state = *static_cast<ConsoleHighlightState *>(state_);
+    auto &trace = state.trace;
+    trace.source.assign(source);
+    trace.spans.clear();
+    trace.characterOffsets.resize(source.size() + 1);
+    std::size_t characters = 0;
+    for (std::size_t index = 0; index < source.size(); ++index) {
+      trace.characterOffsets[index] = characters;
+      if ((static_cast<unsigned char>(source[index]) & 0xc0) != 0x80) ++characters;
+    }
+    trace.characterOffsets[source.size()] = characters;
+    recordLexicalBaseline(trace, state.palette);
+    std::ostringstream output;
+    // Console rendering consumes colors only. Do not serialize documentation,
+    // phrase paths or navigation facts on the per-keystroke transport.
+    for (const auto &span : trace.spans)
+      if (!span.color.empty())
+        output << "S\t" << span.start << '\t' << span.end << "\t0\t" << hex(span.color) << "\t\t\t\n";
+    return output.str();
+  }
 
   void Semantic::setKind(context::Context &context, lexicon::Phrase phrase, std::string value) {
     Patch patch;
@@ -625,7 +670,7 @@ namespace recurloop {
     // deterministic safety bound, not a debounce or wall-clock timeout.
     state->sourceStepBudget = std::max<std::size_t>(
         4096, std::min<std::size_t>(4'000'000, state->source.size() * 32 + 4096));
-    recordLexicalBaseline(*state);
+    recordLexicalBaseline(*state, buildLexicalBaselineCatalog(*state));
     state_ = state;
     previous_ = currentTrace;
     currentTrace = state;

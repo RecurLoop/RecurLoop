@@ -180,6 +180,7 @@ namespace recurloop {
     preparedPublication_.reset();
     const GenerationId contextId = project_->nextId();
     const GenerationId sessionGeneration = project_->nextId();
+    consoleHighlighter_.reset();
     contextGeneration_ = std::make_unique<ContextGeneration>(projectGeneration_->lexicon, project_->config(),
                                                              project_->actions(), project_->arguments(),
                                                              projectGeneration_->id, contextId, sessionGeneration);
@@ -469,11 +470,12 @@ namespace recurloop {
   std::string Session::highlight(std::string_view line) {
     std::lock_guard lock(mutex_);
     if (line.empty() || line.size() > 8192) return {};
-    // Reuse inspection's lexical colors and current phrase/type metadata.
-    // Do not elaborate unfinished console input: even custom language actions
-    // must never execute merely because the user typed a character.
-    Semantic::InspectionScope inspection(contextGeneration_->context(), line, "<console>");
-    return inspection.encode();
+    const auto generation = contextGeneration_->generations().session;
+    if (!consoleHighlighter_ || consolePaletteGeneration_ != generation) {
+      consoleHighlighter_ = std::make_unique<Semantic::ConsoleHighlighter>(contextGeneration_->context());
+      consolePaletteGeneration_ = generation;
+    }
+    return consoleHighlighter_->highlight(line);
   }
 
   SessionResponse Session::executeFile(const std::string &path, std::ostream *out, std::ostream *err) {
@@ -586,6 +588,8 @@ namespace recurloop {
 
   utilities::Completion Session::complete(std::string_view line, std::size_t cursor) {
     std::lock_guard lock(mutex_);
+    // User-defined completion providers can change language metadata.
+    consoleHighlighter_.reset();
     return context::Source::complete(contextGeneration_->context(), line, cursor);
   }
 

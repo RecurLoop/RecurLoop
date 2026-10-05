@@ -381,8 +381,9 @@ namespace utilities {
     if (shellIntegration_) writer_("\x1b]633;A\x07");
     refresh(line, cursor, prompt);
 
+    int queued = Timeout;
     while (true) {
-      const int byte = reader_(-1);
+      const int byte = queued != Timeout ? std::exchange(queued, Timeout) : reader_(-1);
       if (byte == End) {
         if (line.empty()) {
           writer_("\n");
@@ -498,7 +499,12 @@ namespace utilities {
         redraw = false;
       }
 
-      if (redraw) refresh(line, cursor, prompt);
+      // Drain already queued keystrokes before coloring/redrawing. This
+      // coalesces pasted text and avoids requests for partial UTF-8 bytes.
+      if (redraw) {
+        queued = reader_(0);
+        if (queued == Timeout) refresh(line, cursor, prompt);
+      }
     }
   }
 } // namespace utilities

@@ -598,8 +598,19 @@ TEST(RecurloopGeneration, ConsoleHighlightingDoesNotCommitInput) {
   const auto spans = session->highlight("console_answer = 42");
   EXPECT_NE(spans.find("S\t"), std::string::npos);
   EXPECT_EQ(session->generations().request, before.request);
+  EXPECT_EQ(session->generations().session, before.session);
   EXPECT_EQ(session->evaluate("print console_answer\n").output, "41\n");
   session->highlight("var console_uncommitted = 99");
   EXPECT_NE(session->evaluate("print console_uncommitted\n").status, 0);
-  EXPECT_EQ(session->generations().session, before.session);
+}
+
+TEST(RecurloopGeneration, ConsolePaletteUpdatesAfterRequestsAndRefresh) {
+  auto session = project()->openSession();
+  const auto original = session->highlight("ConsolePaletteType");
+  ASSERT_EQ(session->evaluate("record ConsolePaletteType { value:i64 }\n").status, 0);
+  const auto updated = session->highlight("ConsolePaletteType");
+  EXPECT_NE(updated, original);
+  EXPECT_EQ(session->highlight("ConsolePaletteType"), updated);
+  session->refresh();
+  EXPECT_EQ(session->highlight("ConsolePaletteType"), original);
 }

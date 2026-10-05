@@ -7,7 +7,7 @@
 
 namespace {
   struct ScriptedConsole {
-    std::deque<unsigned char> input;
+    std::deque<int> input;
     std::string output;
 
     void push(std::string_view bytes) {
@@ -140,7 +140,9 @@ TEST(LineEditor, AmbiguousEscapedPathsDoNotLeaveAnIncompleteEscape) {
 TEST(LineEditor, WrappedCommandsRemainCompleteInScrollback) {
   ScriptedConsole console;
   auto editor = console.editor([] { return 8; });
-  console.push("abcdefghijkl\x01Z\x05\n");
+  console.push("abcdefghijk");
+  console.input.push_back(utilities::LineEditor::Timeout);
+  console.push("l\x01Z\x05\n");
   EXPECT_EQ(editor.readLine("> ").line, "Zabcdefghijkl");
   EXPECT_NE(console.output.find("Zabcdefghijkl"), std::string::npos);
   EXPECT_NE(console.output.find("\x1b[1A"), std::string::npos);
@@ -173,4 +175,18 @@ TEST(LineEditor, ReportsEscapedCommandForVSCodeShellIntegration) {
   EXPECT_LT(prompt, input);
   EXPECT_LT(input, command);
   EXPECT_LT(command, execution);
+}
+
+TEST(LineEditor, PastedInputIsHighlightedOnce) {
+  ScriptedConsole console;
+  int requests = 0;
+  auto editor = console.editor([] { return 80; },
+                               [&](std::string_view line) {
+                                 ++requests;
+                                 EXPECT_EQ(line, "print 123456789");
+                                 return std::vector<utilities::LineEditor::ColorSpan>{{0, line.size(), 0x123456}};
+                               });
+  console.push("print 123456789\n");
+  EXPECT_EQ(editor.readLine("> ").line, "print 123456789");
+  EXPECT_EQ(requests, 1);
 }
