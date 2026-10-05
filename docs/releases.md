@@ -2,10 +2,11 @@
 
 ## Publishing RecurLoop 0.2.4 and the VS Code extension 0.1.2
 
-The release commit on `main` is tagged `v0.2.4`. After local verification,
-publish the branch and tag explicitly:
+After local verification succeeds, tag the final release commit on `main` as
+`v0.2.4`, then publish the branch and tag explicitly:
 
 ```sh
+git tag -a v0.2.4 -m "RecurLoop 0.2.4; VS Code extension 0.1.2"
 git push origin main
 git push origin v0.2.4
 ```

@@ -584,6 +584,9 @@ TEST(RecurloopGeneration, CompletionWithoutShellOnlyUsesLexicon) {
             shellCommands.candidates.end());
   EXPECT_EQ(shellFiles.candidates, (std::vector<std::string>{executable.string()}));
   EXPECT_EQ(commands.candidates, (std::vector<std::string>{"unique_completion_phrase"}));
-  EXPECT_TRUE(files.candidates.empty());
+  // Core treats '/' as an expression separator: the trailing "unique" can
+  // complete a lexicon phrase, but must not produce the filesystem path.
+  EXPECT_EQ(files.start, directory.string().size() + 1);
+  EXPECT_EQ(files.candidates, (std::vector<std::string>{"unique_completion_phrase"}));
   EXPECT_EQ(arguments.candidates, (std::vector<std::string>{"unique_completion_phrase"}));
 }
