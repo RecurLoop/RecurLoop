@@ -3,7 +3,6 @@
   #include <context/Context.hpp>
   #include <utilities/Prompt.hpp>
   #include <utilities/LineEditor.hpp>
-  #include <algorithm>
   #include <cerrno>
   #include <cctype>
   #include <clocale>
@@ -211,7 +210,8 @@ namespace context {
                   output.flush();
                   return static_cast<bool>(output);
                 },
-                [] { return utilities::LineEditor::descriptorColumns(STDIN_FILENO); }) {}
+                [] { return utilities::LineEditor::descriptorColumns(STDIN_FILENO); },
+                [this](std::string_view line, std::size_t cursor) { return Source::complete(this->context, line, cursor); }) {}
 
     protected:
       int_type underflow() override {

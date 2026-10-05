@@ -197,3 +197,41 @@ TEST(RecurloopServer, LoadFileStreamsOutputBeforeTheRequestCompletes) {
   thread.join();
   std::filesystem::remove_all(directory);
 }
+
+TEST(RecurloopServer, CompletionUsesCallingSessionAndDoesNotExecuteInput) {
+  const std::string path = "/tmp/recurloop-server-completion-" + std::to_string(getpid()) + ".sock";
+  recurloop::ServerOptions options;
+  options.stdio = false;
+  options.unixPath = path;
+  recurloop::Server server(project(), options);
+  std::thread thread([&] { EXPECT_EQ(server.run(), 0); });
+  const int first = connectUnix(path);
+  const int second = connectUnix(path);
+  EXPECT_GE(first, 0);
+  EXPECT_GE(second, 0);
+  if (first >= 0 && second >= 0) {
+    readPrompt(first);
+    readPrompt(second);
+    sendLine(first, "let unique_completion_phrase = <print>");
+    readPrompt(first);
+    // Hexadecimal source: unique_completion_ph.
+    const std::string request = ":complete\t20\t756e697175655f636f6d706c6574696f6e5f7068";
+    sendLine(first, request);
+    const auto completed = readPrompt(first);
+    EXPECT_NE(completed.find("completion\t0\n"), std::string::npos);
+    EXPECT_NE(completed.find("756e697175655f636f6d706c6574696f6e5f706872617365\n"), std::string::npos);
+    sendLine(second, request);
+    EXPECT_EQ(readPrompt(second), "completion\t0\n> ");
+    // A completion request must not run `print 42`.
+    sendLine(first, ":complete\t8\t7072696e74203432");
+    EXPECT_EQ(readPrompt(first), "completion\t6\n> ");
+    sendLine(first, ":complete\t99\t7072696e74");
+    EXPECT_NE(readPrompt(first).find("cursor exceeds source size"), std::string::npos);
+    sendLine(first, "unique_completion_phrase 42");
+    EXPECT_EQ(readPrompt(first), "42\n> ");
+  }
+  if (first >= 0) close(first);
+  if (second >= 0) close(second);
+  server.stop();
+  thread.join();
+}

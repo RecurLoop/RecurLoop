@@ -1,5 +1,36 @@
 # Production releases
 
+## Publishing RecurLoop 0.2.4 and the VS Code extension 0.1.2
+
+The release commit on `main` is tagged `v0.2.4`. After local verification,
+publish the branch and tag explicitly:
+
+```sh
+git push origin main
+git push origin v0.2.4
+```
+
+The tag starts `.github/workflows/ci.yml`, which builds and verifies the runtime,
+libraries and VSIX, then publishes their assets to GitHub Releases. Wait for the
+workflow to complete successfully before publishing the extension to Marketplace:
+extension 0.1.2 downloads the runtime assets from the `v0.2.4` release.
+
+For manual Marketplace publication, upload
+`tools/vscode-recurloop/recurloop-vscode-0.1.2.vsix` through the publisher management
+page for publisher `recurloop`. This package contains the installer, not the runtime
+binary; new users need access to GitHub Releases to install the runtime.
+
+To rebuild just the VSIX without running tests:
+
+```sh
+npm ci --prefix tools/vscode-recurloop
+npm run package --prefix tools/vscode-recurloop
+```
+
+`npm run package` compiles TypeScript through `vscode:prepublish` and creates the
+VSIX in that directory. Marketplace publication is manual; the release workflow
+only publishes GitHub Release assets.
+
 ## Dependency model
 
 RecurLoop never builds LLVM as part of its normal build or release pipeline.

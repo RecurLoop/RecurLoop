@@ -2,6 +2,7 @@
 
 #include <recurloop/Generation.hpp>
 #include <recurloop/Project.hpp>
+#include <utilities/Completion.hpp>
 
 #include <functional>
 #include <iosfwd>
@@ -47,6 +48,7 @@ namespace recurloop {
     SessionResponse runTarget(std::string_view name, bool prepareDebug = false, std::ostream *out = nullptr,
                               std::ostream *err = nullptr);
     SessionResponse debugTarget(std::string_view name, std::ostream *out = nullptr, std::ostream *err = nullptr);
+    utilities::Completion complete(std::string_view line, std::size_t cursor);
     Generations generations() const;
 
     void refresh();

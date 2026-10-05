@@ -78,5 +78,6 @@ namespace context {
   #include <context/Lookup.cpp>
   #include <context/Reference.cpp>
   #include <context/Source.cpp>
+  #include <context/Completion.cpp>
   #include <context/Staging.cpp>
 #endif

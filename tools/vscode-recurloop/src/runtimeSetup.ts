@@ -25,7 +25,6 @@ export class RuntimeSetup implements vscode.Disposable {
   private readonly version: string;
   private readonly prefix: string;
   private readonly binary: string;
-  private readonly validated = new Map<string, string>();
   private readonly reported = new Set<string>();
   private pending?: Promise<string>;
   private installer?: ChildProcess;
@@ -88,14 +87,12 @@ export class RuntimeSetup implements vscode.Disposable {
   }
 
   private async validate(executable: string): Promise<string> {
-    const stat = fs.statSync(executable);
-    const signature = `${stat.mtimeMs}:${stat.ctimeMs}:${stat.size}`;
-    if (this.validated.get(executable) === signature) return executable;
+    // Probe on every selection: timestamps and size can stay unchanged when a
+    // runtime is replaced, so file metadata cannot establish compatibility.
     const actual = await command(executable, ['--version']);
     if (!compatibleVersion(actual, this.version)) {
       throw new Error(`Incompatible RecurLoop runtime at '${executable}' (${actual}). This extension requires ${this.version} or a newer patch in the same major/minor series. Set recurloop.executablePath to a compatible executable.`);
     }
-    this.validated.set(executable, signature);
     return executable;
   }
 
@@ -147,7 +144,6 @@ export class RuntimeSetup implements vscode.Disposable {
         try { fs.renameSync(staging, this.prefix); }
         catch (error) { if (backedUp) fs.renameSync(backup, this.prefix); throw error; }
         promoted = true;
-        this.validated.delete(this.binary);
         this.output.appendLine(`[setup] installed RecurLoop ${this.version} at ${this.prefix}`);
         void vscode.window.showInformationMessage(`RecurLoop ${this.version} is installed for this extension. Your terminal PATH is unchanged.`);
         return this.binary;

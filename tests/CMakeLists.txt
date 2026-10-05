@@ -97,8 +97,15 @@ if(ENABLE_TESTS_UNIT)
         set(recurloop_unit_check_outputs "${recurloop_unit_check_outputs}" PARENT_SCOPE)
     endfunction()
 
+    recurloop_add_unit_tests(utilities UtilitiesLib)
     recurloop_add_unit_tests(radix RadixLib)
     recurloop_add_unit_tests(recurloop RecurloopLib)
+
+    add_custom_target(RecurloopCompletionTestLibraries DEPENDS "${RECURLOOP_SHELL_IMAGE}")
+    target_compile_definitions(unit_test_recurloop_generation PRIVATE
+        RECURLOOP_TEST_LANGUAGE_KIT_IMAGE="${RECURLOOP_LANGUAGE_KIT_IMAGE}"
+        RECURLOOP_TEST_SHELL_IMAGE="${RECURLOOP_SHELL_IMAGE}")
+    add_dependencies(unit_test_recurloop_generation RecurloopCompletionTestLibraries)
 
     add_custom_target(RecurloopCheckUnit DEPENDS ${recurloop_unit_check_outputs})
     set_target_properties(RecurloopCheckUnit PROPERTIES FOLDER "Verification")

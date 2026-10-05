@@ -4,6 +4,23 @@ VS Code support for RecurLoop. The extension intentionally uses the language's
 own runtime/introspection facilities instead of duplicating the RecurLoop grammar
 in TypeScript.
 
+## Getting started
+
+Runtime installation supports **Linux x86-64 with glibc >= 2.35**, including WSL.
+On Windows, open the folder with **Remote - WSL** and install this extension in WSL.
+Native Windows, macOS, ARM and Alpine do not have automatic runtime downloads.
+
+1. Open a folder in a trusted VS Code workspace.
+2. Run **RecurLoop: Initialize Project** from the Command Palette.
+3. If no runtime is available, choose **Install** to download RecurLoop and its libraries.
+4. Create a `.rl` file and use completion, **RecurLoop: Run Current File**, or **RecurLoop: Open Project Console**.
+
+If an incompatible installation is found on `PATH`, set `recurloop.executablePath`
+to a compatible executable. Installing a managed runtime does not override `PATH`;
+you can select its `bin/recurloop` explicitly. A stale `RECURLOOP_LIBRARY_PATH` can
+also select libraries from another installation; remove it or point it at the
+libraries belonging to the selected runtime.
+
 ## Features
 
 - `.rl` and `.rl.example` language registration.
@@ -51,10 +68,11 @@ Without the entry, the extension provides basic syntax highlighting and the
 initialization command, but does not launch RecurLoop for version checks,
 installation, analysis, tasks, consoles, Run or Debug. It watches for creation
 of the entry, including custom filenames, and stops the shared server when the
-entry is removed. Until a project is present, only passive activation callbacks
-and the initialization command are registered: no output channel, setup service,
-language analysis providers or runtime are created. Commands without a project
-do nothing; debug launches cancel silently. Missing entries are not errors.
+entry is removed. Until a project is present, activation callbacks and command entry points
+remain available: no output channel, setup service,
+language analysis providers or runtime are created. Explicit runtime commands without a project explain the required setup and offer
+**Initialize Project**; debug launches cancel after showing the same guidance.
+Opening a loose source file does not show setup prompts.
 There is no generic startup activation. With a custom entry name, open a RecurLoop
 source file or use Initialize Project to let the extension discover the entry.
 The repository selects RecurLoop as its default Linux terminal profile. With a
@@ -77,8 +95,9 @@ Installation requires your confirmation and downloads the complete official
 GitHub Release, including the `.rli` libraries. The bundled installer verifies
 the archive SHA-256 and internal file manifest. Its version is pinned to the
 runtime version in the source tree's `CMakeLists.txt` when the extension is built.
-Existing runtimes must be at least that patch version in the same major/minor
-series; incompatible runtimes produce an error rather than being replaced.
+This extension release requires RecurLoop 0.2.4 or a newer patch in the 0.2
+series. Compatibility is checked whenever an executable is selected; incompatible
+runtimes produce an error rather than being replaced.
 
 Managed installations live below the extension's global storage directory in
 `runtime/<version>/`. They require no administrator access and do not modify
@@ -165,7 +184,7 @@ npm run package
 Then install the generated VSIX:
 
 ```bash
-code --install-extension recurloop-vscode-0.1.1.vsix
+code --install-extension recurloop-vscode-0.1.2.vsix
 ```
 
 When using Remote - WSL, install/enable the extension in WSL because it needs to

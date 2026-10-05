@@ -60,7 +60,7 @@ that downloaded file, then reload the window. You can also install it from the
 command line (use the filename you downloaded):
 
 ```bash
-code --install-extension ./recurloop-vscode-0.1.1.vsix --force
+code --install-extension ./recurloop-vscode-0.1.2.vsix --force
 ```
 
 For a command-line download of the latest release with GitHub CLI:
@@ -242,6 +242,20 @@ $ print 6 * 7
 ```
 
 Shell is a RecurLoop language library, not a separate executable or hard-coded shell mode.
+
+Start an interactive language session without Shell with `recurloop -`.
+Tab completes active lexicon phrases, including phrases defined during the
+session. Without the Shell library, it does not suggest files or system commands.
+Loading `--library shell` enables command names from `PATH` at command positions
+and file paths in shell arguments and redirections. RecurLoop expressions and
+shell `{...}` interpolation complete lexicon phrases. Ordinary phrases retain
+longest-prefix priority; use `run` or `shell` to select a system command whose
+name is shadowed by a phrase. It inserts the common prefix; pressing Tab
+again lists ambiguous matches. Directory completions end with `/`.
+Completion behavior belongs to source libraries: core provides
+`Completion:lexicon`, and Shell installs its provider as `Completion:complete`.
+Other libraries can replace the same phrase. See the
+[completion provider API](docs/project-runtime.md#terminal-completion).
 
 You can load multiple language libraries into the same session. For example, Shell + Inferred:
 

@@ -574,6 +574,11 @@ namespace recurloop {
         out, err);
   }
 
+  utilities::Completion Session::complete(std::string_view line, std::size_t cursor) {
+    std::lock_guard lock(mutex_);
+    return context::Source::complete(contextGeneration_->context(), line, cursor);
+  }
+
   Generations Session::generations() const {
     std::lock_guard lock(mutex_);
     return contextGeneration_->generations();

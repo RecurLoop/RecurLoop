@@ -26,12 +26,14 @@
 #include <cstdint>
 #include <cstring>
 #include <exception>
+#include <filesystem>
 #include <limits>
 #include <string>
 #include <string_view>
 #include <unordered_set>
 #include <utility>
 #include <vector>
+#include <unistd.h>
 
 namespace recurloop {
   namespace {
@@ -999,6 +1001,156 @@ namespace recurloop {
 
     std::uint64_t contextPhraseFirstChild(context::Context *context, std::uint64_t owner) noexcept {
       return contextPhraseChild(context, owner, 0);
+    }
+
+    extern "C" const char *contextCompletionSource(context::Context *context) noexcept {
+      return context && context->source.completion ? context->source.completion->line.c_str() : "";
+    }
+
+    extern "C" std::uint64_t contextCompletionCursor(context::Context *context) noexcept {
+      return context && context->source.completion ? context->source.completion->cursor : 0;
+    }
+
+    extern "C" std::uint64_t contextCompletionStart(context::Context *context, std::uint64_t start) noexcept {
+      if (!context || !context->source.completion || start > context->source.completion->cursor) return 0;
+      context->source.completion->result.start = start;
+      return 1;
+    }
+
+    extern "C" std::uint64_t contextCompletionAdd(context::Context *context, const char *candidate) noexcept {
+      return checked(context, std::uint64_t{0}, [&](context::Context &value) {
+        if (!value.source.completion || !candidate) return std::uint64_t{0};
+        std::string text(candidate);
+        if (std::any_of(text.begin(), text.end(), [](unsigned char ch) { return ch < 32 || ch == 127; }))
+          return std::uint64_t{0};
+        value.source.completion->result.candidates.push_back(std::move(text));
+        return std::uint64_t{1};
+      });
+    }
+
+    extern "C" std::uint64_t contextCompletionData(context::Context *context) noexcept {
+      return context && context->source.completion ? context->source.completion->data : 0;
+    }
+
+    extern "C" std::uint64_t contextCompletionSetData(context::Context *context, std::uint64_t data) noexcept {
+      if (!context || !context->source.completion) return 0;
+      context->source.completion->data = data;
+      return 1;
+    }
+
+    extern "C" const char *contextCompletionCandidate(context::Context *context) noexcept {
+      return context && context->source.completion ? context->source.completion->candidate.c_str() : "";
+    }
+
+    extern "C" std::uint64_t contextCompletionDictionaryCount(context::Context *context) noexcept {
+      return context ? context->lookup.stack.size() + 2 : 0;
+    }
+
+    extern "C" std::uint64_t contextCompletionDictionary(context::Context *context, std::uint64_t index) noexcept {
+      if (!context) return 0;
+      if (index == 0) return context->lookup.dictionary.getAddress();
+      if (index <= context->lookup.stack.size())
+        return context->lookup.stack[context->lookup.stack.size() - index].getAddress();
+      return context->lexicon.phrase().getAddress();
+    }
+
+    extern "C" std::uint64_t contextPhraseProbeLongest(context::Context *context, std::uint64_t ownerAddress,
+                                                       const std::uint8_t *source, std::uint64_t bytes) noexcept {
+      return checked(context, std::uint64_t{0}, [&](context::Context &value) {
+        if (!source || bytes > std::numeric_limits<Size>::max() / Byte::length) return std::uint64_t{0};
+        auto owner = ownerAt(value, ownerAddress);
+        if (owner.isNull() || !owner.containsSubdictionary()) return std::uint64_t{0};
+        auto match = owner.matchLongest(Byte(const_cast<std::uint8_t *>(source)), 0, bytes * Byte::length,
+                                        [](radix::Node *, radix::Match *candidate) {
+                                          return lexicon::Phrase(candidate->item()).load().isElaboratable();
+                                        });
+        return static_cast<std::uint64_t>(match.getPhrase().getAddress());
+      });
+    }
+
+    // Platform enumeration produces raw candidates. Libraries decide when to
+    // request them, filter collisions, and encode them for their own grammar.
+    void completionDirectory(context::Context &context, const std::string &directory, const std::string &prefix,
+                             const std::string &basename, unsigned mode, lexicon::Phrase consumer) {
+      auto *request = context.source.completion;
+      std::error_code error;
+      std::filesystem::directory_iterator iterator(directory.empty() ? "." : directory, error), end;
+      while (!error && iterator != end) {
+        const auto &entry = *iterator;
+        const auto name = entry.path().filename().string();
+        if (!name.empty() && name.starts_with(basename) && (name.front() != '.' || basename.starts_with('.'))) {
+          std::error_code statusError;
+          const bool isDirectory = entry.is_directory(statusError);
+          const bool executable = !isDirectory && access(entry.path().c_str(), X_OK) == 0;
+          if (mode == 0 || executable || (mode == 2 && isDirectory)) {
+            request->candidate = prefix + name + (isDirectory ? "/" : "");
+            consumer.elaborate(context);
+          }
+        }
+        iterator.increment(error);
+      }
+    }
+
+    extern "C" std::uint64_t contextCompletionPaths(context::Context *context, const char *prefix,
+                                                    std::uint64_t executable, std::uint64_t consumerAddress) noexcept {
+      return checked(context, std::uint64_t{0}, [&](context::Context &value) {
+        if (!value.source.completion || !prefix) return std::uint64_t{0};
+        auto consumer = phraseAt(value, consumerAddress);
+        if (consumer.isNull() || !consumer.isElaboratable()) return std::uint64_t{0};
+        const std::string token(prefix);
+        const auto slash = token.find_last_of('/');
+        const auto pathPrefix = slash == std::string::npos ? "" : token.substr(0, slash + 1);
+        auto directory = pathPrefix.empty() ? "." : pathPrefix;
+        if (directory.starts_with("~/")) {
+          const char *home = std::getenv("HOME");
+          if (!home || !*home) return std::uint64_t{0};
+          directory.replace(0, 1, home);
+        }
+        completionDirectory(value, directory, pathPrefix, token.substr(slash == std::string::npos ? 0 : slash + 1),
+                            executable ? 2 : 0, consumer);
+        return std::uint64_t{1};
+      });
+    }
+
+    extern "C" std::uint64_t contextCompletionPrograms(context::Context *context, const char *prefix,
+                                                       std::uint64_t consumerAddress) noexcept {
+      return checked(context, std::uint64_t{0}, [&](context::Context &value) {
+        if (!value.source.completion || !prefix) return std::uint64_t{0};
+        auto consumer = phraseAt(value, consumerAddress);
+        if (consumer.isNull() || !consumer.isElaboratable()) return std::uint64_t{0};
+        const char *path = std::getenv("PATH");
+        if (!path) return std::uint64_t{0};
+        const std::string paths(path);
+        for (std::size_t start = 0; start <= paths.size();) {
+          const auto end = paths.find(':', start);
+          completionDirectory(value, paths.substr(start, end == std::string::npos ? end : end - start), "", prefix, 1,
+                              consumer);
+          if (end == std::string::npos) break;
+          start = end + 1;
+        }
+        return std::uint64_t{1};
+      });
+    }
+
+    extern "C" std::uint64_t contextCompletionChildren(context::Context *context, std::uint64_t ownerAddress,
+                                                       const char *prefix, std::uint64_t consumerAddress) noexcept {
+      return checked(context, std::uint64_t{0}, [&](context::Context &value) {
+        if (!value.source.completion || !prefix) return std::uint64_t{0};
+        auto owner = ownerAt(value, ownerAddress);
+        auto consumer = phraseAt(value, consumerAddress);
+        if (owner.isNull() || !owner.containsSubdictionary() || consumer.isNull() || !consumer.isElaboratable())
+          return std::uint64_t{0};
+        auto populated = [](radix::Node *, radix::Node *candidate) { return !candidate->isEmpty(); };
+        for (auto entry = owner.fore(populated); !entry.isNull(); entry = entry.next(populated)) {
+          auto phrase = entry.getPhrase();
+          if (phrase.isNull()) continue;
+          auto key = phrase.getKey();
+          if (!key.starts_with(prefix)) continue;
+          value.source.completion->candidate = std::move(key);
+          consumer.elaborate(value);
+        }
+        return std::uint64_t{1};
+      });
     }
 
     extern "C" std::uint64_t contextSourceEnsure(context::Context *context, std::uint64_t bytes) noexcept {
@@ -2047,6 +2199,37 @@ namespace recurloop {
                         reinterpret_cast<std::uintptr_t>(&contextPhraseFirstChild));
     declareHostFunction(context, "context:phrase:child:next", "context:phrase:child:next", {contextPointer, u64, u64},
                         u64, reinterpret_cast<std::uintptr_t>(&contextPhraseChild));
+
+    declareHostFunction(context, "context:completion:source", "context:completion:source", {contextPointer},
+                        bytePointer, reinterpret_cast<std::uintptr_t>(&contextCompletionSource));
+    declareHostFunction(context, "context:completion:cursor", "context:completion:cursor", {contextPointer}, u64,
+                        reinterpret_cast<std::uintptr_t>(&contextCompletionCursor));
+    declareHostFunction(context, "context:completion:start", "context:completion:start", {contextPointer, u64}, u64,
+                        reinterpret_cast<std::uintptr_t>(&contextCompletionStart));
+    declareHostFunction(context, "context:completion:add", "context:completion:add", {contextPointer, bytePointer}, u64,
+                        reinterpret_cast<std::uintptr_t>(&contextCompletionAdd));
+    declareHostFunction(context, "context:completion:data", "context:completion:data$get", {contextPointer}, u64,
+                        reinterpret_cast<std::uintptr_t>(&contextCompletionData));
+    declareHostFunction(context, "context:completion:data", "context:completion:data$set", {contextPointer, u64}, u64,
+                        reinterpret_cast<std::uintptr_t>(&contextCompletionSetData));
+    declareHostFunction(context, "context:completion:candidate", "context:completion:candidate", {contextPointer},
+                        bytePointer, reinterpret_cast<std::uintptr_t>(&contextCompletionCandidate));
+    declareHostFunction(context, "context:completion:dictionary:count", "context:completion:dictionary:count",
+                        {contextPointer}, u64, reinterpret_cast<std::uintptr_t>(&contextCompletionDictionaryCount));
+    declareHostFunction(context, "context:completion:dictionary", "context:completion:dictionary",
+                        {contextPointer, u64}, u64, reinterpret_cast<std::uintptr_t>(&contextCompletionDictionary));
+    declareHostFunction(context, "context:completion:paths", "context:completion:paths",
+                        {contextPointer, bytePointer, u64, u64}, u64,
+                        reinterpret_cast<std::uintptr_t>(&contextCompletionPaths));
+    declareHostFunction(context, "context:completion:programs", "context:completion:programs",
+                        {contextPointer, bytePointer, u64}, u64,
+                        reinterpret_cast<std::uintptr_t>(&contextCompletionPrograms));
+    declareHostFunction(context, "context:completion:children", "context:completion:children",
+                        {contextPointer, u64, bytePointer, u64}, u64,
+                        reinterpret_cast<std::uintptr_t>(&contextCompletionChildren));
+    declareHostFunction(context, "context:phrase:probe:longest", "context:phrase:probe:longest",
+                        {contextPointer, u64, bytePointer, u64}, u64,
+                        reinterpret_cast<std::uintptr_t>(&contextPhraseProbeLongest));
 
     declareHostFunction(context, SourceEnsure, "context:source:ensure", {contextPointer, u64}, u64,
                         reinterpret_cast<std::uintptr_t>(&contextSourceEnsure));

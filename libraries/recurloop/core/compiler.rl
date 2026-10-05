@@ -312,6 +312,19 @@ compiler {
   extern "context:source:block:path" symbol "context:source:block:path" params [ "SourceBlock*" ] result "u8*" abi "sysv-amd64" imported
   extern "context:source:block:position" symbol "context:source:block:position" params [ "SourceBlock*" ] result "u64" abi "sysv-amd64" imported
   extern "context:source:block:release" symbol "context:source:block:release" params [ "SourceBlock*" ] result "void" abi "sysv-amd64" imported
+  extern "context:completion:source" symbol "context:completion:source" params [ "Context*" ] result "u8*" abi "sysv-amd64" imported
+  extern "context:completion:cursor" symbol "context:completion:cursor" params [ "Context*" ] result "u64" abi "sysv-amd64" imported
+  extern "context:completion:start" symbol "context:completion:start" params [ "Context*" "u64" ] result "u64" abi "sysv-amd64" imported
+  extern "context:completion:add" symbol "context:completion:add" params [ "Context*" "u8*" ] result "u64" abi "sysv-amd64" imported
+  extern "context:completion:data" symbol "context:completion:data$get" params [ "Context*" ] result "u64" abi "sysv-amd64" imported
+  extern "context:completion:data" symbol "context:completion:data$set" params [ "Context*" "u64" ] result "u64" abi "sysv-amd64" imported
+  extern "context:completion:candidate" symbol "context:completion:candidate" params [ "Context*" ] result "u8*" abi "sysv-amd64" imported
+  extern "context:completion:dictionary:count" symbol "context:completion:dictionary:count" params [ "Context*" ] result "u64" abi "sysv-amd64" imported
+  extern "context:completion:dictionary" symbol "context:completion:dictionary" params [ "Context*" "u64" ] result "u64" abi "sysv-amd64" imported
+  extern "context:completion:paths" symbol "context:completion:paths" params [ "Context*" "u8*" "u64" "u64" ] result "u64" abi "sysv-amd64" imported
+  extern "context:completion:programs" symbol "context:completion:programs" params [ "Context*" "u8*" "u64" ] result "u64" abi "sysv-amd64" imported
+  extern "context:completion:children" symbol "context:completion:children" params [ "Context*" "u64" "u8*" "u64" ] result "u64" abi "sysv-amd64" imported
+  extern "context:phrase:probe:longest" symbol "context:phrase:probe:longest" params [ "Context*" "u64" "u8*" "u64" ] result "u64" abi "sysv-amd64" imported
   extern "context:source:bytes" symbol "context:source:bytes" params [ "Context*" ] result "u64" abi "sysv-amd64" imported
   extern "context:source:consume" symbol "context:source:consume" params [ "Context*" "u8*" ] result "u64" abi "sysv-amd64" imported
   extern "context:source:data" symbol "context:source:data" params [ "Context*" ] result "u8*" abi "sysv-amd64" imported

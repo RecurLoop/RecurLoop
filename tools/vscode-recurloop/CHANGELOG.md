@@ -1,6 +1,13 @@
 # Changelog
 
-## Unreleased
+## 0.1.2
+
+- Require RecurLoop 0.2.4 or a newer patch in the 0.2 series.
+- Recheck runtime versions on selection even when a replaced executable retains
+  the same timestamps and size.
+- Offer Initialize Project when explicit runtime commands or debugging are used
+  without a project entry.
+- Add first-use instructions, platform support and runtime conflict guidance.
 
 - Use the shared project target protocol; source-defined target blocks replace
   editor-specific JSON declarations and the TypeScript dependency walker.

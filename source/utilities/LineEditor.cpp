@@ -30,8 +30,9 @@ namespace utilities {
     if (active_) tcsetattr(descriptor_, TCSANOW, &original_);
   }
 
-  LineEditor::LineEditor(Reader reader, Writer writer, Columns columns)
-      : reader_(std::move(reader)), writer_(std::move(writer)), columns_(std::move(columns)) {
+  LineEditor::LineEditor(Reader reader, Writer writer, Columns columns, Completer completer)
+      : reader_(std::move(reader)), writer_(std::move(writer)), columns_(std::move(columns)),
+        completer_(std::move(completer)) {
     std::setlocale(LC_CTYPE, "");
   }
 
@@ -186,8 +187,8 @@ namespace utilities {
     writer_(output.str());
   }
 
-  void LineEditor::historyMove(std::string &line, std::size_t &cursor, std::size_t &historyPosition,
-                               std::string &draft, int direction) {
+  void LineEditor::historyMove(std::string &line, std::size_t &cursor, std::size_t &historyPosition, std::string &draft,
+                               int direction) {
     if (history_.empty()) return;
     if (direction < 0) {
       if (historyPosition == history_.size()) draft = line;
@@ -293,7 +294,8 @@ namespace utilities {
   }
 
   void LineEditor::remember(const std::string &line) {
-    const bool meaningful = std::any_of(line.begin(), line.end(), [](unsigned char byte) { return !std::isspace(byte); });
+    const bool meaningful =
+        std::any_of(line.begin(), line.end(), [](unsigned char byte) { return !std::isspace(byte); });
     if (!meaningful || (!history_.empty() && history_.back() == line)) return;
     constexpr std::size_t MaxHistory = 1000;
     if (history_.size() == MaxHistory) history_.erase(history_.begin());
@@ -323,6 +325,37 @@ namespace utilities {
         writer_("\n");
         remember(line);
         return {LineStatus::Line, std::move(line)};
+      } else if (byte == '\t' && completer_) {
+        auto completion = completer_(line, cursor);
+        auto &candidates = completion.candidates;
+        if (completion.start <= cursor && !candidates.empty()) {
+          std::sort(candidates.begin(), candidates.end());
+          candidates.erase(std::unique(candidates.begin(), candidates.end()), candidates.end());
+          std::string common = candidates.front();
+          for (const auto &candidate : candidates) {
+            std::size_t length = 0;
+            while (length < common.size() && length < candidate.size() && common[length] == candidate[length]) ++length;
+            common.resize(length);
+          }
+          // Do not insert a partial UTF-8 character from a common byte prefix.
+          while (!common.empty() && common.size() < candidates.front().size() &&
+                 (static_cast<unsigned char>(candidates.front()[common.size()]) & 0xc0) == 0x80)
+            common.pop_back();
+          // An escaped filename prefix must not end halfway through an escape.
+          std::size_t backslashes = 0;
+          for (std::size_t index = common.size(); index > 0 && common[index - 1] == '\\'; --index) ++backslashes;
+          if (candidates.size() > 1 && backslashes % 2 != 0) common.pop_back();
+          if (common.size() > cursor - completion.start) {
+            line.replace(completion.start, cursor - completion.start, common);
+            cursor = completion.start + common.size();
+          } else if (candidates.size() > 1) {
+            writer_("\n");
+            for (const auto &candidate : candidates) {
+              writer_(candidate);
+              writer_("\n");
+            }
+          }
+        }
       } else if (byte == 3) {
         writer_("^C\n");
         return {LineStatus::Interrupt, {}};

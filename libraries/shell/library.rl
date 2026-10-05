@@ -2260,6 +2260,8 @@ let install_shell_assignments = phrase {
 }
 install_shell_assignments
 
+include "completion.rl"
+
 // The image contains only phrase graphs, compiled actions and stable native
 // symbol names. No parser state or process-local pointer is exported.
 set fflush.serializable = false

@@ -8,6 +8,13 @@ import { RecurLoopRuntime } from './runtime';
 import { RuntimeSetup } from './runtimeSetup';
 import { hasProject, projectFile, resolveExecutable, shellQuote, workspaceRoot } from './util';
 
+async function explainProjectRequirement(): Promise<void> {
+  const choice = await vscode.window.showInformationMessage(
+    'Open a workspace folder and initialize a RecurLoop project to enable runtime installation, Run, Debug and language intelligence.',
+    'Initialize Project');
+  if (choice === 'Initialize Project') await vscode.commands.executeCommand('recurloop.initializeProject');
+}
+
 export class DebugConfigurationProvider implements vscode.DebugConfigurationProvider {
   constructor(private readonly project: ProjectController,
     private readonly prepareExecutable: (uri?: vscode.Uri, override?: string) => Promise<string> = async (uri, override) => resolveExecutable(uri, override)) {}
@@ -16,7 +23,10 @@ export class DebugConfigurationProvider implements vscode.DebugConfigurationProv
   }
   async resolveDebugConfiguration(folder: vscode.WorkspaceFolder | undefined, config: vscode.DebugConfiguration): Promise<vscode.DebugConfiguration | undefined | null> {
     const editor = vscode.window.activeTextEditor;
-    if (!hasProject(folder?.uri ?? editor?.document.uri)) return null;
+    if (!hasProject(folder?.uri ?? editor?.document.uri)) {
+      await explainProjectRequirement();
+      return null;
+    }
     if (config.target && folder) {
       await this.project.resolveTarget(folder, config);
       if (config.projectTarget) return config;
@@ -101,7 +111,10 @@ export function activate(context: vscode.ExtensionContext): void {
   };
   const inProject = async (action: (active: NonNullable<typeof features>, uri: vscode.Uri) => Promise<void> | void) => {
     const uri = selectedUri();
-    if (!uri || !hasProject(uri)) return;
+    if (!uri || !hasProject(uri)) {
+      await explainProjectRequirement();
+      return;
+    }
     const active = synchronize();
     if (!active) return;
     try { await action(active, uri); }
@@ -135,9 +148,13 @@ export function activate(context: vscode.ExtensionContext): void {
   const debugProvider: vscode.DebugConfigurationProvider = {
     provideDebugConfigurations: folder => folder && hasProject(folder.uri)
       ? synchronize()?.debugProvider.provideDebugConfigurations(folder) ?? [] : [],
-    // null tells VS Code to cancel silently, rather than attempt another launch.
-    resolveDebugConfiguration: (folder, config) => hasProject(folder?.uri ?? selectedUri())
-      ? synchronize()?.debugProvider.resolveDebugConfiguration(folder, config) ?? null : null
+    resolveDebugConfiguration: async (folder, config) => {
+      if (!hasProject(folder?.uri ?? selectedUri())) {
+        await explainProjectRequirement();
+        return null;
+      }
+      return synchronize()?.debugProvider.resolveDebugConfiguration(folder, config) ?? null;
+    }
   };
   const watcher = vscode.workspace.createFileSystemWatcher('**/*');
   context.subscriptions.push(

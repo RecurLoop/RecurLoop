@@ -22,5 +22,6 @@ include "core/collections.rl"
 // Standard actions that can be expressed in RecurLoop are compiled into the
 // image after the fresh source-defined language exists.
 include "core/actions.rl"
+include "core/completion.rl"
 
 engine export "core.rli"

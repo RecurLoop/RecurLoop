@@ -5,6 +5,9 @@
 #include <recurloop/Recurloop.hpp>
 #include <recurloop/Session.hpp>
 
+#include <algorithm>
+#include <cstdlib>
+#include <unistd.h>
 #include <filesystem>
 #include <fstream>
 #include <sstream>
@@ -510,4 +513,77 @@ let runtime_sum16 = fn (a:i64, b:i64, c:i64, d:i64, e:i64, f:i64, g:i64, h:i64,
   const auto sixteen = session->evaluate("print runtime_sum16(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16)");
   ASSERT_EQ(sixteen.status, 0) << sixteen.error;
   EXPECT_EQ(sixteen.output, "136\n");
+}
+
+TEST(RecurloopGeneration, CompletionUsesCurrentSessionPhrases) {
+  auto state = project();
+  auto session = state->openSession();
+  ASSERT_EQ(session->evaluate("let unique_completion_phrase = <print>\n").status, 0);
+  auto completion = session->complete("unique_completion_ph", 20);
+  EXPECT_EQ(completion.start, 0u);
+  EXPECT_NE(std::find(completion.candidates.begin(), completion.candidates.end(), "unique_completion_phrase"),
+            completion.candidates.end());
+  auto isolated = state->openSession()->complete("unique_completion_ph", 20);
+  EXPECT_TRUE(isolated.candidates.empty());
+}
+
+TEST(RecurloopGeneration, CompletionEscapesPathsAndMarksDirectories) {
+  auto session = project()->openSession();
+  ASSERT_EQ(session->evaluate("engine import \"" RECURLOOP_TEST_LANGUAGE_KIT_IMAGE "\"\n"
+                              "engine import \"" RECURLOOP_TEST_SHELL_IMAGE "\"\n").status, 0);
+  const auto directory = std::filesystem::temp_directory_path() / ("recurloop-completion-" + std::to_string(getpid()));
+  std::filesystem::create_directories(directory / "folder");
+  std::ofstream(directory / "file with spaces.txt").close();
+  const std::string prefix = "echo " + directory.string() + "/fi";
+  auto completion = session->complete(prefix, prefix.size());
+  EXPECT_EQ(completion.start, 5u);
+  ASSERT_EQ(completion.candidates.size(), 1u);
+  EXPECT_EQ(completion.candidates.front(), directory.string() + "/file\\ with\\ spaces.txt");
+  const std::string quoted = "echo \"" + directory.string() + "/fi";
+  auto inQuote = session->complete(quoted, quoted.size());
+  ASSERT_EQ(inQuote.candidates.size(), 1u);
+  EXPECT_EQ(inQuote.candidates.front(), "\"" + directory.string() + "/file with spaces.txt");
+  const std::string folder = "cd " + directory.string() + "/fo";
+  auto folders = session->complete(folder, folder.size());
+  ASSERT_EQ(folders.candidates.size(), 1u);
+  EXPECT_EQ(folders.candidates.front(), directory.string() + "/folder/");
+  std::filesystem::remove_all(directory);
+}
+
+TEST(RecurloopGeneration, CompletionWithoutShellOnlyUsesLexicon) {
+  auto session = project()->openSession();
+  ASSERT_EQ(session->evaluate("let unique_completion_phrase = <print>\n").status, 0);
+  const std::string expression = "print unique_completion_ph";
+  auto phrases = session->complete(expression, expression.size());
+  EXPECT_EQ(phrases.start, 6u);
+  EXPECT_EQ(phrases.candidates, (std::vector<std::string>{"unique_completion_phrase"}));
+
+  const auto directory = std::filesystem::temp_directory_path() / ("recurloop-lexicon-completion-" + std::to_string(getpid()));
+  std::filesystem::create_directories(directory);
+  const auto executable = directory / "unique_completion_command";
+  std::ofstream(executable).close();
+  std::filesystem::permissions(executable, std::filesystem::perms::owner_all);
+  const char *previousPath = std::getenv("PATH");
+  const bool hadPath = previousPath != nullptr;
+  const std::string savedPath = previousPath ? previousPath : "";
+  setenv("PATH", directory.c_str(), 1);
+  auto commands = session->complete("unique_completion_", 18);
+  const std::string path = directory.string() + "/unique";
+  auto files = session->complete(path, path.size());
+  auto arguments = session->complete("print unique_completion_", 24);
+  const auto enabled = session->evaluate("engine import \"" RECURLOOP_TEST_LANGUAGE_KIT_IMAGE "\"\n"
+                                         "engine import \"" RECURLOOP_TEST_SHELL_IMAGE "\"\n");
+  auto shellCommands = session->complete("unique_completion_", 18);
+  auto shellFiles = session->complete(path, path.size());
+  if (hadPath) setenv("PATH", savedPath.c_str(), 1);
+  else unsetenv("PATH");
+  std::filesystem::remove_all(directory);
+
+  ASSERT_EQ(enabled.status, 0) << enabled.error;
+  EXPECT_NE(std::find(shellCommands.candidates.begin(), shellCommands.candidates.end(), "unique_completion_command"),
+            shellCommands.candidates.end());
+  EXPECT_EQ(shellFiles.candidates, (std::vector<std::string>{executable.string()}));
+  EXPECT_EQ(commands.candidates, (std::vector<std::string>{"unique_completion_phrase"}));
+  EXPECT_TRUE(files.candidates.empty());
+  EXPECT_EQ(arguments.candidates, (std::vector<std::string>{"unique_completion_phrase"}));
 }

@@ -145,3 +145,72 @@ rolls back the request; it does not switch the caller's ordinary Session to the
 baseline or publish any analysis data. Permanent phrases retain their normal
 protection. Clients can build indexes and query policies from the exported facts
 in their own RecurLoop code.
+
+## Terminal completion
+
+Local consoles and `--connect` consoles (including the VS Code terminal) use
+Tab to complete commands, language phrases, and paths. Connected consoles query
+their existing server session, so session-defined phrases are available too.
+Completion does not evaluate the input or add it to command history.
+
+The host invokes the ordinary `Completion:complete` phrase. Core defines it as
+an alias of `Completion:lexicon`, implemented in
+`libraries/recurloop/core/completion.rl`. Shell loads its own provider from
+`libraries/shell/completion.rl` and rebinds the same slot. The host has no Shell
+namespace detection or language-specific completion dispatcher.
+
+Completion follows the active lexicon's longest-prefix priority. With Shell
+loaded, the first word can complete phrases or unshadowed executable names;
+`run`, `capture`, `spawn`, and `shell` select command completion explicitly,
+including aliases and assignment right-hand sides. Pipelines and shell list
+separators start another command. Shell arguments and redirection targets
+complete paths, while language expressions and Shell `{...}` interpolation
+complete phrases, including qualified dictionary names. Loading Shell does not
+enable filesystem suggestions inside every RecurLoop expression.
+
+Other libraries can publish a provider in exactly the same way:
+
+```rl
+let MyLanguage:complete = phrase {
+    type = <phrase-types:elaborate>
+    action = fn (state:Context*, called:Phrase*) -> void {
+        let cursor = context:completion:cursor(state)
+        context:completion:start(state, cursor)
+        context:completion:add(state, "my_suggestion")
+    }
+}
+let Completion:complete = <MyLanguage:complete>
+```
+
+The most recently installed provider owns the request. Restore the default with
+`let Completion:complete = <Completion:lexicon>`. Providers can reuse
+`Completion:phrases(state, start)` to append qualified lexicon candidates.
+
+The generic Context API supplies request data and platform enumeration:
+
+| API | Contract |
+| --- | --- |
+| `context:completion:source`, `cursor` | Borrowed source bytes and cursor byte offset. |
+| `context:completion:start(state, offset)` | Set the start of the replacement range. |
+| `context:completion:add(state, text)` | Copy a candidate encoded by the provider; control bytes are rejected. |
+| `context:completion:dictionary:count`, `dictionary` | Read current, enclosing, and root dictionary handles without changing lookup. |
+| `context:completion:children(state, owner, prefix, consumer)` | Enumerate matching raw lexicon keys through a phrase callback. |
+| `context:completion:paths(state, prefix, executable, consumer)` | Enumerate raw paths, optionally restricted to executables and directories. |
+| `context:completion:programs(state, prefix, consumer)` | Enumerate executable names from `PATH`. |
+| `context:completion:candidate(state)` | Borrow the raw candidate during an enumeration callback. |
+| `context:completion:data(state[, value])` | Read or set request-local scratch data for a provider's callbacks. |
+
+Enumeration callbacks use the usual `fn(Context*, Phrase*)` action contract.
+The provider chooses whether to enumerate, filter, or quote candidates. Request
+pointers and scratch data expire when completion returns and must never be
+stored in phrases or engine images. Providers should only inspect the unfinished
+input and avoid changing session language or runtime state.
+
+The console request is `:complete<TAB>cursor<TAB>hex(source)`, where the cursor
+is a byte offset. Its output starts with `completion<TAB>start` followed by one
+hex-encoded candidate per line. `start` is the byte offset of the replacement
+range, which ends at the cursor. Responses use the current transport's usual
+output and completion frames. Invalid cursor offsets are rejected.
+
+After updating the executable, restart the VS Code language runtime and reopen
+its terminals so both the server and console client use the new version.

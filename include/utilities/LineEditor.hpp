@@ -1,5 +1,7 @@
 #pragma once
 
+#include <utilities/Completion.hpp>
+
 #include <cstddef>
 #include <functional>
 #include <string>
@@ -30,7 +32,9 @@ namespace utilities {
     TerminalMode &operator=(const TerminalMode &) = delete;
     ~TerminalMode();
 
-    explicit operator bool() const { return active_; }
+    explicit operator bool() const {
+      return active_;
+    }
 
   private:
     int descriptor_ = -1;
@@ -51,11 +55,18 @@ namespace utilities {
     using Writer = std::function<bool(std::string_view)>;
     using Columns = std::function<std::size_t()>;
 
-    LineEditor(Reader reader, Writer writer, Columns columns = {});
+    using Completion = utilities::Completion;
+    using Completer = std::function<Completion(std::string_view line, std::size_t cursor)>;
+
+    LineEditor(Reader reader, Writer writer, Columns columns = {}, Completer completer = {});
 
     LineResult readLine(std::string_view prompt);
-    const std::vector<std::string> &history() const { return history_; }
-    void clearHistory() { history_.clear(); }
+    const std::vector<std::string> &history() const {
+      return history_;
+    }
+    void clearHistory() {
+      history_.clear();
+    }
 
     static int readDescriptor(int descriptor, int timeoutMilliseconds = -1);
     static bool writeDescriptor(int descriptor, std::string_view text);
@@ -63,11 +74,11 @@ namespace utilities {
 
   private:
     void refresh(const std::string &line, std::size_t cursor, std::string_view prompt);
-    void historyMove(std::string &line, std::size_t &cursor, std::size_t &historyPosition,
-                     std::string &draft, int direction);
+    void historyMove(std::string &line, std::size_t &cursor, std::size_t &historyPosition, std::string &draft,
+                     int direction);
     void historySearchBackward(std::string &line, std::size_t &cursor, std::size_t &historyPosition);
-    void escapeSequence(std::string &line, std::size_t &cursor, std::size_t &historyPosition,
-                        std::string &draft, std::string &yank);
+    void escapeSequence(std::string &line, std::size_t &cursor, std::size_t &historyPosition, std::string &draft,
+                        std::string &yank);
     void remember(const std::string &line);
 
     static std::size_t previousCharacter(std::string_view text, std::size_t position);
@@ -82,6 +93,7 @@ namespace utilities {
     Reader reader_;
     Writer writer_;
     Columns columns_;
+    Completer completer_;
     std::vector<std::string> history_;
   };
 } // namespace utilities

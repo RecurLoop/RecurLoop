@@ -29,7 +29,7 @@ namespace {
           [] { return 120; });
     }
   };
-}
+} // namespace
 
 TEST(LineEditor, HistoryRestoresDraftAfterNavigation) {
   ScriptedConsole console;
@@ -71,4 +71,66 @@ TEST(LineEditor, CtrlCInterruptsCurrentLineWithoutAddingHistory) {
   EXPECT_EQ(kept.line, "kept");
   ASSERT_EQ(editor.history().size(), 1u);
   EXPECT_EQ(editor.history().front(), "kept");
+}
+
+TEST(LineEditor, TabCompletesAtCursorAndPreservesTail) {
+  ScriptedConsole console;
+  utilities::LineEditor completing(
+      [&console](int) {
+        if (console.input.empty()) return utilities::LineEditor::End;
+        int byte = console.input.front();
+        console.input.pop_front();
+        return byte;
+      },
+      [&console](std::string_view text) {
+        console.output += text;
+        return true;
+      },
+      {},
+      [](std::string_view line, std::size_t cursor) {
+        EXPECT_EQ(line, "echo al tail");
+        EXPECT_EQ(cursor, 7u);
+        return utilities::LineEditor::Completion{5, {"alpha"}};
+      });
+  console.push("echo al tail\x1b[D\x1b[D\x1b[D\x1b[D\x1b[D\t\n");
+  EXPECT_EQ(completing.readLine("> ").line, "echo alpha tail");
+}
+
+TEST(LineEditor, TabExtendsCommonPrefixThenDisplaysAlternatives) {
+  ScriptedConsole console;
+  utilities::LineEditor editor(
+      [&console](int) {
+        if (console.input.empty()) return utilities::LineEditor::End;
+        int byte = console.input.front();
+        console.input.pop_front();
+        return byte;
+      },
+      [&console](std::string_view text) {
+        console.output += text;
+        return true;
+      },
+      {},
+      [](std::string_view, std::size_t) {
+        return utilities::LineEditor::Completion{0, {"alphabet", "alpha", "alpha"}};
+      });
+  console.push("al\t\t\n");
+  EXPECT_EQ(editor.readLine("> ").line, "alpha");
+  EXPECT_NE(console.output.find("\nalpha\nalphabet\n"), std::string::npos);
+}
+
+TEST(LineEditor, AmbiguousEscapedPathsDoNotLeaveAnIncompleteEscape) {
+  ScriptedConsole console;
+  utilities::LineEditor editor(
+      [&console](int) {
+        if (console.input.empty()) return utilities::LineEditor::End;
+        int byte = console.input.front();
+        console.input.pop_front();
+        return byte;
+      },
+      [&console](std::string_view text) { console.output += text; return true; }, {},
+      [](std::string_view, std::size_t) {
+        return utilities::LineEditor::Completion{0, {"file\\ name", "file\\!name"}};
+      });
+  console.push("fi\t\n");
+  EXPECT_EQ(editor.readLine("> ").line, "file");
 }

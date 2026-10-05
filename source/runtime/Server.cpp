@@ -20,6 +20,8 @@
 #include <array>
 #include <algorithm>
 #include <streambuf>
+#include <charconv>
+#include <sstream>
 
 namespace recurloop {
   namespace {
@@ -74,6 +76,10 @@ namespace recurloop {
 
     class ConsoleFrames {
     public:
+      explicit ConsoleFrames(utilities::LineEditor::Writer writer = [](std::string_view text) {
+        return utilities::LineEditor::writeDescriptor(STDOUT_FILENO, text);
+      }) : writer_(std::move(writer)) {}
+
       bool consume(std::string_view bytes) {
         while (!bytes.empty()) {
           if (remaining_ == 0) {
@@ -92,7 +98,7 @@ namespace recurloop {
             if (header_[0] != 'O' || remaining_ == 0 || remaining_ > 4096) return false;
           }
           const auto count = std::min<std::size_t>(remaining_, bytes.size());
-          if (!utilities::LineEditor::writeDescriptor(STDOUT_FILENO, bytes.substr(0, count))) return false;
+          if (!writer_(bytes.substr(0, count))) return false;
           remaining_ -= count;
           bytes.remove_prefix(count);
         }
@@ -102,6 +108,7 @@ namespace recurloop {
       bool completed = false;
 
     private:
+      utilities::LineEditor::Writer writer_;
       std::array<std::uint8_t, 5> header_{};
       std::size_t headerSize_ = 0;
       std::uint32_t remaining_ = 0;
@@ -148,6 +155,45 @@ namespace recurloop {
       std::string result(value.size() / 2, '\0');
       for (std::size_t i = 0; i < result.size(); ++i)
         result[i] = static_cast<char>((hexNibble(value[i * 2]) << 4) | hexNibble(value[i * 2 + 1]));
+      return result;
+    }
+
+    std::string hex(std::string_view text) {
+      constexpr char digits[] = "0123456789abcdef";
+      std::string result;
+      result.reserve(text.size() * 2);
+      for (unsigned char byte : text) {
+        result += digits[byte >> 4];
+        result += digits[byte & 15];
+      }
+      return result;
+    }
+
+    bool parseSize(std::string_view text, std::size_t &value) {
+      const auto parsed = std::from_chars(text.data(), text.data() + text.size(), value);
+      return parsed.ec == std::errc{} && parsed.ptr == text.data() + text.size();
+    }
+
+    utilities::Completion remoteCompletion(int fd, std::string_view line, std::size_t cursor) {
+      if (!sendBytes(fd, ":complete\t" + std::to_string(cursor) + '\t' + hex(line) + '\n')) return {};
+      std::string payload;
+      ConsoleFrames response([&](std::string_view bytes) { payload += bytes; return true; });
+      char bytes[4096];
+      while (!response.completed) {
+        const ssize_t count = recv(fd, bytes, sizeof(bytes), 0);
+        if (count < 0 && errno == EINTR) continue;
+        if (count <= 0 || !response.consume({bytes, static_cast<std::size_t>(count)})) return {};
+      }
+      utilities::Completion result;
+      std::istringstream input(payload);
+      std::string field;
+      if (!std::getline(input, field) || !field.starts_with("completion\t") ||
+          !parseSize(std::string_view(field).substr(11), result.start) || result.start > cursor) return {};
+      try {
+        while (std::getline(input, field)) result.candidates.push_back(unhex(field));
+      } catch (...) {
+        return {};
+      }
       return result;
     }
 
@@ -207,6 +253,19 @@ namespace recurloop {
       constexpr std::string_view tracePrefix = ":trace\t";
       constexpr std::string_view inspectFilePrefix = ":inspect-file\t";
       constexpr std::string_view traceFilePrefix = ":trace-file\t";
+      if (line.starts_with(":complete\t")) {
+        const std::string_view payload = line.substr(10);
+        const auto separator = payload.find('\t');
+        std::size_t cursor = 0;
+        if (separator == std::string_view::npos || !parseSize(payload.substr(0, separator), cursor))
+          return {"completion requires a cursor and source payload\n", false, 1};
+        const std::string source = unhex(payload.substr(separator + 1));
+        if (cursor > source.size()) return {"completion cursor exceeds source size\n", false, 1};
+        const auto completion = session.complete(source, cursor);
+        std::string text = "completion\t" + std::to_string(completion.start) + '\n';
+        for (const auto &candidate : completion.candidates) text += hex(candidate) + '\n';
+        return {std::move(text), false, 0};
+      }
       const bool exits = languageExit(line);
       SessionResponse response;
       if (line == ":project-targets" || line == ":targets") {
@@ -275,7 +334,8 @@ namespace recurloop {
     utilities::LineEditor editor(
         [](int timeout) { return utilities::LineEditor::readDescriptor(STDIN_FILENO, timeout); },
         [](std::string_view text) { return utilities::LineEditor::writeDescriptor(STDOUT_FILENO, text); },
-        [] { return utilities::LineEditor::descriptorColumns(STDIN_FILENO); });
+        [] { return utilities::LineEditor::descriptorColumns(STDIN_FILENO); },
+        [&session](std::string_view line, std::size_t cursor) { return session->complete(line, cursor); });
 
     int status = 0;
     while (!stopping_) {
@@ -533,7 +593,8 @@ namespace recurloop {
     utilities::LineEditor editor(
         [](int timeout) { return utilities::LineEditor::readDescriptor(STDIN_FILENO, timeout); },
         [](std::string_view text) { return utilities::LineEditor::writeDescriptor(STDOUT_FILENO, text); },
-        [] { return utilities::LineEditor::descriptorColumns(STDIN_FILENO); });
+        [] { return utilities::LineEditor::descriptorColumns(STDIN_FILENO); },
+        [fd](std::string_view line, std::size_t cursor) { return remoteCompletion(fd, line, cursor); });
 
     while (true) {
       utilities::LineResult input;
