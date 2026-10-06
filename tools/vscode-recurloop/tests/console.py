@@ -69,6 +69,26 @@ def command(source):
 
 try:
     prompt()
+    # Native calls must use this same socket/PTY as core print and Shell output.
+    # The emitted machine code uses libc printf, exactly like quickstart Probe.
+    assert b'status=' not in command('extern printf(format:u8*, ...) -> i64 abi sysv-amd64')
+    assert b'status=' not in command('let ConsoleProbe = phrase { dictionary = true permanent = true }')
+    assert b'status=' not in command('let ConsoleProbe:main = fn () -> i64 { var tick:i64 = 1; while tick <= 3 { printf("Tick %lld: %lld km\\n", tick, tick * 10); tick += 1 }; return 0 }')
+    ticks = b'Tick 1: 10 km\r\nTick 2: 20 km\r\nTick 3: 30 km\r\n'
+    reply = command('ConsoleProbe:main()')
+    assert reply.count(ticks) == 1 and b'No such file' not in reply and b'status=' not in reply, reply
+    assert ticks + b'0\r\n' in command('print str(ConsoleProbe:main())')
+    for call in ['recurloop   ConsoleProbe:main()', '(ConsoleProbe:main())', '-ConsoleProbe:main()']:
+        reply = command(call)
+        assert reply.count(ticks) == 1 and b'status=' not in reply, reply
+    assert b'status=' not in command('let invoke = <"(">')
+    reply = command('ConsoleProbe:main invoke )')
+    assert reply.count(ticks) == 1 and b'status=' not in reply, reply
+    reply = command('Missing:call()')
+    assert b'unknown function' in reply and b'status=1' in reply and b'status=127' not in reply, reply
+    reply = command('ConsoleProbe:main(42)')
+    assert b'expects 0 argument(s)' in reply and b'status=1' in reply, reply
+    assert ticks in command('ConsoleProbe:main()')
     assert b'console-output-42\r\n' in command('echo console-output-42')
     reply = command('true && echo chain-ok && false && echo should-not-run || echo recovered')
     assert b'chain-ok\r\n' in reply and b'recovered\r\n' in reply, reply
@@ -115,6 +135,28 @@ try:
                     return int(line.split()[1])
         raise AssertionError(f'RSS unavailable for {pid}')
 
+    def stream_volume(source, byte, marker, volume):
+        endpoints = [server_pid, client.pid]
+        baseline = [resident_kib(pid) for pid in endpoints]
+        peaks = baseline.copy()
+        os.write(master, source.encode() + b'\n')
+        tail = b''
+        received = 0
+        deadline = time.monotonic() + 30
+        while marker not in tail:
+            remaining = deadline - time.monotonic()
+            assert remaining > 0 and select.select([master], [], [], remaining)[0], tail
+            chunk = os.read(master, 65536)
+            received += chunk.count(byte)
+            tail = (tail + chunk)[-128:]
+            peaks = [max(peak, resident_kib(pid)) for peak, pid in zip(peaks, endpoints)]
+        assert received >= volume, received
+        if not has_prompt(tail):
+            prompt()
+        growth = [peak - base for peak, base in zip(peaks, baseline)]
+        assert all(kib < 16 * 1024 for kib in growth), f'output retained in memory: {growth} KiB'
+        return growth
+
     with tempfile.TemporaryDirectory(prefix='rl-console-volume-') as directory:
         script = os.path.join(directory, 'volume.py')
         volume = 64 * 1024 * 1024
@@ -125,26 +167,12 @@ try:
                          "    view = memoryview(chunk)\n"
                          "    while view: view = view[os.write(1, view):]\n"
                          "os.write(1, b'\\nvolume-complete\\n')\n")
-        endpoints = [server_pid, client.pid]
-        baseline = [resident_kib(pid) for pid in endpoints]
-        peaks = baseline.copy()
-        os.write(master, f'python3 {script}\n'.encode())
-        tail = b''
-        received = 0
-        deadline = time.monotonic() + 30
-        while b'volume-complete\r\n' not in tail:
-            remaining = deadline - time.monotonic()
-            assert remaining > 0 and select.select([master], [], [], remaining)[0], tail
-            chunk = os.read(master, 65536)
-            received += chunk.count(b'x')
-            tail = (tail + chunk)[-128:]
-            peaks = [max(peak, resident_kib(pid)) for peak, pid in zip(peaks, endpoints)]
-        assert received >= volume, received
-        if not has_prompt(tail):
-            prompt()
-        growth = [peak - base for peak, base in zip(peaks, baseline)]
-        assert all(kib < 16 * 1024 for kib in growth), f'output retained in memory: {growth} KiB'
+        growth = stream_volume(f'python3 {script}', b'x', b'volume-complete\r\n', volume)
         print(f'64 MiB stream passed; peak RSS growth server/client: {growth} KiB.')
+    # One printf must stream formatting, rather than first allocating its entire output.
+    command('let ConsoleProbe:volume = fn () -> void { printf("%*s\\nnative-volume-complete\\n", 67108864, "") }')
+    growth = stream_volume('ConsoleProbe:volume()', b' ', b'native-volume-complete\r\n', 64 * 1024 * 1024)
+    print(f'64 MiB native printf passed; peak RSS growth server/client: {growth} KiB.')
     command('var console_state = 42')
     for source in ['sleep 100', 'sleep 100 && echo should-not-run', 'capture sleep 100', 'sleep 100 | cat', 'sh -c "sleep 100; echo should-not-run"']:
         os.write(master, source.encode() + b'\n')

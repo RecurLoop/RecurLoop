@@ -230,6 +230,24 @@ namespace recurloop {
     return !LanguageGrammar::resolve(context, internal::findPhrase(grammar, "builtins"), name).isNull();
   }
 
+  namespace {
+    void expressionStatement(context::Context &context, std::string_view prefix = {}) {
+      SourceLocation origin;
+      std::string source = Blocks::captureExpression(context, &origin);
+      if (!prefix.empty()) source.insert(0, std::string(prefix) + " ");
+      origin.column -= std::min<Size>(origin.column - 1, prefix.size());
+      (void)Expressions::evaluate(context, source, std::move(origin));
+    }
+  } // namespace
+
+  void Expressions::statement(context::Context &context, lexicon::Phrase &) {
+    expressionStatement(context);
+  }
+
+  void Expressions::namedStatement(context::Context &context, lexicon::Phrase &invoked) {
+    expressionStatement(context, invoked.getKey());
+  }
+
   void Expressions::variable(context::Context &context, lexicon::Phrase &) {
     const internal::Assignment statement = internal::assignment(context, true);
     const context::Value value = evaluate(context, statement.expression, statement.expressionOrigin);
@@ -342,6 +360,8 @@ namespace recurloop {
     context.actions().define("expressions.constant", constant);
     context.actions().define("expressions.assign", assign);
     context.actions().define("expressions.assign-bound", internal::assignBound);
+    context.actions().define("expressions.statement", statement);
+    context.actions().define("expressions.named-statement", namedStatement);
     context.actions().define("expressions.print", print);
     context.actions().define("expressions.assert", assertTrue);
   }
@@ -362,5 +382,6 @@ namespace recurloop {
     bind("set", assign);
     bind("print", print);
     bind("assert", assertTrue);
+    bind("", statement);
   }
 } // namespace recurloop

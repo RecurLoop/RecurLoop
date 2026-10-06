@@ -30,6 +30,10 @@ namespace recurloop {
     static context::Value evaluate(context::Context &context, std::string_view source);
     static context::Value evaluate(context::Context &context, std::string_view source, SourceLocation origin);
     static bool isBuiltin(context::Context &context, std::string_view name);
+    // Parse a candidate without evaluation, source consumption or semantic tracing.
+    static bool recognizes(context::Context &context, std::string_view source);
+    static void statement(context::Context &context, lexicon::Phrase &invoked);
+    static void namedStatement(context::Context &context, lexicon::Phrase &invoked);
     static lexicon::Phrase prefixOperator(context::Context &context, std::string_view name);
     static lexicon::Phrase infixOperator(context::Context &context, std::string_view name);
     static ExpressionOperator operatorDefinition(lexicon::Phrase &phrase);

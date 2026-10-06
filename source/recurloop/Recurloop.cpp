@@ -6,9 +6,11 @@
   #include <recurloop/Blocks.hpp>
   #include <recurloop/Debugger.hpp>
   #include <recurloop/Execution.hpp>
+  #include <recurloop/Expressions.hpp>
   #include <recurloop/EngineImage.hpp>
   #include <recurloop/HostAbi.hpp>
   #include <recurloop/ContextApi.hpp>
+  #include <recurloop/ProcessControl.hpp>
   #include <recurloop/Semantic.hpp>
 
   #include <sys/mman.h>
@@ -250,6 +252,8 @@ namespace recurloop {
 
     const SourceLocation sourceLocation{context.source.path, context.source.line, context.source.position};
     try {
+      if (ProcessControl::interrupted())
+        throw SourceException(__FILE__, __LINE__, __PRETTY_FUNCTION__, sourceLocation, "request cancelled", 130);
       if (context.source.buffer.bits > 0) {
         const DebugLocation debugLocation{context.source.path, context.source.line, context.source.position};
         if (runSourceHook(context)) return;

@@ -104,6 +104,7 @@ expressions.postfix.member
 expressions.postfix.qualify
 expressions.primary.group
 expressions.print
+expressions.statement
 expressions.variable
 fn.assignment.emit-add
 fn.assignment.emit-bit-and

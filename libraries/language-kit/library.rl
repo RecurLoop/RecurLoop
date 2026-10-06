@@ -39,6 +39,7 @@ let LanguageKit:Symbols = phrase { dictionary = true permanent = true }
 let LanguageKit:Forms = phrase { dictionary = true permanent = true }
 let LanguageKit:Overrides = phrase { dictionary = true permanent = true }
 let LanguageKit:Fallbacks = phrase { dictionary = true permanent = true }
+let LanguageKit:root_form = <"Core:expression_statement">
 let LanguageKit:Selectors = phrase { dictionary = true permanent = true }
 let LanguageKit:Grammar = phrase { dictionary = true permanent = true }
 let LanguageKit:Bindings = phrase { dictionary = true permanent = true }
@@ -2609,6 +2610,13 @@ let LanguageKit:selector_present = fn (state:Context*) -> i64 {
     return context:source:probe:longest(state, selectors)
 }
 
+let LanguageKit:root_match = fn (state:Context*) -> i64 {
+    let root = context:source:root(state)
+    let matched = context:source:probe:longest(state, root)
+    if matched && context:phrase:key(state, matched, cast(u8*, 0), 0) > 0 { return matched }
+    return 0
+}
+
 // The source hook runs before ordinary root lookup. It only intervenes when a
 // structural foreign parser can be selected safely or when ambiguity must be
 // diagnosed. Otherwise normal RecurLoop longest-prefix lookup remains in
@@ -2616,26 +2624,23 @@ let LanguageKit:selector_present = fn (state:Context*) -> i64 {
 let LanguageKit:dispatch_competing = fn (state:Context*) -> i64 {
     if LanguageKit:state_get(state, "__languagekit_dispatch_suspended") { return 0 }
 
-    // Explicit shared-root selectors are one-shot. Keep a second flag alive
-    // until we know whether a real root phrase or the empty fallback matched.
-    if LanguageKit:state_get(state, "__languagekit_force_root_once") {
-        LanguageKit:state_set(state, "__languagekit_force_root_once", 0)
-        LanguageKit:state_set(state, "__languagekit_force_root_active", 1)
-        return 0
-    }
-    if LanguageKit:state_get(state, "__languagekit_force_root_active") {
-        // A real root phrase completed and control returned to the root.
-        LanguageKit:state_set(state, "__languagekit_force_root_active", 0)
-    }
-
-    // Let the ordinary phrase graph consume whitespace/comments first. This
-    // avoids treating a whitespace phrase as a competing root candidate.
+    // Preserve a pending selector while the root consumes layout/comments.
     let first = LanguageKit:Source:peek(state, 0)
     if LanguageKit:is_space(first) { return 0 }
     if LanguageKit:Source:starts_with(state, "//") ||
        LanguageKit:Source:starts_with(state, "--") ||
        LanguageKit:Source:starts_with(state, "%") ||
        LanguageKit:Source:starts_with(state, "?-") { return 0 }
+
+    // A one-shot selector chooses either a literal root phrase or its grammar.
+    if LanguageKit:state_get(state, "__languagekit_force_root_once") {
+        LanguageKit:state_set(state, "__languagekit_force_root_once", 0)
+        if LanguageKit:root_match(state) { return 0 }
+        let kit = context:phrase:find(state, "LanguageKit")
+        let form = context:phrase:find:exact(state, kit, "root_form")
+        context:phrase:dispatch(state, form)
+        return 1
+    }
 
     // Selector spellings are themselves ordinary root phrases. Never let a
     // generic language probe reinterpret `haskell ...` as a Haskell function
@@ -2663,11 +2668,7 @@ let LanguageKit:dispatch_competing = fn (state:Context*) -> i64 {
         // get a chance. Dispatching the fallback from the source hook is
         // important for streaming grammars: Shell enters its command dictionary
         // without consuming a byte, and ordinary lookup must continue there.
-        let root = context:source:root(state)
-        let root_phrase = context:source:probe:longest(state, root)
-        var root_extent = 0
-        if root_phrase { root_extent = context:phrase:key(state, root_phrase, cast(u8*, 0), 0) }
-        if root_extent > 0 { return 0 }
+        if LanguageKit:root_match(state) { return 0 }
 
         let fallbacks = context:phrase:find:exact(state, kit, "Fallbacks")
         LanguageKit:candidate_reset(state)
@@ -2693,14 +2694,9 @@ let LanguageKit:dispatch_competing = fn (state:Context*) -> i64 {
         )
     }
 
-    let root = context:source:root(state)
-    var root_phrase = context:source:probe:longest(state, root)
+    let root_phrase = LanguageKit:root_match(state)
     var root_extent = 0
     if root_phrase { root_extent = context:phrase:key(state, root_phrase, cast(u8*, 0), 0) }
-
-    // Empty-key fallback is not an ordinary root interpretation. It is handled
-    // later by dispatch_form, after structural forms have had their chance.
-    if root_extent <= 0 { root_phrase = 0 }
 
     if root_phrase {
         // A root preference (recurloop/amber block) resolves only this conflict;
@@ -2741,16 +2737,6 @@ let LanguageKit:pre_form = phrase {
 let LanguageKit:dispatch_form = fn (state:Context*) -> i64 {
     let kit = context:phrase:find(state, "LanguageKit")
     if !kit { return 0 }
-
-    // If an explicit `recurloop ` / `amber ` selector reached the empty root
-    // fallback, the selected shared-root grammar did not actually contain a
-    // matching phrase. Do not silently hand it to another language.
-    if LanguageKit:state_get(state, "__languagekit_force_root_active") {
-        LanguageKit:state_set(state, "__languagekit_force_root_active", 0)
-        context:diagnostic:error(state, "LanguageKit: explicit shared-root form did not match a RecurLoop/Amber phrase")
-        LanguageKit:Source:skip_line(state)
-        return 1
-    }
 
     let forms = context:phrase:find:exact(state, kit, "Forms")
     LanguageKit:candidate_reset(state)
@@ -2805,6 +2791,21 @@ let LanguageKit:install_fallback = phrase {
         let top = context:phrase:find:exact(state, kit, "top_form")
         let fallback = context:phrase:define:alias(state, "", top)
         if !fallback { context:diagnostic:error(state, "LanguageKit: could not install merged source fallback") }
+    }
+}
+
+// Expression statements share their grammar with print/assignments. They
+// compete with other catch-alls only after literal and structural forms.
+let LanguageKit:Fallbacks:Expressions = phrase {
+    type = <phrase-types:elaborate>
+    permanent = true
+    action = fn (state:Context*, called:Phrase*) -> void {
+        let extent = LanguageKit:Source:line_extent(state)
+        if !context:expression:recognizes(state, context:source:data(state), cast(u64, extent)) { return }
+        let kit = context:phrase:find(state, "LanguageKit")
+        let form = context:phrase:find:exact(state, kit, "root_form")
+        let probe = LanguageKit:registry_entry(state, "Fallbacks", "Expressions")
+        LanguageKit:offer_form(state, form, probe, extent, 1)
     }
 }
 

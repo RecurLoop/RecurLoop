@@ -1,11 +1,11 @@
 import { ChildProcessWithoutNullStreams, spawn } from 'child_process';
 import * as fs from 'fs';
-import * as net from 'net';
 import * as os from 'os';
 import * as path from 'path';
 import * as vscode from 'vscode';
 import { setTimeout as retryDelay } from 'timers/promises';
 import { hasProject, hexEncode, libraryArguments, projectFile, requireProject, resolveExecutable, workspaceRoot } from './util';
+import { RuntimeConnection } from './transport';
 export { projectFile } from './util';
 
 class WorkspaceRuntime implements vscode.Disposable {
@@ -16,21 +16,73 @@ class WorkspaceRuntime implements vscode.Disposable {
   private startup?: AbortController;
   private stderr = '';
   private disposed = false;
-  private lifecycle = 0;
+  public lifecycle = 0;
+  public revision = 0;
+  private readonly connections = new Set<RuntimeConnection>();
+  private readonly inspections = new Map<string, { revision: number; source: string; promise: Promise<string>; controller: AbortController; users: number; done: boolean }>();
   private readonly executions = new Set<Promise<string>>();
 
   constructor(private readonly output: vscode.OutputChannel,
     private readonly prepareExecutable: (uri: vscode.Uri) => Promise<string>) {}
 
-  public async inspect(document: vscode.TextDocument, trace = true): Promise<string> {
-    if (!hasProject(document.uri)) { this.stop(); return ''; }
-    await this.ensureStarted(document.uri);
-    const socketPath = this.socketPath;
-    if (!socketPath) throw new Error('RecurLoop analysis runtime did not create a socket');
+  public async inspect(document: vscode.TextDocument, trace = true, signal?: AbortSignal, uri = document.uri): Promise<string> {
+    signal?.throwIfAborted();
+    if (!hasProject(uri)) { this.stop(); return ''; }
+    const source = document.getText();
+    await this.ensureStarted(uri);
+    signal?.throwIfAborted();
+    const key = `${trace}:${document.uri.fsPath}`;
+    let entry = this.inspections.get(key);
+    if (!entry || entry.source !== source) {
+      if (entry && !entry.users && !entry.done) entry.controller.abort(new vscode.CancellationError());
+      const controller = new AbortController();
+      const command = `${trace ? ':trace' : ':inspect'}\t${hexEncode(document.uri.fsPath)}\t${hexEncode(source)}`;
+      const timeout = vscode.workspace.getConfiguration('recurloop', uri).get('analysis.timeoutMs', 5000) as number;
+      entry = { revision: this.revision, source, controller, users: 0, done: false,
+        promise: this.request(this.socketPath!, command, timeout, controller.signal) };
+      const current = entry;
+      this.inspections.set(key, current);
+      current.promise.then(() => { current.done = true; }, () => {
+        current.done = true;
+        if (this.inspections.get(key) === current) this.inspections.delete(key);
+      });
+    }
+    const current = entry;
+    current.users++;
+    return new Promise<string>((resolve, reject) => {
+      let settled = false;
+      const finish = (error?: unknown, value?: string) => {
+        if (settled) return;
+        settled = true;
+        signal?.removeEventListener('abort', aborted);
+        if (!error && current.revision !== this.revision) error = new vscode.CancellationError();
+        if (--current.users === 0 && !current.done) {
+          if (this.inspections.get(key) === current) this.inspections.delete(key);
+          current.controller.abort(new vscode.CancellationError());
+        }
+        this.trimInspections();
+        if (error) reject(error); else resolve(value!);
+      };
+      const aborted = () => finish(signal!.reason);
+      signal?.addEventListener('abort', aborted, { once: true });
+      current.promise.then(value => finish(undefined, value), error => finish(error));
+      if (signal?.aborted) aborted();
+    });
+  }
 
-    const command = `${trace ? ':trace' : ':inspect'}\t${hexEncode(document.uri.fsPath)}\t${hexEncode(document.getText())}`;
-    const timeout = vscode.workspace.getConfiguration('recurloop', document.uri).get('analysis.timeoutMs', 5000) as number;
-    return this.request(socketPath, command, timeout);
+  private trimInspections(): void {
+    // Active consumers retain their work; completed traces have a fixed bound.
+    if (this.inspections.size <= 128) return;
+    for (const [key, entry] of this.inspections) {
+      if (entry.done && !entry.users) this.inspections.delete(key);
+      if (this.inspections.size <= 128) break;
+    }
+  }
+
+  private invalidateInspections(): void {
+    this.revision++;
+    for (const entry of this.inspections.values()) if (!entry.done) entry.controller.abort(new vscode.CancellationError());
+    this.inspections.clear();
   }
 
   public async restart(uri?: vscode.Uri): Promise<void> {
@@ -59,14 +111,15 @@ class WorkspaceRuntime implements vscode.Disposable {
   }
 
   public info(uri?: vscode.Uri): string {
-    const executable = resolveExecutable(uri);
+    const configured = resolveExecutable(uri);
+    const executable = this.executable ?? configured;
     const state = this.process && !this.process.killed ? `running pid=${this.process.pid}` : 'stopped';
-    return `executable=${executable}\nruntime=${state}\nsocket=${this.socketPath ?? '-'}${this.stderr ? `\nlast stderr=${this.stderr.trim()}` : ''}`;
+    return `executable=${executable}${executable !== configured ? `\nconfigured executable=${configured}` : ''}\nruntime=${state}\nsocket=${this.socketPath ?? '-'}${this.stderr ? `\nlast stderr=${this.stderr.trim()}` : ''}`;
   }
 
-  public async execute(uri: vscode.Uri, commands: string[]): Promise<string> {
+  public async execute(uri: vscode.Uri, commands: string[], signal?: AbortSignal): Promise<string> {
     await this.ensureStarted(uri);
-    const request = this.request(this.socketPath!, commands, 120000);
+    const request = this.request(this.socketPath!, commands, 120000, signal);
     this.executions.add(request);
     try { return await request; } finally { this.executions.delete(request); }
   }
@@ -80,11 +133,12 @@ class WorkspaceRuntime implements vscode.Disposable {
     if (fs.existsSync(entry)) commands.push(`:load-file\t${entry}`);
     commands.push(':publish');
     await this.execute(uri, commands);
+    this.invalidateInspections();
   }
 
   public async terminalOptions(uri: vscode.Uri): Promise<vscode.TerminalOptions> {
     await this.ensureStarted(uri);
-    return { name: 'RecurLoop', cwd: workspaceRoot(uri), shellPath: resolveExecutable(uri),
+    return { name: 'RecurLoop', cwd: workspaceRoot(uri), shellPath: this.executable!,
       shellArgs: ['--connect', this.socketPath!], env: { NO_COLOR: null } };
   }
 
@@ -137,8 +191,8 @@ class WorkspaceRuntime implements vscode.Disposable {
     });
     child.on('exit', (code, signal) => {
       this.output.appendLine(`[analysis] runtime exited code=${code ?? '-'} signal=${signal ?? '-'}`);
-      if (this.process === child) this.process = undefined;
       startup.abort(new Error(`RecurLoop server exited before startup completed (code=${code ?? '-'}, signal=${signal ?? '-'}). ${this.stderr.trim()}`));
+      if (this.process === child) this.stop();
     });
     child.on('error', error => {
       this.stderr = error.message;
@@ -178,71 +232,24 @@ class WorkspaceRuntime implements vscode.Disposable {
     }
   }
 
-  private request(socketPath: string, command: string | string[], timeoutMs?: number, signal?: AbortSignal): Promise<string> {
-    return new Promise((resolve, reject) => {
-      if (signal?.aborted) { reject(signal.reason); return; }
-      const socket = net.createConnection(socketPath);
-      let buffer = Buffer.alloc(0);
-      let ready = false;
-      let status: number | undefined;
-      let chunks: Buffer[] = [];
-      const commands = Array.isArray(command) ? [...command] : [command];
-      let result = '';
-      const sendNext = () => socket.write(commands.shift()! + '\n');
-      let settled = false;
-      const timer = timeoutMs === undefined ? undefined
-        : setTimeout(() => finish(new Error(`RecurLoop analysis request timed out after ${timeoutMs} ms`)), timeoutMs);
-      const aborted = () => finish(signal!.reason);
+  private async request(socketPath: string, command: string | string[], timeoutMs?: number, signal?: AbortSignal): Promise<string> {
+    const connection = new RuntimeConnection(socketPath);
+    try { return await connection.request(Array.isArray(command) ? command : [command], timeoutMs, signal); }
+    finally { connection.close(); }
+  }
 
-      const finish = (error?: Error, value = '') => {
-        if (settled) return;
-        settled = true;
-        clearTimeout(timer);
-        signal?.removeEventListener('abort', aborted);
-        socket.destroy();
-        if (error) reject(error); else resolve(value);
-      };
-      signal?.addEventListener('abort', aborted, { once: true });
-
-      socket.on('data', chunk => {
-        buffer = Buffer.concat([buffer, chunk]);
-        if (!ready) {
-          if (buffer.length < 2) return;
-          if (buffer.subarray(0, 2).toString() !== '> ') { finish(new Error('Invalid RecurLoop server greeting')); return; }
-          ready = true;
-          buffer = buffer.subarray(2);
-          if (!commands.length) { finish(undefined, ''); return; }
-          socket.write(':transport-stream-v2\n');
-          sendNext();
-        }
-        while (buffer.length >= 5) {
-          const kind = buffer[0];
-          const length = buffer.readUInt32BE(1);
-          if (length > 4096) { finish(new Error('Invalid RecurLoop response frame')); return; }
-          if (buffer.length < 5 + length) return;
-          const payload = buffer.subarray(5, 5 + length);
-          buffer = buffer.subarray(5 + length);
-          if (kind === 79) chunks.push(payload); // O: output, including arbitrary prompt text and split UTF-8
-          else if (kind === 83 && /^-?\d+$/.test(payload.toString('ascii'))) status = Number(payload.toString('ascii'));
-          else if (kind === 80 && !length && status !== undefined) {
-            const reply = Buffer.concat(chunks).toString('utf8');
-            if (status !== 0) { finish(new Error(`${reply}\nstatus=${status}`)); return; }
-            result += reply;
-            chunks = []; status = undefined;
-            if (commands.length) sendNext(); else { finish(undefined, result); return; }
-          } else { finish(new Error('Invalid RecurLoop response frame')); return; }
-        }
-      });
-      socket.on('error', error => finish(error));
-      socket.on('end', () => {
-        if (!settled) finish(Object.assign(new Error('RecurLoop analysis runtime closed the socket before replying'),
-          { code: ready ? undefined : 'ECONNRESET' }));
-      });
-    });
+  public async openAnalysis(uri: vscode.Uri): Promise<RuntimeConnection> {
+    await this.ensureStarted(uri);
+    const connection = new RuntimeConnection(this.socketPath!, () => this.connections.delete(connection));
+    this.connections.add(connection);
+    return connection;
   }
 
   private stop(): void {
     this.lifecycle++;
+    this.invalidateInspections();
+    for (const connection of this.connections) connection.close();
+    this.connections.clear();
     this.startup?.abort(new Error('RecurLoop server startup cancelled'));
     this.startup = undefined;
     const child = this.process;
@@ -277,8 +284,11 @@ export class RecurLoopRuntime implements vscode.Disposable {
     if (this.maintenance) return this.maintenance.then(() => this.afterMaintenance(operation));
     return operation();
   }
-  inspect(document: vscode.TextDocument, trace = true): Promise<string> { return this.afterMaintenance(() => this.runtime(document.uri).inspect(document, trace)); }
-  execute(uri: vscode.Uri, commands: string[]): Promise<string> { return this.afterMaintenance(() => this.runtime(uri).execute(uri, commands)); }
+  inspect(document: vscode.TextDocument, trace = true, signal?: AbortSignal, uri = document.uri): Promise<string> { return this.afterMaintenance(() => this.runtime(uri).inspect(document, trace, signal, uri)); }
+  revision(uri: vscode.Uri): number { return this.runtime(uri).revision; }
+  epoch(uri: vscode.Uri): number { return this.runtime(uri).lifecycle; }
+  openAnalysis(uri: vscode.Uri): Promise<RuntimeConnection> { return this.afterMaintenance(() => this.runtime(uri).openAnalysis(uri)); }
+  execute(uri: vscode.Uri, commands: string[], signal?: AbortSignal): Promise<string> { return this.afterMaintenance(() => this.runtime(uri).execute(uri, commands, signal)); }
   terminalOptions(uri: vscode.Uri): Promise<vscode.TerminalOptions> { return this.afterMaintenance(() => this.runtime(uri).terminalOptions(uri)); }
   reload(uri: vscode.Uri): Promise<void> { return this.afterMaintenance(() => this.runtime(uri).reload(uri)); }
   restart(uri?: vscode.Uri): Promise<void> {

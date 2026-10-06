@@ -65,6 +65,12 @@ dispatch, specialization and ownership remain in source libraries. LanguageKit
 uses this bridge so callables from Inferred and other libraries do not require
 language-specific C++ parser branches.
 
+Standalone expressions use that same core parser through the generic
+`context:expression:recognizes` probe. The probe parses without evaluation,
+source consumption or semantic tracing. LanguageKit registers it alongside its
+other fallback grammars; root matching stays ordinary phrase lookup and does
+not recognize function-call spellings itself.
+
 ## Compiler registry
 
 The physical compiler-registry root, child keys, setting slots, counters and ABI

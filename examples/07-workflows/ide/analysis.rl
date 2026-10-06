@@ -6,26 +6,12 @@ let IDE:Analysis:trace = fn (host:IDE:Host*, path:u8*, source:u8*) -> u8* {
 }
 
 let IDE:Analysis:update_file = fn (index:LanguageKit:Analysis:Index*, host:IDE:Host*, path:u8*, source:u8*) -> LanguageKit:Analysis:File* {
-    var file = index.files
-    while file && !LanguageKit:Analysis:equal(file.path, path) { file = file.next }
+    let file = LanguageKit:Analysis:find_file(index, path)
     if file && LanguageKit:Analysis:equal(file.source, source) { return file }
-    if !file {
-        file = alloc(LanguageKit:Analysis:File)
-        if !file { return cast(LanguageKit:Analysis:File*, 0) }
-        file.path = IDE:copy(path); file.source = cast(u8*, 0); file.diagnostic = cast(u8*, 0)
-        file.symbols = cast(LanguageKit:Analysis:Symbol*, 0); file.tokens = cast(LanguageKit:Analysis:Token*, 0)
-        file.functions = cast(LanguageKit:Analysis:Function*, 0)
-        file.occurrences = cast(LanguageKit:Analysis:Occurrence*, 0)
-        file.next = index.files; index.files = file
-    }
-    LanguageKit:Analysis:file_clear(file)
-    file.source = IDE:copy(source)
-    if !file.source { return cast(LanguageKit:Analysis:File*, 0) }
     let trace = IDE:Analysis:trace(host, path, source)
-    LanguageKit:Analysis:parse_trace(file, trace)
+    let updated = LanguageKit:Analysis:update_file(index, path, source, trace)
     if trace { free(trace) }
-    LanguageKit:Analysis:classify(file)
-    return file
+    return updated
 }
 
 let IDE:Analysis:index = fn (state:IDE:App:State*, path:u8*, source:u8*) -> LanguageKit:Analysis:File* {
@@ -38,10 +24,9 @@ let IDE:Analysis:index = fn (state:IDE:App:State*, path:u8*, source:u8*) -> Lang
         LanguageKit:Analysis:destroy(index); index = cast(LanguageKit:Analysis:Index*, 0); state.intelligence_index = cast(u8*, 0)
     }
     if !index {
-        index = alloc(LanguageKit:Analysis:Index)
+        index = LanguageKit:Analysis:new()
         if !index { return cast(LanguageKit:Analysis:File*, 0) }
         index.revision = state.host.runner.revision; index.standalone = standalone
-        index.files = cast(LanguageKit:Analysis:File*, 0)
         state.intelligence_index = cast(u8*, index)
     }
     let paths = state.host.watch_sources

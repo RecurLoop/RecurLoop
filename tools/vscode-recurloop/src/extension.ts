@@ -6,6 +6,7 @@ import { RecurLoopDebugAdapter } from './debugAdapter';
 import { ProjectController, TargetRunAdapter } from './project';
 import { RecurLoopRuntime } from './runtime';
 import { RuntimeSetup } from './runtimeSetup';
+import { TerminalDefaults } from './terminalDefaults';
 import { hasProject, projectFile, resolveExecutable, shellQuote, workspaceRoot } from './util';
 
 async function explainProjectRequirement(): Promise<void> {
@@ -98,12 +99,17 @@ function createProjectFeatures(context: vscode.ExtensionContext) {
 
 export function activate(context: vscode.ExtensionContext): void {
   let features: ReturnType<typeof createProjectFeatures> | undefined;
+  const terminalDefaults = new TerminalDefaults(context.workspaceState);
   const pending = new Map<string, NodeJS.Timeout>();
   const selectedUri = () => vscode.window.activeTextEditor?.document.uri ?? vscode.workspace.workspaceFolders?.[0]?.uri;
   const synchronize = () => {
     const enabled = (vscode.workspace.workspaceFolders ?? []).some(folder => hasProject(folder.uri));
     if (enabled && !features) features = createProjectFeatures(context);
     if (!enabled && features) { features.dispose(); features = undefined; }
+    void terminalDefaults.synchronize().catch(error => {
+      if (features) features.output.appendLine(`Default terminal: ${error}`);
+      else console.error('RecurLoop default terminal:', error);
+    });
     return features;
   };
   const report = (error: unknown, uri: vscode.Uri) => {
@@ -196,7 +202,9 @@ export function activate(context: vscode.ExtensionContext): void {
     }),
     vscode.window.registerTerminalProfileProvider('recurloop.console', {
       provideTerminalProfile: async () => {
-        const uri = selectedUri();
+        const uri = vscode.window.activeTextEditor?.document.uri
+          ?? vscode.workspace.workspaceFolders?.find(folder => hasProject(folder.uri))?.uri
+          ?? selectedUri();
         // A default terminal profile must still resolve in non-project folders.
         const shellProfile = () => new vscode.TerminalProfile({
           name: 'Terminal', shellPath: process.env.SHELL || '/bin/sh',
@@ -288,7 +296,8 @@ async function runCurrentFile(prepareExecutable: (uri?: vscode.Uri) => Promise<s
   if (editor.document.isDirty) await editor.document.save();
   const executable = await prepareExecutable(editor.document.uri);
   const root = workspaceRoot(editor.document.uri);
-  const terminal = vscode.window.createTerminal({ name: 'RecurLoop', cwd: root });
+  // This command launches the CLI in a shell, independently of the project console default.
+  const terminal = vscode.window.createTerminal({ name: 'RecurLoop', cwd: root, shellPath: process.env.SHELL || '/bin/sh' });
   terminal.show();
   terminal.sendText(`${shellQuote(executable)} --file ${shellQuote(editor.document.uri.fsPath)}`);
 }

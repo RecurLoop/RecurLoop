@@ -53,7 +53,7 @@ function number(value: string): number {
   return Number.isFinite(parsed) ? parsed : 0;
 }
 
-export function parseInspection(document: vscode.TextDocument, response: string): AnalysisResult {
+export function parseInspection(document: Pick<vscode.TextDocument, 'getText' | 'version'>, response: string): AnalysisResult {
   const spans: SemanticSpan[] = [];
   const symbols: SymbolFact[] = [];
   const occurrences: Occurrence[] = [];
@@ -136,7 +136,7 @@ function completionKind(kind: string): vscode.CompletionItemKind {
 
 export class AnalysisController implements vscode.Disposable {
   private readonly diagnostics = vscode.languages.createDiagnosticCollection('recurloop');
-  private readonly cache = new Map<string, Promise<AnalysisResult>>();
+  private readonly cache = new Map<string, AnalysisResult>();
   private readonly debounce = new Map<string, NodeJS.Timeout>();
   private readonly decorations = new Map<string, vscode.TextEditorDecorationType>();
   private readonly disposables: vscode.Disposable[] = [];
@@ -149,15 +149,17 @@ export class AnalysisController implements vscode.Disposable {
     const selector: vscode.DocumentSelector = { language: 'recurloop', scheme: 'file' };
 
     this.disposables.push(
-      vscode.languages.registerHoverProvider(selector, { provideHover: (document, position) => this.hover(document, position) }),
-      vscode.languages.registerCompletionItemProvider(selector, { provideCompletionItems: document => this.completions(document) }, ':', '.'),
-      vscode.languages.registerSignatureHelpProvider(selector, { provideSignatureHelp: (document, position) => this.signatureHelp(document, position) }, '(', ','),
-      vscode.languages.registerDefinitionProvider(selector, { provideDefinition: (document, position) => navigation.locations(document, position, 'definition') }),
-      vscode.languages.registerReferenceProvider(selector, { provideReferences: (document, position, context) => navigation.locations(document, position, 'references', context.includeDeclaration) }),
-      vscode.languages.registerTypeDefinitionProvider(selector, { provideTypeDefinition: (document, position) => navigation.locations(document, position, 'type-definition') }),
-      vscode.languages.registerImplementationProvider(selector, { provideImplementation: (document, position) => navigation.locations(document, position, 'implementations') }),
-      vscode.languages.registerRenameProvider(selector, { provideRenameEdits: (document, position, name) => navigation.rename(document, position, name) }),
-      vscode.languages.registerDocumentSymbolProvider(selector, { provideDocumentSymbols: document => navigation.symbols(document) }),
+      navigation,
+      vscode.languages.registerWorkspaceSymbolProvider({ provideWorkspaceSymbols: (query, token) => navigation.workspaceSymbols(query, token) }),
+      vscode.languages.registerHoverProvider(selector, { provideHover: (document, position, token) => this.hover(document, position, token) }),
+      vscode.languages.registerCompletionItemProvider(selector, { provideCompletionItems: (document, _position, token) => this.completions(document, token) }, ':', '.'),
+      vscode.languages.registerSignatureHelpProvider(selector, { provideSignatureHelp: (document, position, token) => this.signatureHelp(document, position, token) }, '(', ','),
+      vscode.languages.registerDefinitionProvider(selector, { provideDefinition: (document, position, token) => navigation.locations(document, position, 'definition', true, token) }),
+      vscode.languages.registerReferenceProvider(selector, { provideReferences: (document, position, context, token) => navigation.locations(document, position, 'references', context.includeDeclaration, token) }),
+      vscode.languages.registerTypeDefinitionProvider(selector, { provideTypeDefinition: (document, position, token) => navigation.locations(document, position, 'type-definition', true, token) }),
+      vscode.languages.registerImplementationProvider(selector, { provideImplementation: (document, position, token) => navigation.locations(document, position, 'implementations', true, token) }),
+      vscode.languages.registerRenameProvider(selector, { provideRenameEdits: (document, position, name, token) => navigation.rename(document, position, name, token) }),
+      vscode.languages.registerDocumentSymbolProvider(selector, { provideDocumentSymbols: (document, token) => navigation.symbols(document, token) }),
       vscode.workspace.onDidChangeTextDocument(event => {
         if (event.document.languageId === 'recurloop') this.schedule(event.document);
       }),
@@ -165,7 +167,7 @@ export class AnalysisController implements vscode.Disposable {
         if (document.languageId === 'recurloop') this.schedule(document, 0);
       }),
       vscode.workspace.onDidCloseTextDocument(document => {
-        this.cache.delete(document.uri.toString());
+        for (const key of this.cache.keys()) if (key.startsWith(`${document.uri.toString()}#`)) this.cache.delete(key);
         this.diagnostics.delete(document.uri);
       }),
       vscode.window.onDidChangeVisibleTextEditors(editors => {
@@ -185,23 +187,30 @@ export class AnalysisController implements vscode.Disposable {
     }
   }
 
-  public async get(document: vscode.TextDocument): Promise<AnalysisResult> {
+  public async get(document: vscode.TextDocument, token?: vscode.CancellationToken): Promise<AnalysisResult> {
+    if (token?.isCancellationRequested) throw new vscode.CancellationError();
     const enabled = vscode.workspace.getConfiguration('recurloop', document.uri).get('analysis.enabled', true) as boolean;
+    const source = document.getText();
+    const version = document.version;
     if (!enabled || !hasProject(document.uri)) {
-      const source = document.getText();
-      return { version: document.version, source, mapping: codePointToUtf16Map(source), spans: [], symbols: [], occurrences: [] };
+      return { version, source, mapping: codePointToUtf16Map(source), spans: [], symbols: [], occurrences: [] };
     }
-    const key = `${document.uri.toString()}#${document.version}`;
-    let pending = this.cache.get(key);
-    if (!pending) {
-      for (const oldKey of this.cache.keys()) {
-        if (oldKey.startsWith(`${document.uri.toString()}#`) && oldKey !== key) this.cache.delete(oldKey);
-      }
-      pending = this.runtime.inspect(document, true).then(response => parseInspection(document, response));
-      this.cache.set(key, pending);
-      pending.catch(() => this.cache.delete(key));
-    }
-    return pending;
+    const revision = this.runtime.revision(document.uri);
+    const epoch = this.runtime.epoch(document.uri);
+    const prefix = `${document.uri.toString()}#`;
+    const key = `${prefix}${version}:${revision}`;
+    const cached = this.cache.get(key);
+    if (cached) return cached;
+    const controller = new AbortController();
+    const cancellation = token?.onCancellationRequested(() => controller.abort(new vscode.CancellationError()));
+    try {
+      const response = await this.runtime.inspect(document, true, controller.signal);
+      if (document.version !== version || (this.runtime.epoch(document.uri) === epoch && this.runtime.revision(document.uri) !== revision)) throw new vscode.CancellationError();
+      const result = this.cache.get(key) ?? parseInspection({ getText: () => source, version }, response);
+      for (const oldKey of this.cache.keys()) if (oldKey.startsWith(prefix) && oldKey !== key) this.cache.delete(oldKey);
+      this.cache.set(`${prefix}${version}:${this.runtime.revision(document.uri)}`, result);
+      return result;
+    } finally { cancellation?.dispose(); }
   }
 
   private schedule(document: vscode.TextDocument, explicitDelay?: number): void {
@@ -225,7 +234,7 @@ export class AnalysisController implements vscode.Disposable {
         if (editor.document.uri.toString() === document.uri.toString()) this.applyColors(editor, result);
       }
     } catch (error) {
-      if (!hasProject(document.uri)) return;
+      if (error instanceof vscode.CancellationError || !hasProject(document.uri)) return;
       const message = error instanceof Error ? error.message : String(error);
       this.output.appendLine(`[analysis] ${document.uri.fsPath}: ${message}`);
       this.diagnostics.set(document.uri, [new vscode.Diagnostic(new vscode.Range(0, 0, 0, 1), message, vscode.DiagnosticSeverity.Warning)]);
@@ -285,8 +294,8 @@ export class AnalysisController implements vscode.Disposable {
     }
   }
 
-  private async hover(document: vscode.TextDocument, position: vscode.Position): Promise<vscode.Hover | undefined> {
-    const result = await this.get(document);
+  private async hover(document: vscode.TextDocument, position: vscode.Position, token?: vscode.CancellationToken): Promise<vscode.Hover | undefined> {
+    const result = await this.get(document, token);
     const offset = utf16OffsetToCodePoint(result.source, document.offsetAt(position));
     const occurrence = result.occurrences
       .filter(item => item.start <= offset && offset <= item.end)
@@ -316,8 +325,8 @@ export class AnalysisController implements vscode.Disposable {
     return new vscode.Hover(markdown, range);
   }
 
-  private async completions(document: vscode.TextDocument): Promise<vscode.CompletionItem[]> {
-    const result = await this.get(document);
+  private async completions(document: vscode.TextDocument, token?: vscode.CancellationToken): Promise<vscode.CompletionItem[]> {
+    const result = await this.get(document, token);
     const latest = new Map<string, SymbolFact>();
     for (const symbol of result.symbols) latest.set(symbol.name, symbol);
     const items: vscode.CompletionItem[] = [];
@@ -337,13 +346,13 @@ export class AnalysisController implements vscode.Disposable {
     return items;
   }
 
-  private async signatureHelp(document: vscode.TextDocument, position: vscode.Position): Promise<vscode.SignatureHelp | undefined> {
+  private async signatureHelp(document: vscode.TextDocument, position: vscode.Position, token?: vscode.CancellationToken): Promise<vscode.SignatureHelp | undefined> {
     const linePrefix = document.lineAt(position.line).text.slice(0, position.character);
     const match = linePrefix.match(/([A-Za-z_][A-Za-z0-9_:]*)\s*\(([^()]*)$/);
     if (!match) return undefined;
     const name = match[1];
     const activeParameter = match[2].trim() ? match[2].split(',').length - 1 : 0;
-    const result = await this.get(document);
+    const result = await this.get(document, token);
     const symbol = result.symbols.find(item => item.name === name || item.name.endsWith(`:${name}`));
     if (!symbol?.signature) return undefined;
     const help = new vscode.SignatureHelp();

@@ -54,6 +54,7 @@ recurloop_call_scalar_native_sysv:
   mov 40(%r10), %r9
 
 .Lrecurloop_scalar_call:
+  xor %eax, %eax
   call *%r11
   mov %rbp, %rsp
   pop %rbp

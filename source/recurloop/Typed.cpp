@@ -4,6 +4,7 @@
 #include <lexicon/Lexicon.hpp>
 #include <recurloop/Assembler.hpp>
 #include <recurloop/Blocks.hpp>
+#include <recurloop/Expressions.hpp>
 #include <recurloop/Functions.hpp>
 #include <recurloop/LanguageGrammar.hpp>
 #include <recurloop/SyntaxCursor.hpp>
@@ -407,7 +408,7 @@ namespace recurloop {
     lexicon::Phrase overloads = LanguageGrammar::find(root, function.name);
     if (overloads.isNull())
       overloads = root.append(function.name)
-                      .make(externalUnavailable)
+                      .make(Expressions::namedStatement)
                       .enableSubdictionary()
                       .setType(lexicon::phrase::type::getCallable(root))
                       .save();

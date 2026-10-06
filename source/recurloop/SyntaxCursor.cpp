@@ -28,6 +28,7 @@ namespace recurloop {
       this->origin = {context.source.path, context.source.line, context.source.position};
     semanticOwner = Semantic::owner(context);
     semanticGroup = Semantic::group(context);
+    semanticTracing = options.semanticTracing;
     if (options.rewriteSyntax) {
       rewrite = std::make_shared<RewriteState>();
       rewrite->expanded.assign(source);

@@ -22,6 +22,7 @@
     "workspace"
   ],
   "activationEvents": [
+    "onStartupFinished",
     "onLanguage:recurloop",
     "onDebug:recurloop",
     "workspaceContains:recurloop.project.rl",
@@ -103,16 +104,19 @@
       "properties": {
         "recurloop.executablePath": {
           "type": "string",
+          "scope": "resource",
           "default": "recurloop",
           "description": "RecurLoop executable name on PATH or an explicit path. If the default is missing, the extension offers to install its compatible runtime. ${workspaceFolder} is expanded by the extension."
         },
         "recurloop.analysis.enabled": {
           "type": "boolean",
+          "scope": "resource",
           "default": true,
           "description": "Use the RecurLoop runtime inspection protocol for diagnostics, hover, completion and semantic colors."
         },
         "recurloop.analysis.debounceMs": {
           "type": "number",
+          "scope": "resource",
           "default": 180,
           "minimum": 0,
           "maximum": 5000,
@@ -120,6 +124,7 @@
         },
         "recurloop.analysis.timeoutMs": {
           "type": "number",
+          "scope": "resource",
           "default": 5000,
           "minimum": 500,
           "maximum": 30000,
@@ -127,11 +132,13 @@
         },
         "recurloop.projectFile": {
           "type": "string",
+          "scope": "resource",
           "default": "recurloop.project.rl",
           "description": "Executable RecurLoop project entry, relative to the workspace folder. Its saved presence enables runtime-backed extension features; an empty file is sufficient."
         },
         "recurloop.terminal.libraries": {
           "type": "array",
+          "scope": "resource",
           "items": {
             "type": "string",
             "minLength": 1
@@ -234,7 +241,7 @@
     "package": "vsce package --no-dependencies",
     "publish": "vsce publish --no-dependencies",
     "test": "npm run compile && npm run test:compiled",
-    "test:compiled": "node tests/setup.cjs && node tests/startup.cjs && node tests/runtime.cjs && node tests/editor.cjs",
+    "test:compiled": "node tests/default-terminal.cjs && node tests/setup.cjs && node tests/startup.cjs && node tests/runtime.cjs && node tests/navigation.cjs && node tests/editor.cjs",
     "test:setup": "npm run compile && node tests/setup.cjs"
   },
   "devDependencies": {

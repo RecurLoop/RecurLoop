@@ -293,6 +293,18 @@ namespace compiler {
     symbolCache_[found->first] = address;
   }
 
+  void DynamicLinker::redirectSymbol(std::uintptr_t original, std::uintptr_t replacement) {
+    if (original == 0 || replacement == 0) THROW(, "dynamic symbol redirection requires non-zero addresses")
+    std::lock_guard<std::mutex> lock(mutex_);
+    const auto [found, inserted] = redirects_.emplace(original, replacement);
+    if (!inserted && found->second != replacement) THROW(, "conflicting dynamic symbol redirection")
+    if (inserted) {
+      for (auto *cache : {&symbolCache_, &librarySymbolCache_})
+        for (auto &[key, address] : *cache)
+          if (address == original) address = replacement;
+    }
+  }
+
   std::optional<std::uintptr_t> DynamicLinker::resolve(std::string_view symbol,
                                                        const std::vector<std::string> &libNames,
                                                        const std::vector<std::string> &searchPaths) {
@@ -318,7 +330,8 @@ namespace compiler {
         auto library = libraries_.find(key);
         if (library != libraries_.end()) {
           if (void *address = trySymbol(library->second.handle, symbol)) {
-            const std::uintptr_t value = reinterpret_cast<std::uintptr_t>(address);
+            std::uintptr_t value = reinterpret_cast<std::uintptr_t>(address);
+            if (auto redirected = redirects_.find(value); redirected != redirects_.end()) value = redirected->second;
             librarySymbolCache_[cacheKey] = value;
             return value;
           }
@@ -346,8 +359,10 @@ namespace compiler {
 #ifndef _WIN32
     void *addr = dlsym(RTLD_DEFAULT, symbolName.c_str());
     if (addr) {
-      symbolCache_[symbolName] = reinterpret_cast<std::uintptr_t>(addr);
-      return reinterpret_cast<std::uintptr_t>(addr);
+      std::uintptr_t value = reinterpret_cast<std::uintptr_t>(addr);
+      if (auto redirected = redirects_.find(value); redirected != redirects_.end()) value = redirected->second;
+      symbolCache_[symbolName] = value;
+      return value;
     }
 #else
     static const char *knownDlls[] = {"kernel32.dll", "msvcrt.dll", "ucrtbase.dll"};

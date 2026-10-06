@@ -1,6 +1,7 @@
 #include <recurloop/Session.hpp>
 
 #include <recurloop/Execution.hpp>
+#include <recurloop/NativeIO.hpp>
 #include <recurloop/Project.hpp>
 #include <recurloop/SessionRequest.hpp>
 #include <recurloop/Semantic.hpp>
@@ -237,6 +238,7 @@ namespace recurloop {
     std::ostringstream capturedErrors;
     std::ostream *const requestOut = out != nullptr ? out : &capturedOutput;
     std::ostream *const requestErr = err != nullptr ? err : &capturedErrors;
+    NativeIO::Scope nativeIo({nullptr, requestOut, requestErr});
     SessionRequestState sessionRequest;
     SessionResponse response;
 
@@ -435,6 +437,7 @@ namespace recurloop {
     std::ostringstream discardedErrors;
     const context::IOStreams previousIo = context.io;
     context.io = {nullptr, &discardedOutput, &discardedErrors};
+    NativeIO::Scope nativeIo(context.io);
     context.exec.status = 0;
     struct RestoreRequestIO {
       context::Context &context;

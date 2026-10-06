@@ -7,6 +7,7 @@
 #include <recurloop/Functions.hpp>
 #include <recurloop/LexiconTransaction.hpp>
 #include <recurloop/NativeCall.hpp>
+#include <recurloop/NativeIO.hpp>
 #include <recurloop/PhraseAction.hpp>
 #include <recurloop/SyntaxExtension.hpp>
 #include <recurloop/SyntaxPattern.hpp>
@@ -101,6 +102,7 @@ namespace recurloop {
     constexpr std::string_view WorkspaceAppendKeyByte{"context:workspace:key:append_byte"};
     constexpr std::string_view WorkspaceAppendCodeByte{"context:workspace:code:append_byte"};
     constexpr std::string_view ExpressionFormat{"context:expression:format"};
+    constexpr std::string_view ExpressionRecognizes{"context:expression:recognizes"};
     constexpr std::string_view ExpressionFormatAt{"context:expression:format:at"};
     constexpr std::string_view ExpressionBooleanAt{"context:expression:boolean:at"};
     constexpr std::string_view ExpressionBuiltinDefine{"context:expression:builtin:define"};
@@ -813,6 +815,9 @@ namespace recurloop {
     extern "C" std::uint64_t contextProcessActive() noexcept {
       return ProcessControl::active();
     }
+    extern "C" std::uint64_t contextProcessInterrupted() noexcept {
+      return ProcessControl::interrupted();
+    }
     extern "C" void contextProcessTrack(std::uint64_t pid) {
       ProcessControl::track(static_cast<pid_t>(pid));
     }
@@ -1515,6 +1520,15 @@ namespace recurloop {
       return contextExpressionFormat(context, source, 0, std::strlen(reinterpret_cast<const char *>(source)));
     }
 
+    extern "C" std::uint64_t contextExpressionRecognizes(context::Context *context,
+                                                          const std::uint8_t *source, std::uint64_t bytes) noexcept {
+      if (source == nullptr) return 0;
+      return checked(context, std::uint64_t{0}, [&](context::Context &value) {
+        return static_cast<std::uint64_t>(
+            Expressions::recognizes(value, {reinterpret_cast<const char *>(source), static_cast<std::size_t>(bytes)}));
+      });
+    }
+
     extern "C" std::uint64_t contextExpressionBooleanAt(context::Context *context, const std::uint8_t *source,
                                                          const std::uint8_t *path, std::uint64_t line,
                                                          std::uint64_t column) noexcept {
@@ -1933,6 +1947,7 @@ namespace recurloop {
 
   namespace {
     void installContextApi(context::Context &context) {
+    NativeIO::install();
     compiler::LanguageState language = context.language();
     const compiler::TypeId contextPointer = language.types.find("Context*");
     const compiler::TypeId bytePointer = language.types.find("u8*");
@@ -2368,6 +2383,8 @@ namespace recurloop {
                         reinterpret_cast<std::uintptr_t>(&contextActionsBindRoot));
     declareHostFunction(context, "context:process:active", "context:process:active", {}, u64,
                           reinterpret_cast<std::uintptr_t>(&contextProcessActive));
+    declareHostFunction(context, "context:process:interrupted", "context:process:interrupted", {}, u64,
+                          reinterpret_cast<std::uintptr_t>(&contextProcessInterrupted));
       declareHostFunction(context, "context:process:track", "context:process:track", {u64}, voidType,
                           reinterpret_cast<std::uintptr_t>(&contextProcessTrack));
       declareHostFunction(context, "context:process:release", "context:process:release", {u64}, voidType,
@@ -2391,6 +2408,8 @@ namespace recurloop {
                         u64, reinterpret_cast<std::uintptr_t>(&contextWorkspaceAppendKeyByte));
     declareHostFunction(context, WorkspaceAppendCodeByte, "context:workspace:code:append-byte", {contextPointer, u64},
                         u64, reinterpret_cast<std::uintptr_t>(&contextWorkspaceAppendCodeByte));
+    declareHostFunction(context, ExpressionRecognizes, "context:expression:recognizes", {contextPointer, bytePointer, u64},
+                        u64, reinterpret_cast<std::uintptr_t>(&contextExpressionRecognizes));
     declareHostFunction(context, ExpressionFormat, "context:expression:format$text", {contextPointer, bytePointer},
                         bytePointer, reinterpret_cast<std::uintptr_t>(&contextExpressionFormatText));
     declareHostFunction(context, ExpressionFormat, "context:expression:format$slice",

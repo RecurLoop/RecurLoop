@@ -92,8 +92,10 @@ inline SourceLocation sourceLocationAt(SourceLocation location, std::string_view
 class SourceException : public Exception {
 public:
   SourceException(const std::string &file, int internalLine, const std::string &function, SourceLocation location,
-                  const std::string &description)
-      : Exception(file, internalLine, function, render(std::move(location), description)) {}
+                  const std::string &description, int status = 1)
+      : Exception(file, internalLine, function, render(std::move(location), description)) {
+    ret = status;
+  }
 
   bool hasSourceLocation() const noexcept override {
     return true;

@@ -28,4 +28,6 @@ include "core/completion.rl"
 // Later definitions can otherwise reintroduce migrated bootstrap host actions.
 Core:ApplyActionBindings
 
+// Install the default source form after constructing the phrase dictionaries.
+Core:InstallExpressionForm
 engine export "core.rli"

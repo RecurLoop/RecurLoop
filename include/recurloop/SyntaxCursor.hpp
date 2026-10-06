@@ -50,6 +50,7 @@ namespace recurloop {
       bool bitStrings = false;
       bool bareWords = false;
       bool rewriteSyntax = false;
+      bool semanticTracing = true;
     };
 
     SyntaxCursor(context::Context &context, std::string_view source, std::initializer_list<lexicon::Phrase> grammars,

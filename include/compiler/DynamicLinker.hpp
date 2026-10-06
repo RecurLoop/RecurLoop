@@ -25,6 +25,7 @@ namespace compiler {
     static std::optional<std::string> libraryPath(std::string_view name,
                                                   const std::vector<std::string> &searchPaths = {});
     void registerSymbol(std::string name, std::uintptr_t address);
+    void redirectSymbol(std::uintptr_t original, std::uintptr_t replacement);
 
     std::optional<std::uintptr_t> resolve(std::string_view symbol, const std::vector<std::string> &libNames = {},
                                           const std::vector<std::string> &searchPaths = {});
@@ -44,6 +45,7 @@ namespace compiler {
     std::unordered_map<std::string, LibraryEntry> libraries_;
     std::unordered_map<std::string, std::uintptr_t> librarySymbolCache_;
     std::unordered_map<std::string, std::uintptr_t> registeredSymbols_;
+    std::unordered_map<std::uintptr_t, std::uintptr_t> redirects_;
     std::unordered_map<std::string, std::uintptr_t> symbolCache_;
   };
 } // namespace compiler

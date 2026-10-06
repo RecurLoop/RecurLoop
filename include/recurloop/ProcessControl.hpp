@@ -1,5 +1,6 @@
 #pragma once
 
+#include <atomic>
 #include <csignal>
 #include <cerrno>
 #include <sys/wait.h>
@@ -28,6 +29,9 @@ namespace recurloop {
     static bool active() noexcept {
       return active_ != nullptr;
     }
+    static bool interrupted() noexcept {
+      return active_ && active_->interrupted_.load(std::memory_order_relaxed);
+    }
     static void track(pid_t pid) {
       if (!active_ || pid <= 0) return;
       std::lock_guard lock(active_->mutex_);
@@ -53,6 +57,6 @@ namespace recurloop {
     inline static thread_local ProcessControl *active_ = nullptr;
     std::mutex mutex_;
     std::unordered_set<pid_t> groups_;
-    bool interrupted_ = false;
+    std::atomic<bool> interrupted_{false};
   };
 } // namespace recurloop

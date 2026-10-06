@@ -167,14 +167,14 @@ namespace recurloop {
 
     class Parser {
     public:
-      Parser(context::Context &context, std::string_view source)
-          : context(context), grammar(findPhrase(context.lexicon.phrase(), ExpressionDictionaryName)),
+      Parser(context::Context &context, std::string_view source, bool probing = false)
+          : context(context), probing(probing), grammar(findPhrase(context.lexicon.phrase(), ExpressionDictionaryName)),
             prefixOperators(findPhrase(grammar, "prefix")), infixOperators(findPhrase(grammar, "infix")),
             primaries(findPhrase(grammar, "primary")), postfixes(findPhrase(grammar, "postfix")),
             symbols(findPhrase(grammar, "symbols")), builtins(findPhrase(grammar, "builtins")),
             dynamicBuiltins(findPhrase(grammar, "dynamic")), literals(findPhrase(grammar, "literals")),
             lexer(context, source, {symbols, prefixOperators, infixOperators, primaries, postfixes}, expressionFail,
-                  {}) {
+                  {.semanticTracing = !probing}) {
         if (grammar.isNull()) THROW(, "expression phrase grammar is not installed")
         if (prefixOperators.isNull() || infixOperators.isNull() || primaries.isNull() || postfixes.isNull() ||
             symbols.isNull())
@@ -186,6 +186,15 @@ namespace recurloop {
         if (lexer.current().kind != TokenKind::End)
           expressionFail(context, lexer.current().offset, "unexpected token '" + lexer.current().text + "'");
         return result;
+      }
+
+      bool recognizes() {
+        try {
+          (void)parse(false);
+          return recognized || committed;
+        } catch (const SourceException &) {
+          return committed;
+        }
       }
 
     private:
@@ -265,6 +274,14 @@ namespace recurloop {
         lexicon::Phrase literal = LanguageGrammar::resolve(context, literals, parsed.token.text);
         if (!literal.isNull()) {
           parsed.value = active ? invokeBuiltin(context, literal, parsed.token) : context::Value();
+        } else if (probing || (!active && Semantic::active(context))) {
+          const bool known = context.values().contains(parsed.token.text) ||
+                             (Semantic::active(context) &&
+                              !findPhrase(context.lexicon.phrase(), parsed.token.text).isNull());
+          if (probing)
+            recognized = recognized && known;
+          else if (!known)
+            expressionFail(context, parsed.token.offset, "undefined variable: '" + parsed.token.text + "'");
         } else if (active) {
           try {
             parsed.value = context.values().get(parsed.token.text);
@@ -360,7 +377,8 @@ namespace recurloop {
         if (scalarResult && scalarParameters) {
           std::vector<std::uintptr_t> raw(values.size(), 0);
           for (std::size_t index = 0; index < values.size(); ++index) {
-            const auto parameterType = context.language().types.get(function->parameterTypes[index]);
+            const auto parameterType = context.language().types.get(
+                index < function->parameterTypes.size() ? function->parameterTypes[index] : argumentTypes[index]);
             if (parameterType.kind == compiler::TypeKind::Pointer ||
                 parameterType.kind == compiler::TypeKind::Function) {
               if (values[index].isNull()) {
@@ -423,6 +441,7 @@ namespace recurloop {
 
     public:
       ParsedExpression parseGrouped(const Token &start, bool active) {
+        if (probing && recognized) committed = true;
         ParsedExpression result;
         result.token = start;
         result.value = expression(1, active);
@@ -442,6 +461,7 @@ namespace recurloop {
       }
 
       ParsedExpression parseCall(Token operation, ParsedExpression base, bool active) {
+        if (probing && recognized) committed = true;
         if (!base.named || base.resolved)
           expressionFail(context, operation.offset, "a direct call requires a named function");
         std::vector<context::Value> values = arguments(active);
@@ -451,6 +471,7 @@ namespace recurloop {
       }
 
       ParsedExpression parseMember(Token, ParsedExpression base, bool active) {
+        if (probing && recognized) committed = true;
         base.value = resolve(base, active);
         const Token method = lexer.take();
         if (method.kind != TokenKind::Identifier)
@@ -527,6 +548,9 @@ namespace recurloop {
       }
 
       context::Context &context;
+      bool probing = false;
+      bool recognized = true;
+      bool committed = false;
       lexicon::Phrase grammar;
       lexicon::Phrase prefixOperators;
       lexicon::Phrase infixOperators;
@@ -564,6 +588,15 @@ namespace recurloop {
     }
 
   } // namespace internal
+
+  bool Expressions::recognizes(context::Context &context, std::string_view source) {
+    try {
+      return internal::Parser(context, source, true).recognizes();
+    } catch (const SourceException &) {
+      // A probe neither consumes source nor reports expression errors for Shell.
+      return false;
+    }
+  }
 
   context::Value Expressions::evaluate(context::Context &context, std::string_view source) {
     return evaluate(context, source, {context.source.path, context.source.line, context.source.position});

@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+- Honor folder-specific runtime and analysis settings in multi-folder workspaces.
+- Use the running server's executable for console clients and runtime diagnostics.
+- Select the RecurLoop terminal profile automatically in workspaces with a saved
+  project entry, including custom `recurloop.projectFile` paths.
+- Detect projects at startup and restore previous workspace terminal settings
+  when the last project entry is removed.
+
 ## 0.2.5
 
 - Update managed runtimes automatically to the release bundled with an extension update.

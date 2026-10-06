@@ -4,12 +4,16 @@
 #include <recurloop/Execution.hpp>
 #include <recurloop/Recurloop.hpp>
 #include <recurloop/Session.hpp>
+#include <recurloop/ProcessControl.hpp>
+#include <recurloop/NativeIO.hpp>
+#include <compiler/DynamicLinker.hpp>
 
 #include <algorithm>
 #include <cstdlib>
 #include <unistd.h>
 #include <filesystem>
 #include <fstream>
+#include <future>
 #include <sstream>
 
 namespace {
@@ -21,6 +25,150 @@ namespace {
     return recurloop::Project::create(runtime->getContext(), {program});
   }
 } // namespace
+
+TEST(RecurloopGeneration, NativeCallsAreStatementsAndStreamOutputToTheCallingSession) {
+  auto state = project();
+  auto session = state->openSession();
+  const auto definitions = session->evaluate(R"(
+link shared "c"
+extern printf(format:u8*, ...) -> i32 abi sysv-amd64
+extern puts(text:u8*) -> i32 abi sysv-amd64
+let Probe = phrase { dictionary = true permanent = true }
+let Probe:advance = fn (distance:i64, speed:i64) -> i64 { return distance + speed }
+let Probe:main = fn () -> i64 {
+    var distance:i64 = 0
+    var tick:i64 = 1
+    while tick <= 3 {
+        distance = Probe:advance(distance, 10)
+        printf("Tick %lld: %lld km\n", tick, distance)
+        tick += 1
+    }
+    return 0
+}
+let Probe:say = fn (text:u8*) -> void { puts(text) }
+fn direct(value:i64) -> void { printf("direct %lld\n", value) }
+fn direct_empty() -> void { puts("bare") }
+)");
+  ASSERT_EQ(definitions.status, 0) << definitions.error;
+  const std::string ticks = "Tick 1: 10 km\nTick 2: 20 km\nTick 3: 30 km\n";
+  const auto direct = session->evaluate("Probe:main()\n");
+  ASSERT_EQ(direct.status, 0) << direct.error;
+  EXPECT_EQ(direct.output, ticks);
+  EXPECT_EQ(session->evaluate("(Probe:main())").output, ticks);
+  EXPECT_EQ(session->evaluate("-Probe:main()").output, ticks);
+  EXPECT_EQ(session->evaluate("print str(Probe:main())").output, ticks + "0\n");
+  EXPECT_EQ(session->evaluate("Probe:advance(2, Probe:advance(3, 4))").output, "");
+  EXPECT_EQ(session->evaluate("Probe:say(\n\"Żółw 😀\"\n) // comment").output, "Żółw 😀\n");
+  const auto variadic = session->evaluate("printf(\"%s %lld\\n\", \"direct\", 42)");
+  ASSERT_EQ(variadic.status, 0) << variadic.error;
+  EXPECT_EQ(variadic.output, "direct 42\n");
+  const auto invalid = session->evaluate("Probe:main(42)");
+  EXPECT_NE(invalid.status, 0);
+  EXPECT_NE(invalid.error.find("expects 0 argument(s)"), std::string::npos);
+  EXPECT_EQ(session->evaluate("Probe:main()").output, ticks);
+  const auto aliases = session->evaluate("let invoke = <\"(\">\nlet grouping = <\"(\">\nlet qualified = <\":\">\n");
+  ASSERT_EQ(aliases.status, 0) << aliases.error;
+  const auto aliased = session->evaluate("grouping Probe qualified main invoke ))");
+  EXPECT_EQ(aliased.status, 0) << aliased.error;
+  EXPECT_EQ(aliased.output, ticks);
+  const auto directAlias = session->evaluate("direct invoke\n42\n)");
+  EXPECT_EQ(directAlias.status, 0) << directAlias.error;
+  EXPECT_EQ(directAlias.output, "direct 42\n");
+  const auto externAlias = session->evaluate("printf invoke \"extern alias\\n\")");
+  EXPECT_EQ(externAlias.status, 0) << externAlias.error;
+  EXPECT_EQ(externAlias.output, "extern alias\n");
+  EXPECT_EQ(session->evaluate("direct_empty // comment").output, "bare\n");
+  const auto unknown = session->evaluate("Missing:call()");
+  EXPECT_EQ(unknown.status, 1);
+  EXPECT_NE(unknown.error.find("unknown function"), std::string::npos);
+  session->publish();
+  auto other = state->openSession();
+  auto first = std::async(std::launch::async, [&] { return session->evaluate("Probe:say(\"first\")"); });
+  auto second = std::async(std::launch::async, [&] { return other->evaluate("Probe:say(\"second\")"); });
+  EXPECT_EQ(first.get().output, "first\n");
+  EXPECT_EQ(second.get().output, "second\n");
+}
+
+TEST(RecurloopGeneration, ExpressionStatementsUseTheSameGrammarAsExpressionValues) {
+  auto session = project()->openSession();
+  for (const auto *source : {"2 + 3 * 4", "(2 + 3) * 4", "str(42)", "true && false", "\"text\""}) {
+    const auto result = session->evaluate(source);
+    EXPECT_EQ(result.status, 0) << source << ": " << result.error;
+    EXPECT_EQ(result.output, "");
+  }
+}
+
+TEST(RecurloopGeneration, ExpressionInspectionValidatesDeclaredAndUndefinedNames) {
+  auto session = project()->openSession();
+  const auto valid = session->inspect("var known = 2\nprint known + 1\n(known + 1)\n",
+                                      "/tmp/expression-inspection.rl", true, true);
+  EXPECT_EQ(valid.status, 0) << valid.error;
+  EXPECT_EQ(valid.output.find("E\t"), std::string::npos) << valid.output;
+  const auto invalid = session->inspect("definitely_missing_phrase\n", "/tmp/expression-inspection.rl", true, true);
+  EXPECT_NE(invalid.output.find("E\t"), std::string::npos);
+}
+
+TEST(RecurloopGeneration, LiteralPhrasesKeepPriorityOverNativeCallStatements) {
+  auto session = project()->openSession();
+  ASSERT_EQ(session->evaluate(R"rl(
+let probe = fn () -> i64 { return 42 }
+let "probe()" = phrase {
+    type = <phrase-types:elaborate>
+    action = fn (state:Context*, called:Phrase*) -> void { context:io:write(state, "literal\n") }
+}
+)rl").status, 0);
+  EXPECT_EQ(session->evaluate("probe()").output, "literal\n");
+}
+
+TEST(RecurloopGeneration, NativeStdioSeparatesStreamsPreservesFilesAndRestoresNestedScopes) {
+  // Initialize the host binding, then use the same imports as JIT modules.
+  auto session = project()->openSession();
+  auto &linker = compiler::DynamicLinker::instance();
+  const auto print = reinterpret_cast<decltype(&std::fprintf)>(*linker.resolve("fprintf", {"c"}));
+  const auto write = reinterpret_cast<decltype(&std::fwrite)>(*linker.resolve("fwrite", {"c"}));
+  std::ostringstream output, errors, nested;
+  EXPECT_EQ(recurloop::NativeIO::current(), nullptr);
+  {
+    recurloop::NativeIO::Scope scope({nullptr, &output, &errors});
+    EXPECT_EQ(print(stdout, "%s:%d", "out", 42), 6);
+    EXPECT_EQ(print(stderr, "error"), 5);
+    {
+      recurloop::NativeIO::Scope inner({nullptr, &nested, &nested});
+      EXPECT_EQ(print(stdout, "inner"), 5);
+    }
+    const char bytes[] = {'a', '\0', 'b'};
+    EXPECT_EQ(write(bytes, 1, sizeof(bytes), stdout), sizeof(bytes));
+    FILE *file = std::tmpfile();
+    ASSERT_NE(file, nullptr);
+    EXPECT_EQ(write(bytes, 1, sizeof(bytes), file), sizeof(bytes));
+    std::rewind(file);
+    char actual[3]{};
+    EXPECT_EQ(std::fread(actual, 1, sizeof(actual), file), sizeof(actual));
+    EXPECT_EQ(std::string(actual, sizeof(actual)), std::string(bytes, sizeof(bytes)));
+    std::fclose(file);
+  }
+  EXPECT_EQ(output.str(), std::string("out:42a\0b", 9));
+  EXPECT_EQ(errors.str(), "error");
+  EXPECT_EQ(nested.str(), "inner");
+  EXPECT_EQ(recurloop::NativeIO::current(), nullptr);
+}
+
+TEST(RecurloopGeneration, InterruptedRequestsStopSourceProcessingAndLeaveTheSessionUsable) {
+  auto session = project()->openSession();
+  ASSERT_EQ(session->evaluate("var answer = 41\n").status, 0);
+  recurloop::ProcessControl control;
+  {
+    recurloop::ProcessControl::Scope scope(control);
+    EXPECT_FALSE(recurloop::ProcessControl::interrupted());
+    control.interrupt();
+    EXPECT_TRUE(recurloop::ProcessControl::interrupted());
+    const auto result = session->evaluate("answer = 99\n");
+    EXPECT_EQ(result.status, 130);
+    EXPECT_NE(result.error.find("request cancelled"), std::string::npos);
+  }
+  EXPECT_FALSE(recurloop::ProcessControl::interrupted());
+  EXPECT_EQ(session->evaluate("print answer\n").output, "41\n");
+}
 
 TEST(RecurloopGeneration, SessionsSharePublishedBaseButKeepPrivateState) {
   auto state = project();

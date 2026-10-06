@@ -18,7 +18,7 @@ endfunction()
 expect_source_error(
     "undefined phrase"
     "debug ping\nthis_does_not_exist\n"
-    "<input>:2:1: undefined phrase"
+    "<input>:2:1: expression: undefined variable: 'this_does_not_exist'"
 )
 
 expect_source_error(
@@ -82,7 +82,7 @@ execute_process(
     OUTPUT_VARIABLE include_out
     ERROR_VARIABLE include_err
 )
-string(FIND "${include_err}" "${inner_fixture}:2:1: undefined phrase" include_position)
+string(FIND "${include_err}" "${inner_fixture}:2:1: expression: undefined variable:" include_position)
 if (include_rc EQUAL 0 OR include_position EQUAL -1)
     message(FATAL_ERROR
         "included source: status=${include_rc}, stdout='${include_out}', stderr='${include_err}'")

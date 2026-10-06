@@ -1250,12 +1250,12 @@ not_an_action
 
 TEST_F(AssemblerTesting, RejectsTheRemovedNativeFunctionKeyword) {
   EXPECT_NE(execute("let old = native () -> i64 { return 42 }\n"), 0);
-  EXPECT_NE(error().find("undefined phrase"), std::string::npos);
+  EXPECT_NE(error().find("expression:"), std::string::npos);
 }
 
 TEST_F(AssemblerTesting, RejectsTheRemovedInterpretedFunctionKeyword) {
   EXPECT_NE(execute("let old = interpreted () { return 42 }\n"), 0);
-  EXPECT_NE(error().find("undefined phrase"), std::string::npos);
+  EXPECT_NE(error().find("expression:"), std::string::npos);
 }
 
 TEST_F(AssemblerTesting, CompilesFunctionControlFlowRecursionAndPointerIndexing) {
@@ -2807,7 +2807,7 @@ missing:
 
 TEST_F(AssemblerTesting, ClearsARecoveredInteractiveErrorBeforeDefaultExit) {
   EXPECT_EQ(executeContinuing("unknown phrase\nexit\n"), 0);
-  EXPECT_NE(error().find("undefined phrase"), std::string::npos);
+  EXPECT_NE(error().find("undefined variable: 'unknown'"), std::string::npos);
 }
 
 TEST_F(AssemblerTesting, InteractiveExitAcceptsAnIntegerExpression) {

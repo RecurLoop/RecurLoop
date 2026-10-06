@@ -7,6 +7,7 @@ const path = require('node:path');
 const Module = require('node:module');
 const { execFileSync } = require('node:child_process');
 const extension = path.resolve(__dirname, '..');
+const configuration = require('../package.json').contributes.configuration.properties;
 const version = require('../out/runtime-release.json').version;
 const root = fs.mkdtempSync(path.join(os.tmpdir(), 'rl-setup fixture-'));
 const originalPath = process.env.PATH;
@@ -15,6 +16,7 @@ fs.mkdirSync(tools);
 const folder = { uri: { fsPath: path.join(root, 'workspace') } };
 fs.mkdirSync(folder.uri.fsPath);
 let setting;
+const folderSettings = new Map();
 let choice = 'Later';
 let selectedFile;
 let prompts = 0;
@@ -27,9 +29,15 @@ const vscode = {
   Uri: { parse: value => value }, ConfigurationTarget: { WorkspaceFolder: 3, Global: 1 },
   ProgressLocation: { Notification: 15 },
   workspace: {
-    workspaceFolders: [folder], getWorkspaceFolder: () => folder,
-    getConfiguration: () => ({
-      get: (key, fallback) => key === 'executablePath' ? setting : fallback,
+    workspaceFolders: [folder],
+    getWorkspaceFolder: uri => vscode.workspace.workspaceFolders.find(entry =>
+      uri.fsPath === entry.uri.fsPath || uri.fsPath.startsWith(entry.uri.fsPath + path.sep)),
+    getConfiguration: (_section, uri) => ({
+      get: (key, fallback) => {
+        // VS Code ignores window-scoped folder settings in multi-root workspaces.
+        if (vscode.workspace.workspaceFolders.length > 1 && configuration[`recurloop.${key}`]?.scope !== 'resource') return fallback;
+        return folderSettings.get(uri?.fsPath)?.[key] ?? (key === 'executablePath' ? setting : fallback);
+      },
       update: async (key, value, target) => {
         assert.equal(key, 'executablePath'); assert.equal(target, 3);
         setting = value; updates++;
@@ -52,7 +60,7 @@ const vscode = {
 const originalLoad = Module._load;
 Module._load = function(name, ...rest) { return name === 'vscode' ? vscode : originalLoad.call(this, name, ...rest); };
 const { RuntimeSetup, compatibleVersion } = require('../out/runtimeSetup');
-const { resolveExecutable, configuredExecutable } = require('../out/util');
+const { resolveExecutable, configuredExecutable, projectFile, libraryArguments } = require('../out/util');
 const { removeManagedRuntimes } = require('../out/runtimeOwnership');
 const extensionFixture = path.join(root, 'extension');
 fs.mkdirSync(path.join(extensionFixture, 'out'), { recursive: true });
@@ -175,6 +183,23 @@ esac
   create('managed'); // rediscover on a subsequent extension activation
   assert.equal(await setup.ensureExecutable(folder.uri), managedBinary);
   assert.equal(prompts, before + 1);
+
+  // Folder settings must override an existing managed installation independently.
+  const other = { uri: { fsPath: path.join(root, 'other-workspace') } };
+  const local = binary(path.join(folder.uri.fsPath, 'bin/recurloop'));
+  const otherLocal = binary(path.join(other.uri.fsPath, 'bin/recurloop'));
+  fs.writeFileSync(path.join(other.uri.fsPath, 'custom.project.rl'), '');
+  folderSettings.set(folder.uri.fsPath, { executablePath: '${workspaceFolder}/bin/recurloop' });
+  folderSettings.set(other.uri.fsPath, { executablePath: '${workspaceFolder}/bin/recurloop',
+    projectFile: 'custom.project.rl', 'terminal.libraries': ['inferred'] });
+  vscode.workspace.workspaceFolders.push(other);
+  assert.equal(await setup.ensureExecutable(folder.uri), local);
+  assert.equal(await setup.ensureExecutable(other.uri), otherLocal);
+  assert.equal(projectFile(other.uri), path.join(other.uri.fsPath, 'custom.project.rl'));
+  assert.deepEqual(libraryArguments(other.uri), ['--library', 'inferred']);
+  assert.equal(prompts, before + 1);
+  vscode.workspace.workspaceFolders.pop();
+  folderSettings.clear();
 
   const onPath = binary(path.join(tools, 'recurloop'));
   assert.equal(await setup.ensureExecutable(folder.uri), onPath); // PATH has priority over managed runtime

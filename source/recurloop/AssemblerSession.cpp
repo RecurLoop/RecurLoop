@@ -1,6 +1,8 @@
 #include "AssemblerInternal.hpp"
 
 #include <recurloop/Expressions.hpp>
+#include <recurloop/Blocks.hpp>
+#include <recurloop/SyntaxCursor.hpp>
 
 namespace recurloop {
   namespace assembler_internal {
@@ -274,34 +276,6 @@ namespace recurloop {
                context.language().types.get(function.resultType).kind == compiler::TypeKind::Void;
       }
 
-      std::string remainingLine(context::Context &context) {
-        std::string result;
-        while (true) {
-          while (context.source.buffer.bits == 0 && context.source.more) context::Source::load(context, false);
-          if (context.source.buffer.bits == 0) break;
-          const char character = context.source.buffer.str[context.source.buffer.offset / Byte::length];
-          if (character == '\n' || character == '\r') break;
-          result.push_back(character);
-          context::Source::progress(context, Byte::length);
-        }
-        const auto begin = std::find_if_not(result.begin(), result.end(),
-                                            [](unsigned char character) { return std::isspace(character); });
-        const auto end = std::find_if_not(result.rbegin(), result.rend(), [](unsigned char character) {
-                           return std::isspace(character);
-                         }).base();
-        return begin < end ? std::string(begin, end) : std::string{};
-      }
-
-      bool invocationArgumentsFollow(context::Context &context) {
-        while (true) {
-          while (context.source.buffer.bits == 0 && context.source.more) context::Source::load(context, false);
-          if (context.source.buffer.bits == 0) return false;
-          const char character = context.source.buffer.str[context.source.buffer.offset / Byte::length];
-          if (character == '\n' || character == '\r') return false;
-          if (!std::isspace(static_cast<unsigned char>(character))) return character == '(';
-          context::Source::progress(context, Byte::length);
-        }
-      }
     } // namespace
 
     lexicon::Phrase native_action_implementation(lexicon::Phrase phrase, Size minimumPayload) {
@@ -329,9 +303,12 @@ namespace recurloop {
         reinterpret_cast<void (*)()>(entry)();
         return;
       }
-      if (invocationArgumentsFollow(context)) {
-        const std::string arguments = remainingLine(context);
-        (void)Expressions::evaluate(context, function->name + arguments);
+      SourceLocation origin;
+      const std::string arguments = Blocks::captureExpression(context, &origin);
+      SyntaxCursor tail(context, arguments, {}, {}, {.bareWords = true, .semanticTracing = false}, origin);
+      if (tail.current().kind != SyntaxTokenKind::End) {
+        origin.column -= std::min<Size>(origin.column - 1, invoked.getKey().size());
+        (void)Expressions::evaluate(context, function->name + " " + arguments, std::move(origin));
         return;
       }
       if (!function->parameterTypes.empty())

@@ -53,7 +53,13 @@ The installer resolves the immutable versioned asset for the latest GitHub Relea
 
 ## VS Code extension
 
-Download `recurloop-vscode-*.vsix` from the assets of the
+Install [RecurLoop from the VS Code Marketplace](https://marketplace.visualstudio.com/items?itemName=RecurLoop.recurloop-vscode).
+For a step-by-step introduction to project setup, editor features, tasks, the
+console and native debugging, see the
+[VS Code extension guide](tools/vscode-recurloop/README.md). It also introduces
+[RecurLoop VS Code Quickstart](https://github.com/RecurLoop/recurloop-vscode-quickstart).
+
+Alternatively, download `recurloop-vscode-*.vsix` from the assets of the
 [latest GitHub Release](https://github.com/RecurLoop/RecurLoop/releases/latest).
 In VS Code, open **Extensions**, choose **... → Install from VSIX...**, select
 that downloaded file, then reload the window. You can also install it from the
@@ -167,6 +173,12 @@ execution and semantic inspection. Project mode defaults to the Project,
 Shell and Inferred libraries. See [docs/projects.md](docs/projects.md) for the
 source-defined grammar, custom roots/imports and client protocol.
 
+When a saved project entry is detected, the extension selects RecurLoop as the
+workspace's default terminal, including entries named by `recurloop.projectFile`.
+Use **Terminal → New Terminal** to open the project console. Removing the last
+project entry restores the previous default, preserving later manual choices.
+This does not change global terminal settings.
+
 Saved changes to `.rl` and `.rli` files reload and republish the project using
 the module cache under `.cache/recurloop`. Existing consoles keep their
 session state; run `:refresh` to adopt the published environment. After replacing
@@ -185,6 +197,61 @@ and packages the extension alongside the runtime; tagged releases publish the
 VSIX and its SHA-256 checksum as separate release assets. The extension version
 comes from `tools/vscode-recurloop/package.json` and is independent of the host
 release version.
+
+### Develop the VS Code extension
+
+From the repository root:
+
+```bash
+cd tools/vscode-recurloop
+npm ci
+npm run compile
+cd ../..
+```
+
+Then open the RecurLoop repository in VS Code and choose:
+
+```text
+Run and Debug -> RecurLoop: Extension Development Host
+```
+
+or press `F5` and select that configuration. A second VS Code window opens with
+the extension loaded directly from `tools/vscode-recurloop`.
+
+This repository's `.vscode/settings.json` overrides `recurloop.executablePath`
+with `${workspaceFolder}/build/Release/bin/recurloop`. Build it with `make build`.
+The override applies both to an installed VSIX and to the Extension Development
+Host when that window opens this repository. Other workspaces use the public
+`recurloop` default; set a workspace path explicitly to test a repository build
+against another project. No separate development VSIX is required.
+
+In the Extension Development Host, open any `.rl` file. `Ctrl+Space` triggers
+completion; hover shows RecurLoop docs; ordinary VS Code breakpoints work with
+the `RecurLoop: Debug current file` debug configuration.
+
+After editing TypeScript, run `npm run compile` again and execute
+`Developer: Reload Window` in the Extension Development Host. For continuous
+compilation use:
+
+```bash
+cd tools/vscode-recurloop
+npm run watch
+```
+
+Run headless integration tests after building the host and libraries:
+
+```bash
+npm test --prefix tools/vscode-recurloop
+```
+
+These tests use the real runtime, a temporary project with custom syntax,
+project dependency state, failing and cyclic targets, console attachment and
+restart, plus native Debug/Release builds of the repository application. The
+Debugger tests use real ptrace processes and a real PTY, check frame variables,
+stepping, Watches, assignments, and terminal/Debug Console isolation. The
+VS Code API is shimmed at the editor boundary; UI behavior still needs checking
+in the Extension Development Host.
+
 
 ## First program
 

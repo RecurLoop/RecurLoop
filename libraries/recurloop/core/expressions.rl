@@ -5,6 +5,12 @@ phrase expressions = "\0expressions" in root {
   type phrase_types_data
 }
 
+phrase expression_statement = "Core:expression_statement" in root {
+  type phrase_types_elaborate
+  action host "expressions.statement"
+  language compiler
+}
+
 phrase assert = "assert" in root {
   kind "keyword"
   color "#C586C0"

@@ -199,3 +199,12 @@ let Core:ApplyActionBindings = phrase {
         return
     }
 }
+
+let Core:InstallExpressionForm = phrase {
+    type = <phrase-types:elaborate>
+    action = fn (state:Context*, called:Phrase*) -> void {
+        let root = context:source:root(state)
+        let form = context:phrase:find:exact(state, root, "Core:expression_statement")
+        context:phrase:define:alias(state, "", form)
+    }
+}

@@ -98,6 +98,10 @@ async function command(process, line, expected) {
   assert.equal(ready, true);
   assert.ok(log.some(line => line.includes('server ready; project published')));
   assert.equal(terminal.shellArgs[0], '--connect');
+  // A managed/prepared server must also supply the client executable and info.
+  assert.equal(terminal.shellPath, executable);
+  assert.ok(runtime.info(folder.uri).includes(`executable=${executable}\n`));
+  assert.ok(runtime.info(folder.uri).includes('configured executable=recurloop\n'));
   runtime.dispose();
 
   const failing = new RecurLoopRuntime({ appendLine() {}, append() {} }, async () => executable);
