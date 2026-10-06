@@ -46,7 +46,7 @@ Installation requires your confirmation and downloads the complete official
 GitHub Release, including the `.rli` libraries. The bundled installer verifies
 the archive SHA-256 and internal file manifest. Its version is pinned to the
 runtime version in the source tree's `CMakeLists.txt` when the extension is built.
-This extension release requires RecurLoop 0.2.5 or a newer patch in the 0.2
+This extension release requires RecurLoop 0.2.6 or a newer patch in the 0.2
 series. Compatibility is checked whenever an executable is selected; incompatible
 runtimes produce an error rather than being replaced.
 

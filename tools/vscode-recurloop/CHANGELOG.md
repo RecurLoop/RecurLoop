@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.2.6
 
 - Honor folder-specific runtime and analysis settings in multi-folder workspaces.
 - Use the running server's executable for console clients and runtime diagnostics.
