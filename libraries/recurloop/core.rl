@@ -24,4 +24,8 @@ include "core/collections.rl"
 include "core/actions.rl"
 include "core/completion.rl"
 
+// Bind after every source module has created its dictionaries and parser helpers.
+// Later definitions can otherwise reintroduce migrated bootstrap host actions.
+Core:ApplyActionBindings
+
 engine export "core.rli"

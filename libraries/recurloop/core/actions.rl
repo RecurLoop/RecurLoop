@@ -199,5 +199,3 @@ let Core:ApplyActionBindings = phrase {
         return
     }
 }
-
-Core:ApplyActionBindings
