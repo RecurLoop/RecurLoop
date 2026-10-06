@@ -164,8 +164,19 @@ async function request(command, args = {}) {
   await request('launch', config);
   mark = messages.length;
   await request('configurationDone');
+  const entryStop = await waitFor(() => messages.slice(mark).find(message => message.event === 'stopped'));
+  assert.equal(entryStop.body.reason, 'entry');
+  // The native entry wrapper is emitted by the project file; stopOnEntry must
+  // stop there before stepping into the included application implementation.
+  const entryFrame = (await request('stackTrace')).stackFrames[0];
+  assert.equal(entryFrame.source.path, path.join(repo, 'recurloop.project.rl'));
+  assert.equal(entryFrame.name, 'application_debug_main');
+  mark = messages.length;
+  await request('stepIn');
   await waitFor(() => messages.slice(mark).find(message => message.event === 'stopped'));
-  assert.equal((await request('stackTrace')).stackFrames[0].source.path, source);
+  const applicationFrame = (await request('stackTrace')).stackFrames[0];
+  assert.equal(applicationFrame.source.path, source);
+  assert.equal(applicationFrame.name, 'ExampleApplication:main');
   await request('terminate');
   const ioSource = path.join(root, 'input.rl');
   const ioExecutable = path.join(root, 'input-application');
