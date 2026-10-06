@@ -32,6 +32,34 @@ npm run package --prefix tools/vscode-recurloop
 VSIX in that directory. Marketplace publication is manual; the release workflow
 only publishes GitHub Release assets.
 
+## CI build caches
+
+GitHub Actions reuses the pinned LLVM SDK, GoogleTest/Benchmark source trees,
+and npm downloads. C++ compilation uses sccache with the GitHub Actions cache
+backend; its post-job statistics show cache hits and misses. CMake automatically
+selects sccache when it is installed.
+
+The source-matched `.cache/core` image is cached separately using the host/core
+sources and release build configuration as its key. CMake also checks the image's
+fingerprint before using it. Dependency sources are saved after configuration;
+core images are saved after core verification. Later test or packaging failures do not discard those caches.
+
+Each run configures a fresh `build/CI` tree and runs all tests, core fixed-point
+verification, package audits and compatibility checks. Build directories, test
+completion stamps and release assets are not reused from previous runs. Release
+assets are passed to downstream jobs through workflow artifacts.
+
+CI exposes configuration, compilation, unit tests, feature tests, examples,
+core verification and packaging as separate steps. `tools/release-linux.sh`
+accepts those phases (`configure`, `build`, `unit`, `feature`, `examples`, `core`,
+`package`); without arguments it runs the complete pipeline as before.
+Compilation uses the available CPU count, capped at roughly one compiler per
+2 GiB of available memory. Set `RECURLOOP_BUILD_JOBS` to override this limit.
+
+VSIX packaging compiles TypeScript once through `vscode:prepublish`. CI then
+runs `npm run test:compiled` to exercise setup, runtime and editor integration
+using that output. Local `npm test` still compiles before running the same tests.
+
 ## Dependency model
 
 RecurLoop never builds LLVM as part of its normal build or release pipeline.

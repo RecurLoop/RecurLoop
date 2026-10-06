@@ -224,7 +224,8 @@
     "check": "tsc -p ./ --noEmit",
     "package": "vsce package --no-dependencies",
     "publish": "vsce publish --no-dependencies",
-    "test": "npm run test:setup && node tests/runtime.cjs && node tests/editor.cjs",
+    "test": "npm run compile && npm run test:compiled",
+    "test:compiled": "node tests/setup.cjs && node tests/runtime.cjs && node tests/editor.cjs",
     "test:setup": "npm run compile && node tests/setup.cjs"
   },
   "devDependencies": {

@@ -17,6 +17,8 @@ jobs:
   ci:
     name: Build and verify runtime and VS Code extension
     runs-on: ubuntu-22.04
+    env:
+      SCCACHE_GHA_ENABLED: "true"
     steps:
       - uses: actions/checkout@v7
       - name: Restore official LLVM archive cache
@@ -26,13 +28,58 @@ jobs:
             .cache/linux-release-deps/llvm/22.1.8
             .cache/linux-release-deps/downloads/LLVM-22.1.8-Linux-X64.tar.xz
           key: llvm-22.1.8-linux-x64-${{ hashFiles('cmake/LLVMDistribution.cmake') }}
+      - name: Set up C/C++ compilation cache
+        uses: mozilla-actions/sccache-action@v0.0.11
+        with:
+          version: "v0.16.0"
+      - name: Restore test dependency sources
+        id: dependency-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            .cache/linux-release-deps/googletest-src
+            .cache/linux-release-deps/benchmark-src
+          key: test-deps-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('tests/CMakeLists.txt') }}
+      - name: Restore source-matched core image
+        id: core-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: .cache/core
+          # Match the core fingerprint inputs and isolate the release toolchain.
+          key: core-ci-ubuntu-22.04-${{ runner.arch }}-${{ hashFiles('include/**', 'source/**', 'libraries/recurloop/**', 'CMakeLists.txt', 'CMakePresets.json', 'cmake/**', 'tools/release-linux.sh') }}
       - name: Verify build tools
         run: |
           cmake --version
           ninja --version
           git --version
-      - name: Build, test, stage and audit release
-        run: tools/release-linux.sh
+      - name: Configure release toolchain and dependencies
+        run: tools/release-linux.sh configure
+      - name: Save test dependency sources
+        if: steps.dependency-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            .cache/linux-release-deps/googletest-src
+            .cache/linux-release-deps/benchmark-src
+          key: ${{ steps.dependency-cache.outputs.cache-primary-key }}
+      - name: Build runtime, tests and libraries
+        run: tools/release-linux.sh build
+      - name: Verify unit tests
+        run: tools/release-linux.sh unit
+      - name: Verify feature tests
+        run: tools/release-linux.sh feature
+      - name: Verify examples and workflows
+        run: tools/release-linux.sh examples
+      - name: Verify core ownership and fixed point
+        run: tools/release-linux.sh core
+      - name: Save source-matched core image
+        if: steps.core-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: .cache/core
+          key: ${{ steps.core-cache.outputs.cache-primary-key }}
+      - name: Stage, audit and verify reproducible package
+        run: tools/release-linux.sh package
       - name: Validate release version
         if: github.ref_type == 'tag'
         env:
@@ -52,7 +99,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          make vscode-extension
+          npm ci --prefix tools/vscode-recurloop
+          npm run package --prefix tools/vscode-recurloop
           extension_version="$(node -p "require('./tools/vscode-recurloop/package.json').version")"
           asset="recurloop-vscode-${extension_version}.vsix"
           cp "tools/vscode-recurloop/$asset" dist/
@@ -66,7 +114,7 @@ jobs:
           set -euo pipefail
           llvm_sdk="$(cat .cache/linux-release-deps/llvm-sdk-path.txt)"
           export PATH="$llvm_sdk/bin:$PATH"
-          npm test --prefix tools/vscode-recurloop
+          npm run test:compiled --prefix tools/vscode-recurloop
       - uses: actions/upload-artifact@v6
         with:
           name: release-assets
