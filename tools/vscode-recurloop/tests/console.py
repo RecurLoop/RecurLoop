@@ -24,6 +24,13 @@ client = subprocess.Popen([host, '--connect', socket_path], stdin=slave, stdout=
 os.close(slave)
 
 
+def has_prompt(output):
+    visible = re.sub(rb'\x1b\[[0-?]*[ -/]*[@-~]', b'', output)
+    # The line editor returns to column zero before restoring the cursor with
+    # CSI n C. Removing CSI leaves a trailing CR after the visible prompt.
+    return re.search(rb'(?:^|[\n\r])> \r?$', visible) is not None
+
+
 def prompt(timeout=5):
     result = b''
     deadline = time.monotonic() + timeout
@@ -40,8 +47,7 @@ def prompt(timeout=5):
             result += chunk
             # A redirection typed into the PTY can end an input-echo chunk in
             # '> '. Only the prompt at the start of a new line completes a command.
-            visible = re.sub(rb'\x1b\[[0-?]*[ -/]*[@-~]', b'', result)
-            if visible == b'> ' or visible.endswith((b'\n> ', b'\r> ')):
+            if has_prompt(result):
                 return result
     raise AssertionError(f'console timed out: {result!r}')
 
@@ -134,8 +140,7 @@ try:
             tail = (tail + chunk)[-128:]
             peaks = [max(peak, resident_kib(pid)) for peak, pid in zip(peaks, endpoints)]
         assert received >= volume, received
-        visible = re.sub(rb'\x1b\[[0-?]*[ -/]*[@-~]', b'', tail)
-        if not visible.endswith((b'\n> ', b'\r> ')):
+        if not has_prompt(tail):
             prompt()
         growth = [peak - base for peak, base in zip(peaks, baseline)]
         assert all(kib < 16 * 1024 for kib in growth), f'output retained in memory: {growth} KiB'
