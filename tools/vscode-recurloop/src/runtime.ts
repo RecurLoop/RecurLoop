@@ -10,11 +10,13 @@ export { projectFile } from './util';
 
 class WorkspaceRuntime implements vscode.Disposable {
   private process?: ChildProcessWithoutNullStreams;
+  private executable?: string;
   private socketPath?: string;
   private starting?: Promise<void>;
   private startup?: AbortController;
   private stderr = '';
   private disposed = false;
+  private lifecycle = 0;
   private readonly executions = new Set<Promise<string>>();
 
   constructor(private readonly output: vscode.OutputChannel,
@@ -37,6 +39,23 @@ class WorkspaceRuntime implements vscode.Disposable {
     await Promise.allSettled([...this.executions]);
     this.stop();
     if (uri && hasProject(uri)) await this.ensureStarted(uri);
+  }
+
+  public async stopWhenIdle(): Promise<void> {
+    const hadProcess = !!this.process;
+    if (this.startup) this.stop();
+    // Setup may itself be waiting for maintenance to promote a download.
+    // No child exists yet in that case, so do not await that startup here.
+    if (hadProcess && this.starting) await this.starting.catch(() => undefined);
+    // Let requests that already passed ensureStarted register their execution
+    // before taking the snapshot. Maintenance blocks all subsequent clients.
+    await Promise.resolve();
+    await Promise.allSettled([...this.executions]);
+    this.stop();
+  }
+
+  public usesExecutable(predicate: (executable: string) => boolean): boolean {
+    return !!this.executable && predicate(this.executable);
   }
 
   public info(uri?: vscode.Uri): string {
@@ -81,8 +100,11 @@ class WorkspaceRuntime implements vscode.Disposable {
 
   private async start(uri: vscode.Uri): Promise<void> {
     this.stop();
+    const lifecycle = this.lifecycle;
     const executable = await this.prepareExecutable(uri);
     if (this.disposed) throw new Error('RecurLoop runtime is disposed');
+    if (lifecycle !== this.lifecycle) throw new Error('RecurLoop server startup cancelled');
+    this.executable = executable;
     requireProject(uri);
     const root = workspaceRoot(uri);
     const suffix = `${process.pid}-${Math.random().toString(16).slice(2, 8)}`;
@@ -220,10 +242,12 @@ class WorkspaceRuntime implements vscode.Disposable {
   }
 
   private stop(): void {
+    this.lifecycle++;
     this.startup?.abort(new Error('RecurLoop server startup cancelled'));
     this.startup = undefined;
     const child = this.process;
     this.process = undefined;
+    this.executable = undefined;
     if (child && !child.killed) child.kill('SIGTERM');
     if (this.socketPath) {
       try { fs.unlinkSync(this.socketPath); } catch { /* absent or already removed */ }
@@ -240,6 +264,7 @@ class WorkspaceRuntime implements vscode.Disposable {
 /** Each workspace owns a separate published language environment. */
 export class RecurLoopRuntime implements vscode.Disposable {
   private readonly workspaces = new Map<string, WorkspaceRuntime>();
+  private maintenance?: Promise<void>;
   constructor(private readonly output: vscode.OutputChannel,
     private readonly prepareExecutable: (uri: vscode.Uri) => Promise<string> = async uri => resolveExecutable(uri)) {}
   private runtime(uri: vscode.Uri): WorkspaceRuntime {
@@ -248,13 +273,33 @@ export class RecurLoopRuntime implements vscode.Disposable {
     if (!runtime) { runtime = new WorkspaceRuntime(this.output, this.prepareExecutable); this.workspaces.set(key, runtime); }
     return runtime;
   }
-  inspect(document: vscode.TextDocument, trace = true): Promise<string> { return this.runtime(document.uri).inspect(document, trace); }
-  execute(uri: vscode.Uri, commands: string[]): Promise<string> { return this.runtime(uri).execute(uri, commands); }
-  terminalOptions(uri: vscode.Uri): Promise<vscode.TerminalOptions> { return this.runtime(uri).terminalOptions(uri); }
-  reload(uri: vscode.Uri): Promise<void> { return this.runtime(uri).reload(uri); }
-  async restart(uri?: vscode.Uri): Promise<void> {
-    if (uri) await this.runtime(uri).restart(uri);
-    else { for (const runtime of this.workspaces.values()) runtime.dispose(); this.workspaces.clear(); }
+  private afterMaintenance<T>(operation: () => Promise<T>): Promise<T> {
+    if (this.maintenance) return this.maintenance.then(() => this.afterMaintenance(operation));
+    return operation();
+  }
+  inspect(document: vscode.TextDocument, trace = true): Promise<string> { return this.afterMaintenance(() => this.runtime(document.uri).inspect(document, trace)); }
+  execute(uri: vscode.Uri, commands: string[]): Promise<string> { return this.afterMaintenance(() => this.runtime(uri).execute(uri, commands)); }
+  terminalOptions(uri: vscode.Uri): Promise<vscode.TerminalOptions> { return this.afterMaintenance(() => this.runtime(uri).terminalOptions(uri)); }
+  reload(uri: vscode.Uri): Promise<void> { return this.afterMaintenance(() => this.runtime(uri).reload(uri)); }
+  restart(uri?: vscode.Uri): Promise<void> {
+    return this.afterMaintenance(async () => {
+      if (uri) await this.runtime(uri).restart(uri);
+      else { for (const runtime of this.workspaces.values()) runtime.dispose(); this.workspaces.clear(); }
+    });
+  }
+  /** Pause new clients and drain active targets before replacing or removing managed files. */
+  async maintain<T>(operation: () => Promise<T>, selected?: (executable: string) => boolean): Promise<T> {
+    while (this.maintenance) await this.maintenance;
+    let release!: () => void;
+    this.maintenance = new Promise<void>(resolve => { release = resolve; });
+    try {
+      const affected = [...this.workspaces.values()].filter(runtime => !selected || runtime.usesExecutable(selected));
+      await Promise.all(affected.map(runtime => runtime.stopWhenIdle()));
+      return await operation();
+    } finally {
+      this.maintenance = undefined;
+      release();
+    }
   }
   info(uri?: vscode.Uri): string { return uri ? this.runtime(uri).info(uri) : 'Select a workspace to inspect its runtime.'; }
   dispose(): void { for (const runtime of this.workspaces.values()) runtime.dispose(); this.workspaces.clear(); }

@@ -124,6 +124,30 @@ export function activate(context: vscode.ExtensionContext): void {
       if (!String(error).includes('setup was deferred')) void vscode.window.showErrorMessage(String(error));
     }
   };
+  const manageRuntime = async (operation: 'update' | 'uninstall') => {
+    // Explicit maintenance works even when no project is open; it never starts
+    // a project or installs an initial runtime implicitly.
+    const active = features;
+    const output = active?.output ?? vscode.window.createOutputChannel('RecurLoop');
+    const setup = active?.setup ?? new RuntimeSetup(context, output);
+    const change = active ? (apply: () => Promise<string>) => active.runtime.maintain(apply, executable => setup.isManaged(executable)) : undefined;
+    try {
+      const changed = operation === 'update' ? await setup.update(change) : await setup.uninstall(change);
+      if (!changed || !active) return;
+      active.analysis.invalidate();
+      if (operation === 'update') {
+        for (const folder of vscode.workspace.workspaceFolders ?? []) {
+          if (hasProject(folder.uri) && setup.isManaged(resolveExecutable(folder.uri))) await active.runtime.restart(folder.uri);
+        }
+        void vscode.window.showInformationMessage('RecurLoop runtime updated. Reopen existing RecurLoop consoles to connect to the new server.');
+      }
+    } catch (error) {
+      output.appendLine(String(error));
+      void vscode.window.showErrorMessage(String(error));
+    } finally {
+      if (!active) { setup.dispose(); output.dispose(); }
+    }
+  };
   const changed = (uri: vscode.Uri) => {
     if (!vscode.workspace.getWorkspaceFolder(uri)) return;
     const entryChanged = uri.fsPath === projectFile(uri);
@@ -211,6 +235,8 @@ export function activate(context: vscode.ExtensionContext): void {
       for (const folder of vscode.workspace.workspaceFolders ?? []) await active.runtime.restart(folder.uri);
       active.analysis.invalidate();
     })),
+    vscode.commands.registerCommand('recurloop.updateRuntime', () => manageRuntime('update')),
+    vscode.commands.registerCommand('recurloop.uninstallRuntime', () => manageRuntime('uninstall')),
     vscode.commands.registerCommand('recurloop.restartLanguageRuntime', () => inProject(async (active, uri) => {
       await active.runtime.restart(uri);
       active.analysis.invalidate();

@@ -2,7 +2,7 @@
   "name": "recurloop-vscode",
   "displayName": "RecurLoop",
   "description": "Language intelligence and debugging for RecurLoop.",
-  "version": "0.1.2",
+  "version": "0.2.5",
   "publisher": "recurloop",
   "license": "Apache-2.0",
   "engines": {
@@ -68,6 +68,14 @@
       {
         "command": "recurloop.installRuntime",
         "title": "RecurLoop: Install Runtime"
+      },
+      {
+        "command": "recurloop.updateRuntime",
+        "title": "RecurLoop: Update Runtime"
+      },
+      {
+        "command": "recurloop.uninstallRuntime",
+        "title": "RecurLoop: Uninstall Runtime"
       },
       {
         "command": "recurloop.runCurrentFile",

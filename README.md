@@ -60,7 +60,7 @@ that downloaded file, then reload the window. You can also install it from the
 command line (use the filename you downloaded):
 
 ```bash
-code --install-extension ./recurloop-vscode-0.1.2.vsix --force
+code --install-extension ./recurloop-vscode-0.2.5.vsix --force
 ```
 
 For a command-line download of the latest release with GitHub CLI:
@@ -99,6 +99,13 @@ Managed runtimes and their libraries are removed by the extension's uninstall
 hook on the next full VS Code restart after uninstalling. Separately installed
 runtimes remain untouched. The missing-runtime dialog links to the installation
 instructions above for a global runtime available on `PATH` outside VS Code.
+
+Managed runtimes follow the release pinned by each extension version and update
+automatically when that version changes. **RecurLoop: Update Runtime** retries an
+update on demand; **RecurLoop: Uninstall Runtime** removes the managed runtime
+without removing the extension. Manual removal is remembered until you use
+**RecurLoop: Install Runtime** again. External installations are never updated or
+removed by these commands.
 
 You can also install the runtime using the instructions above and select it in
 VS Code's user or workspace settings:

@@ -32,21 +32,33 @@ export function registerManagedRuntimes(storage: string, registry: string): void
   fs.writeFileSync(registry, JSON.stringify([...entries]) + '\n');
 }
 
-/** The uninstall hook has no VS Code API; use recorded storage paths, never executable settings or PATH. */
-export function removeManagedRuntimes(registry: string): void {
-  for (const storage of readRegistry(registry)) {
-    const root = path.join(storage, 'runtime');
-    if (!fs.existsSync(root) || fs.lstatSync(root).isSymbolicLink()) continue;
-    for (const entry of fs.readdirSync(root, { withFileTypes: true })) {
-      if (!entry.isDirectory() || !/^\d+\.\d+\.\d+$/.test(entry.name)) continue;
-      const prefix = path.join(root, entry.name);
-      const file = path.join(prefix, marker);
-      if (!fs.existsSync(file) || fs.lstatSync(file).isSymbolicLink()) continue;
-      const ownership = JSON.parse(fs.readFileSync(file, 'utf8'));
-      if (ownership.owner === owner && ownership.storage === storage) {
-        fs.rmSync(prefix, { recursive: true, force: true });
-      }
+/** Identify owned versions without consulting executable settings or PATH. */
+export function managedRuntimePrefixes(storage: string): string[] {
+  storage = path.resolve(storage);
+  const root = path.join(storage, 'runtime');
+  if (!fs.existsSync(root) || fs.lstatSync(root).isSymbolicLink()) return [];
+  const prefixes: string[] = [];
+  for (const entry of fs.readdirSync(root, { withFileTypes: true })) {
+    if (!entry.isDirectory() || !/^\d+\.\d+\.\d+$/.test(entry.name)) continue;
+    const prefix = path.join(root, entry.name);
+    const file = path.join(prefix, marker);
+    if (!fs.existsSync(file) || fs.lstatSync(file).isSymbolicLink()) continue;
+    const ownership = JSON.parse(fs.readFileSync(file, 'utf8'));
+    if (ownership.owner === owner && ownership.storage === storage) {
+      prefixes.push(prefix);
     }
   }
-  fs.rmSync(registry, { force: true });
+  return prefixes;
+}
+
+/** The uninstall hook has no VS Code API; recorded paths also support scoped manual removal. */
+export function removeManagedRuntimes(registry: string, onlyStorage?: string): void {
+  const entries = readRegistry(registry);
+  for (const storage of entries) {
+    if (onlyStorage && storage !== path.resolve(onlyStorage)) continue;
+    for (const prefix of managedRuntimePrefixes(storage)) fs.rmSync(prefix, { recursive: true, force: true });
+  }
+  const remaining = onlyStorage ? entries.filter(storage => storage !== path.resolve(onlyStorage)) : [];
+  if (remaining.length) fs.writeFileSync(registry, JSON.stringify(remaining) + '\n');
+  else fs.rmSync(registry, { force: true });
 }

@@ -3,10 +3,11 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as vscode from 'vscode';
 import { configuredExecutable, findExecutable, hasProject, requireProject, resolveExecutable, setManagedExecutable } from './util';
-import { registerManagedRuntimes } from './runtimeOwnership';
+import { managedRuntimePrefixes, registerManagedRuntimes, removeManagedRuntimes } from './runtimeOwnership';
 
 const installationGuide = 'https://github.com/RecurLoop/RecurLoop#install-the-latest-release';
 const globalInstallationAdvice = `To install RecurLoop globally and add it to PATH for use outside VS Code, follow the installation instructions in the RecurLoop repository: ${installationGuide}.`;
+type RuntimeChange = (operation: () => Promise<string>) => Promise<string>;
 
 function command(file: string, args: string[]): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -29,6 +30,7 @@ export class RuntimeSetup implements vscode.Disposable {
   private readonly version: string;
   private readonly prefix: string;
   private readonly binary: string;
+  private readonly disabledFile: string;
   private readonly reported = new Set<string>();
   private pending?: Promise<string>;
   private installer?: ChildProcess;
@@ -40,6 +42,8 @@ export class RuntimeSetup implements vscode.Disposable {
     if (!/^\d+\.\d+\.\d+$/.test(this.version)) throw new Error('Invalid bundled runtime version');
     this.prefix = path.join(context.globalStorageUri.fsPath, 'runtime', this.version);
     this.binary = path.join(this.prefix, 'bin', 'recurloop');
+    this.disabledFile = path.join(context.globalStorageUri.fsPath, 'runtime-disabled.json');
+    this.deferred = fs.existsSync(this.disabledFile);
     this.registerInstallations();
     setManagedExecutable(this.binary);
   }
@@ -48,11 +52,48 @@ export class RuntimeSetup implements vscode.Disposable {
     registerManagedRuntimes(this.context.globalStorageUri.fsPath, this.context.asAbsolutePath('out/managed-runtimes.json'));
   }
 
+  private managedPrefixes(): string[] {
+    return managedRuntimePrefixes(path.resolve(this.context.globalStorageUri.fsPath));
+  }
+
+  public isManaged(executable: string): boolean {
+    return this.managedPrefixes().some(prefix => path.resolve(executable) === path.join(prefix, 'bin', 'recurloop'));
+  }
+
   public async ensureExecutable(uri?: vscode.Uri, override?: string): Promise<string> {
     requireProject(uri);
     if (this.disposed) throw new Error('Runtime setup is disposed');
     try {
       const configured = configuredExecutable(uri, override);
+      // A selected external executable always takes precedence. Only owned
+      // installations follow the runtime release bundled with this extension.
+      const explicit = findExecutable(configured, uri);
+      if (explicit && !this.isManaged(explicit)) return await this.validate(explicit);
+      if (!override?.trim() && (configured === 'recurloop' || (explicit && this.isManaged(explicit)))) {
+        const owned = this.managedPrefixes();
+        if (owned.length && !fs.existsSync(this.binary) && !this.deferred) {
+          if (!this.pending) this.pending = this.installManaged().catch(error => {
+            this.deferred = true;
+            throw error;
+          }).finally(() => { this.pending = undefined; });
+          try { await this.pending; }
+          catch (error) {
+            // Keep a compatible previous installation usable when a download
+            // fails. Incompatible old protocols must still fail explicitly.
+            for (const prefix of owned.reverse()) {
+              try {
+                const previous = await this.validate(path.join(prefix, 'bin', 'recurloop'));
+                setManagedExecutable(previous);
+                this.output.appendLine(`[setup] update failed; keeping previous compatible runtime: ${String(error)}`);
+                void vscode.window.showInformationMessage('RecurLoop could not be updated. The previous compatible managed runtime is still available. Use RecurLoop: Update Runtime to retry.');
+                return previous;
+              } catch { /* try another owned version */ }
+            }
+            throw error;
+          }
+        }
+        if (fs.existsSync(this.binary)) await this.moveManagedSettings();
+      }
       const executable = findExecutable(resolveExecutable(uri, override), uri);
       if (executable) return await this.validate(executable);
       if (configured !== 'recurloop' || override?.trim()) {
@@ -85,6 +126,66 @@ export class RuntimeSetup implements vscode.Disposable {
     this.reported.clear();
     if (!this.pending) this.pending = this.requestSetup(uri);
     await this.pending;
+  }
+
+  /** Update owned installations to the release pinned by this extension. */
+  public async update(change?: RuntimeChange): Promise<boolean> {
+    if (this.disposed) throw new Error('Runtime setup is disposed');
+    if (this.pending) await this.pending;
+    if (!this.managedPrefixes().length) {
+      void vscode.window.showInformationMessage('No extension-managed RecurLoop runtime is installed. Use RecurLoop: Install Runtime. External installations are not updated.');
+      return false;
+    }
+    if (findExecutable(this.binary)) {
+      await this.validate(this.binary);
+      await this.moveManagedSettings();
+      void vscode.window.showInformationMessage(`The managed RecurLoop runtime is already up to date (${this.version}, bundled with this extension).`);
+      return false;
+    }
+    this.deferred = false;
+    this.reported.clear();
+    this.pending = this.installManaged(change).catch(error => {
+      this.deferred = true;
+      throw error;
+    }).finally(() => { this.pending = undefined; });
+    await this.pending;
+    await this.moveManagedSettings();
+    return true;
+  }
+
+  public async uninstall(change?: RuntimeChange): Promise<boolean> {
+    if (this.disposed) throw new Error('Runtime setup is disposed');
+    if (this.pending) await this.pending;
+    if (!this.managedPrefixes().length) {
+      void vscode.window.showInformationMessage('No extension-managed RecurLoop runtime is installed. External installations are not removed.');
+      return false;
+    }
+    const remove = async () => {
+      this.deferred = true;
+      await this.moveManagedSettings('recurloop');
+      fs.mkdirSync(this.context.globalStorageUri.fsPath, { recursive: true });
+      fs.writeFileSync(this.disabledFile, '{}\n');
+      removeManagedRuntimes(this.context.asAbsolutePath('out/managed-runtimes.json'), this.context.globalStorageUri.fsPath);
+      setManagedExecutable(undefined);
+      return '';
+    };
+    this.pending = (change ? change(remove) : remove()).finally(() => { this.pending = undefined; });
+    await this.pending;
+    void vscode.window.showInformationMessage('Extension-managed RecurLoop runtimes and libraries were removed. Use RecurLoop: Install Runtime to install again.');
+    return true;
+  }
+
+  private async moveManagedSettings(next = this.binary): Promise<void> {
+    for (const folder of vscode.workspace.workspaceFolders ?? []) {
+      const configured = configuredExecutable(folder.uri);
+      const selected = findExecutable(configured, folder.uri) ?? configured;
+      if (configured === 'recurloop' || !this.isManaged(selected) || selected === next) continue;
+      const config = vscode.workspace.getConfiguration('recurloop', folder.uri);
+      const values = config.inspect<string>('executablePath');
+      const target = values?.workspaceFolderValue !== undefined ? vscode.ConfigurationTarget.WorkspaceFolder
+        : values?.workspaceValue !== undefined ? vscode.ConfigurationTarget.Workspace : vscode.ConfigurationTarget.Global;
+      await config.update('executablePath', next, target);
+    }
   }
 
   private requestSetup(uri?: vscode.Uri): Promise<string> {
@@ -138,6 +239,12 @@ export class RuntimeSetup implements vscode.Disposable {
       this.deferred = true;
       throw new Error('RecurLoop setup was deferred. Use RecurLoop: Install Runtime to try again.');
     }
+    return this.installManaged();
+  }
+
+  private async installManaged(change?: RuntimeChange): Promise<string> {
+    const problem = await this.platformProblem();
+    if (problem) throw new Error(problem);
     return vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: `Installing RecurLoop ${this.version}` }, async () => {
       // Install to a fresh directory; failed downloads never become the active runtime.
       const parent = path.dirname(this.prefix);
@@ -151,11 +258,19 @@ export class RuntimeSetup implements vscode.Disposable {
         const stagedBinary = path.join(staging, 'bin', 'recurloop');
         await this.validate(stagedBinary);
         if (this.disposed) throw new Error('Runtime setup is disposed');
-        if (fs.existsSync(this.prefix)) { fs.renameSync(this.prefix, backup); backedUp = true; }
-        try { fs.renameSync(staging, this.prefix); }
-        catch (error) { if (backedUp) fs.renameSync(backup, this.prefix); throw error; }
-        promoted = true;
-        this.registerInstallations();
+        const promote = async () => {
+          if (this.disposed) throw new Error('Runtime setup is disposed');
+          if (fs.existsSync(this.prefix)) { fs.renameSync(this.prefix, backup); backedUp = true; }
+          try { fs.renameSync(staging, this.prefix); }
+          catch (error) { if (backedUp) fs.renameSync(backup, this.prefix); throw error; }
+          promoted = true;
+          this.registerInstallations();
+          fs.rmSync(this.disabledFile, { force: true });
+          this.deferred = false;
+          setManagedExecutable(this.binary);
+          return this.binary;
+        };
+        if (change) await change(promote); else await promote();
         this.output.appendLine(`[setup] installed RecurLoop ${this.version} at ${this.prefix}`);
         void vscode.window.showInformationMessage(`RecurLoop ${this.version} is installed for this extension. Your terminal PATH is unchanged.`);
         return this.binary;

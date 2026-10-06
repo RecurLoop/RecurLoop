@@ -1,23 +1,23 @@
 # Production releases
 
-## Publishing RecurLoop 0.2.4 and the VS Code extension 0.1.2
+## Publishing RecurLoop 0.2.5 and the VS Code extension 0.2.5
 
 After local verification succeeds, tag the final release commit on `main` as
-`v0.2.4`, then publish the branch and tag explicitly:
+`v0.2.5`, then publish the branch and tag explicitly:
 
 ```sh
-git tag -a v0.2.4 -m "RecurLoop 0.2.4; VS Code extension 0.1.2"
+git tag -a v0.2.5 -m "RecurLoop 0.2.5; VS Code extension 0.2.5"
 git push origin main
-git push origin v0.2.4
+git push origin v0.2.5
 ```
 
 The tag starts `.github/workflows/ci.yml`, which builds and verifies the runtime,
 libraries and VSIX, then publishes their assets to GitHub Releases. Wait for the
 workflow to complete successfully before publishing the extension to Marketplace:
-extension 0.1.2 downloads the runtime assets from the `v0.2.4` release.
+extension 0.2.5 downloads the runtime assets from the `v0.2.5` release.
 
 For manual Marketplace publication, upload
-`tools/vscode-recurloop/recurloop-vscode-0.1.2.vsix` through the publisher management
+`tools/vscode-recurloop/recurloop-vscode-0.2.5.vsix` through the publisher management
 page for publisher `recurloop`. This package contains the installer, not the runtime
 binary; new users need access to GitHub Releases to install the runtime.
 

@@ -100,7 +100,7 @@ Installation requires your confirmation and downloads the complete official
 GitHub Release, including the `.rli` libraries. The bundled installer verifies
 the archive SHA-256 and internal file manifest. Its version is pinned to the
 runtime version in the source tree's `CMakeLists.txt` when the extension is built.
-This extension release requires RecurLoop 0.2.4 or a newer patch in the 0.2
+This extension release requires RecurLoop 0.2.5 or a newer patch in the 0.2
 series. Compatibility is checked whenever an executable is selected; incompatible
 runtimes produce an error rather than being replaced.
 
@@ -120,6 +120,27 @@ Executables installed separately or selected through settings are not removed.
 For a global installation available on `PATH` outside VS Code, follow the
 [repository installation instructions](https://github.com/RecurLoop/RecurLoop#install-the-latest-release).
 The missing-runtime dialog also links to this guide.
+
+When an initialized project selects a managed runtime and an extension update
+requires a different bundled runtime release, the extension installs that release
+automatically before starting the server. The original managed-installation consent
+covers these updates. A separately installed executable on `PATH` or an explicit
+external path retains precedence and is never updated by the extension.
+Downloads and library manifests are verified before switching; previous managed
+versions remain available, and a failed download can keep a compatible older runtime.
+
+Use **RecurLoop: Update Runtime** to update an existing managed installation to
+the release bundled with the installed extension. If it is already installed,
+the command reports that the runtime is up to date; it does not fetch an unrelated
+latest release. Use **RecurLoop: Uninstall Runtime** to remove all managed runtime
+versions and libraries without removing the extension. Both commands also work
+without an initialized project. Before switching or deleting files, active project
+targets finish and shared servers stop; new runtime requests wait for maintenance.
+After updating, reopen existing RecurLoop consoles to connect to the new server.
+Manual removal is remembered across window reloads, so opening a project does not
+immediately prompt to reinstall. **RecurLoop: Install Runtime** restores the runtime.
+Explicit settings pointing to a managed version follow updates and return to
+`recurloop` after manual removal; external executable settings are preserved.
 
 Server startup retries connections until it receives the RecurLoop protocol
 greeting, then loads and publishes the project before enabling clients. Socket
@@ -203,7 +224,7 @@ npm run package
 Then install the generated VSIX:
 
 ```bash
-code --install-extension recurloop-vscode-0.1.2.vsix
+code --install-extension recurloop-vscode-0.2.5.vsix
 ```
 
 When using Remote - WSL, install/enable the extension in WSL because it needs to

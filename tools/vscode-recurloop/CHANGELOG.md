@@ -1,6 +1,12 @@
 # Changelog
 
-## 0.1.2
+## 0.2.5
+
+- Update managed runtimes automatically to the release bundled with an extension update.
+- Add Update Runtime and Uninstall Runtime commands, including use without a project.
+- Drain active project targets before runtime maintenance and remember manual removal.
+
+## 0.2.4
 
 - Enable console input colors from the current runtime's semantic metadata.
 - Add VS Code shell integration markers for commands and their exit status.
