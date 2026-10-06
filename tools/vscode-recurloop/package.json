@@ -152,6 +152,11 @@
         }
       }
     },
+    "breakpoints": [
+      {
+        "language": "recurloop"
+      }
+    ],
     "debuggers": [
       {
         "type": "recurloop",
