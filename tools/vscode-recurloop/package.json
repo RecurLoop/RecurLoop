@@ -218,6 +218,7 @@
     }
   },
   "scripts": {
+    "vscode:uninstall": "node ./out/uninstall.js",
     "vscode:prepublish": "npm run compile",
     "compile": "node scripts/prepare-runtime.cjs && tsc -p ./",
     "watch": "node scripts/prepare-runtime.cjs && tsc -watch -p ./",
@@ -225,7 +226,7 @@
     "package": "vsce package --no-dependencies",
     "publish": "vsce publish --no-dependencies",
     "test": "npm run compile && npm run test:compiled",
-    "test:compiled": "node tests/setup.cjs && node tests/runtime.cjs && node tests/editor.cjs",
+    "test:compiled": "node tests/setup.cjs && node tests/startup.cjs && node tests/runtime.cjs && node tests/editor.cjs",
     "test:setup": "npm run compile && node tests/setup.cjs"
   },
   "devDependencies": {

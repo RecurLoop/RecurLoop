@@ -4,17 +4,15 @@ import * as net from 'net';
 import * as os from 'os';
 import * as path from 'path';
 import * as vscode from 'vscode';
+import { setTimeout as retryDelay } from 'timers/promises';
 import { hasProject, hexEncode, libraryArguments, projectFile, requireProject, resolveExecutable, workspaceRoot } from './util';
 export { projectFile } from './util';
-
-function delay(ms: number): Promise<void> {
-  return new Promise(resolve => setTimeout(resolve, ms));
-}
 
 class WorkspaceRuntime implements vscode.Disposable {
   private process?: ChildProcessWithoutNullStreams;
   private socketPath?: string;
   private starting?: Promise<void>;
+  private startup?: AbortController;
   private stderr = '';
   private disposed = false;
   private readonly executions = new Set<Promise<string>>();
@@ -34,6 +32,7 @@ class WorkspaceRuntime implements vscode.Disposable {
   }
 
   public async restart(uri?: vscode.Uri): Promise<void> {
+    if (!uri || !hasProject(uri)) this.stop();
     if (this.starting) await this.starting.catch(() => undefined);
     await Promise.allSettled([...this.executions]);
     this.stop();
@@ -100,6 +99,8 @@ class WorkspaceRuntime implements vscode.Disposable {
       stdio: ['pipe', 'pipe', 'pipe']
     });
     this.process = child;
+    const startup = new AbortController();
+    this.startup = startup;
     this.socketPath = socketPath;
     this.stderr = '';
 
@@ -115,33 +116,49 @@ class WorkspaceRuntime implements vscode.Disposable {
     child.on('exit', (code, signal) => {
       this.output.appendLine(`[analysis] runtime exited code=${code ?? '-'} signal=${signal ?? '-'}`);
       if (this.process === child) this.process = undefined;
+      startup.abort(new Error(`RecurLoop server exited before startup completed (code=${code ?? '-'}, signal=${signal ?? '-'}). ${this.stderr.trim()}`));
     });
     child.on('error', error => {
       this.stderr = error.message;
       this.output.appendLine(`[analysis] failed to start: ${error.message}`);
+      startup.abort(error);
     });
 
-    const deadline = Date.now() + 5000;
-    while (Date.now() < deadline) {
-      if (!hasProject(uri)) { this.stop(); requireProject(uri); }
-      if (fs.existsSync(socketPath)) {
-        if (fs.existsSync(project)) {
-          try {
-            await this.request(socketPath, [':baseline', ':cache', `:load-file\t${project}`, ':publish'], 120000);
-          } catch (error) { this.stop(); throw error; }
-        }
-        return;
-      }
-      if (child.exitCode !== null) break;
-      await delay(25);
+    try {
+      // A bound socket is not proof that the server is accepting clients. Its
+      // protocol greeting is the readiness signal; elapsed time never is.
+      await this.waitForServer(socketPath, startup.signal);
+      requireProject(uri);
+      await this.request(socketPath, [':baseline', ':cache', `:load-file\t${project}`, ':publish'], 120000, startup.signal);
+      this.output.appendLine('[analysis] server ready; project published');
+    } catch (error) {
+      this.stop();
+      throw error;
+    } finally {
+      if (this.startup === startup) this.startup = undefined;
     }
-    this.stop();
-    const details = this.stderr.trim();
-    throw new Error(`Cannot start RecurLoop analysis runtime from '${executable}'.${details ? ` ${details}` : ''}`);
   }
 
-  private request(socketPath: string, command: string | string[], timeoutMs: number): Promise<string> {
+  private async waitForServer(socketPath: string, signal: AbortSignal): Promise<void> {
+    for (;;) {
+      signal.throwIfAborted();
+      try {
+        await this.request(socketPath, [], undefined, signal);
+        return;
+      } catch (error) {
+        signal.throwIfAborted();
+        const code = (error as NodeJS.ErrnoException).code;
+        if (!['ENOENT', 'ECONNREFUSED', 'ECONNRESET', 'EPIPE'].includes(code ?? '')) throw error;
+        // Back off between connection attempts, without a startup deadline.
+        try { await retryDelay(25, undefined, { signal }); }
+        catch (error) { signal.throwIfAborted(); throw error; }
+      }
+    }
+  }
+
+  private request(socketPath: string, command: string | string[], timeoutMs?: number, signal?: AbortSignal): Promise<string> {
     return new Promise((resolve, reject) => {
+      if (signal?.aborted) { reject(signal.reason); return; }
       const socket = net.createConnection(socketPath);
       let buffer = Buffer.alloc(0);
       let ready = false;
@@ -151,15 +168,19 @@ class WorkspaceRuntime implements vscode.Disposable {
       let result = '';
       const sendNext = () => socket.write(commands.shift()! + '\n');
       let settled = false;
-      const timer = setTimeout(() => finish(new Error(`RecurLoop analysis request timed out after ${timeoutMs} ms`)), timeoutMs);
+      const timer = timeoutMs === undefined ? undefined
+        : setTimeout(() => finish(new Error(`RecurLoop analysis request timed out after ${timeoutMs} ms`)), timeoutMs);
+      const aborted = () => finish(signal!.reason);
 
       const finish = (error?: Error, value = '') => {
         if (settled) return;
         settled = true;
         clearTimeout(timer);
+        signal?.removeEventListener('abort', aborted);
         socket.destroy();
         if (error) reject(error); else resolve(value);
       };
+      signal?.addEventListener('abort', aborted, { once: true });
 
       socket.on('data', chunk => {
         buffer = Buffer.concat([buffer, chunk]);
@@ -192,12 +213,15 @@ class WorkspaceRuntime implements vscode.Disposable {
       });
       socket.on('error', error => finish(error));
       socket.on('end', () => {
-        if (!settled) finish(new Error('RecurLoop analysis runtime closed the socket before replying'));
+        if (!settled) finish(Object.assign(new Error('RecurLoop analysis runtime closed the socket before replying'),
+          { code: ready ? undefined : 'ECONNRESET' }));
       });
     });
   }
 
   private stop(): void {
+    this.startup?.abort(new Error('RecurLoop server startup cancelled'));
+    this.startup = undefined;
     const child = this.process;
     this.process = undefined;
     if (child && !child.killed) child.kill('SIGTERM');

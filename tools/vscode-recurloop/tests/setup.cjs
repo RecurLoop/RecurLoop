@@ -18,10 +18,13 @@ let setting;
 let choice = 'Later';
 let selectedFile;
 let prompts = 0;
+const messages = [];
+const opened = [];
 let updates = 0;
 const errors = [];
 const vscode = {
-  env: { remoteName: 'wsl' }, ConfigurationTarget: { WorkspaceFolder: 3, Global: 1 },
+  env: { remoteName: 'wsl', openExternal: async uri => opened.push(uri) },
+  Uri: { parse: value => value }, ConfigurationTarget: { WorkspaceFolder: 3, Global: 1 },
   ProgressLocation: { Notification: 15 },
   workspace: {
     workspaceFolders: [folder], getWorkspaceFolder: () => folder,
@@ -37,6 +40,7 @@ const vscode = {
     showInformationMessage: async (message, options, ...items) => {
       if (!options?.modal) return;
       prompts++;
+      messages.push(message);
       assert.ok(items.includes('Later'));
       return choice;
     },
@@ -49,11 +53,17 @@ const originalLoad = Module._load;
 Module._load = function(name, ...rest) { return name === 'vscode' ? vscode : originalLoad.call(this, name, ...rest); };
 const { RuntimeSetup, compatibleVersion } = require('../out/runtimeSetup');
 const { resolveExecutable, configuredExecutable } = require('../out/util');
+const { removeManagedRuntimes } = require('../out/runtimeOwnership');
+const extensionFixture = path.join(root, 'extension');
+fs.mkdirSync(path.join(extensionFixture, 'out'), { recursive: true });
+fs.copyFileSync(path.join(extension, 'out/runtime-release.json'), path.join(extensionFixture, 'out/runtime-release.json'));
+fs.copyFileSync(path.join(extension, 'out/install-runtime.sh'), path.join(extensionFixture, 'out/install-runtime.sh'));
+const registry = path.join(extensionFixture, 'out/managed-runtimes.json');
 const output = { appendLine() {}, append() {} };
 let setup;
 function create(storage) {
   setup?.dispose();
-  const context = { globalStorageUri: { fsPath: path.join(root, storage) }, asAbsolutePath: relative => path.join(extension, relative) };
+  const context = { globalStorageUri: { fsPath: path.join(root, storage) }, asAbsolutePath: relative => path.join(extensionFixture, relative) };
   setup = new RuntimeSetup(context, output);
   return path.join(context.globalStorageUri.fsPath, 'runtime', version);
 }
@@ -129,12 +139,17 @@ esac
   assert.ok(!fs.existsSync(prefix));
   await assert.rejects(setup.ensureExecutable(folder.uri), /deferred/);
   assert.equal(prompts, 1); // no repeated automatic prompt
+  assert.ok(messages[0].includes('globally and add it to PATH'));
+  assert.ok(messages[0].includes('https://github.com/RecurLoop/RecurLoop#install-the-latest-release'));
+  choice = 'Installation Guide';
+  await assert.rejects(setup.install(folder.uri), /deferred/);
+  assert.deepEqual(opened, ['https://github.com/RecurLoop/RecurLoop#install-the-latest-release']);
 
   // Explicit paths stay explicit even when another local build exists.
   setting = '${workspaceFolder}/missing/recurloop';
   assert.equal(resolveExecutable(folder.uri), path.join(folder.uri.fsPath, 'missing/recurloop'));
   await assert.rejects(setup.ensureExecutable(folder.uri), /missing or not executable/);
-  assert.equal(prompts, 1);
+  assert.equal(prompts, 2);
   setting = '${workspaceFolder}/build/Release/bin/recurloop';
   assert.equal(await setup.ensureExecutable(folder.uri), path.join(folder.uri.fsPath, 'build/Release/bin/recurloop'));
   await assert.rejects(setup.ensureExecutable(folder.uri, '/missing/debug-override'), /debug launch override/);
@@ -195,6 +210,30 @@ esac
   await assert.rejects(setup.install(folder.uri), /deferred/);
   setup.platformProblem = platformProblem;
   assert.ok(errors.some(message => message.includes('Incompatible')));
+  setup.dispose();
+  assert.ok(fs.existsSync(managedBinary)); // disable/reload must preserve installations
+  const older = path.join(root, 'managed/runtime/0.0.1');
+  fs.cpSync(path.dirname(path.dirname(managedBinary)), older, { recursive: true });
+  fs.unlinkSync(path.join(older, '.extension-managed.json')); // migrate a pre-hook installation
+  create('managed');
+  const external = binary(path.join(root, 'external/bin/recurloop'));
+  setting = external;
+  assert.equal(await setup.ensureExecutable(folder.uri), external);
+  const unowned = binary(path.join(root, 'managed/runtime/9.9.9/bin/recurloop'));
+  const symlink = path.join(root, 'managed/runtime/8.8.8');
+  fs.symlinkSync(path.dirname(path.dirname(external)), symlink);
+  for (const file of ['uninstall.js', 'runtimeOwnership.js']) {
+    fs.copyFileSync(path.join(extension, 'out', file), path.join(extensionFixture, 'out', file));
+  }
+  assert.equal(require('../package.json').scripts['vscode:uninstall'], 'node ./out/uninstall.js');
+  execFileSync(process.execPath, [path.join(extensionFixture, 'out/uninstall.js')]);
+  assert.ok(!fs.existsSync(managedBinary));
+  assert.ok(!fs.existsSync(older));
+  assert.ok(!fs.existsSync(prefix)); // also removes other registered storage locations
+  assert.ok(fs.existsSync(external));
+  assert.ok(fs.existsSync(unowned));
+  assert.ok(fs.lstatSync(symlink).isSymbolicLink());
+  removeManagedRuntimes(registry); // idempotent without a registry or managed runtime
   console.log('Runtime setup passed: defaults, explicit paths, consent, picker, concurrent setup, verified install, rediscovery, PATH precedence, compatibility and failed-download recovery.');
 })().catch(error => { console.error(error); process.exitCode = 1; }).finally(() => {
   setup?.dispose();

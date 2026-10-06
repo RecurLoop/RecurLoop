@@ -112,6 +112,20 @@ path produces an error; the extension never substitutes another local build.
 Use **RecurLoop: Install Runtime** to retry after choosing **Later**. On unsupported
 platforms the setup offers a file picker instead of a download.
 
+Uninstalling the extension removes its managed runtime versions and their
+libraries, including installations discovered from earlier extension versions.
+VS Code runs the uninstall hook on its next full restart after uninstalling.
+Disabling the extension or reloading a window preserves the managed runtime.
+Executables installed separately or selected through settings are not removed.
+For a global installation available on `PATH` outside VS Code, follow the
+[repository installation instructions](https://github.com/RecurLoop/RecurLoop#install-the-latest-release).
+The missing-runtime dialog also links to this guide.
+
+Server startup retries connections until it receives the RecurLoop protocol
+greeting, then loads and publishes the project before enabling clients. Socket
+existence and a fixed startup delay do not establish readiness. Stopping the
+runtime or a server process failure cancels the pending startup.
+
 Automatic installation currently supports Linux x86-64 with glibc >= 2.35.
 In WSL, SSH or a container, installation occurs on the workspace extension host,
 not on the machine displaying the editor. For an ordinary terminal command,

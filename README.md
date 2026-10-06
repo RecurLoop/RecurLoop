@@ -95,6 +95,11 @@ data directory, requires no administrator access, and does not change your shell
 `PATH`. Use **RecurLoop: Install Runtime** to retry later. Automatic installation
 supports Linux x86-64 with glibc >= 2.35, including WSL and remote workspaces.
 
+Managed runtimes and their libraries are removed by the extension's uninstall
+hook on the next full VS Code restart after uninstalling. Separately installed
+runtimes remain untouched. The missing-runtime dialog links to the installation
+instructions above for a global runtime available on `PATH` outside VS Code.
+
 You can also install the runtime using the instructions above and select it in
 VS Code's user or workspace settings:
 
