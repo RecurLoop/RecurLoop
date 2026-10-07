@@ -193,7 +193,12 @@ namespace utilities {
           output << "\x1b[38;2;" << (color >> 16) << ';' << ((color >> 8) & 255) << ';' << (color & 255) << 'm';
         previous = color;
       }
-      output << line[index];
+      if (line[index] == '\n')
+        output << "\r\n";
+      else if (line[index] == '\t')
+        output << "    ";
+      else
+        output << line[index];
     }
     if (previous != 0x1000000) output << "\x1b[0m";
     return output.str();
@@ -227,15 +232,24 @@ namespace utilities {
     // Track terminal rows, including wide Unicode characters wrapping before
     // the right margin. ANSI colors are added only after measuring plain text.
     const auto position = [&](std::size_t end) {
-      std::size_t cells = promptWidth;
+      std::size_t row = promptWidth / columns;
+      std::size_t column = promptWidth % columns;
       for (std::size_t index = 0; index < end;) {
         const auto next = std::min(end, nextCharacter(line, index));
-        const auto width = displayWidth(std::string_view(line).substr(index, next - index));
-        if (width && cells % columns + width > columns) cells += columns - cells % columns;
-        cells += width;
+        if (line[index] == '\n') {
+          ++row;
+          column = 0;
+        } else {
+          const auto width = line[index] == '\t' ? 4 : displayWidth(std::string_view(line).substr(index, next - index));
+          if (width && column + width > columns) {
+            ++row;
+            column = 0;
+          }
+          column += width;
+        }
         index = next;
       }
-      return cells;
+      return row * columns + column;
     };
     const auto finish = position(line.size());
     const auto target = position(cursor);
@@ -349,7 +363,32 @@ namespace utilities {
       cursor = line.size();
     else if (byte == '~' && !parameters.empty()) {
       const int number = std::atoi(parameters.c_str());
-      if (number == 1 || number == 7)
+      if (number == 200) {
+        constexpr std::string_view finish = "\x1b[201~";
+        std::string pending;
+        std::string pasted;
+        bool carriageReturn = false;
+        while (true) {
+          const int next = reader_(-1);
+          if (next == End) break;
+          if (next == Timeout) continue;
+          pending.push_back(static_cast<char>(next));
+          if (pending == finish) break;
+          while (!pending.empty() && !finish.starts_with(pending)) {
+            const unsigned char value = pending.front();
+            pending.erase(0, 1);
+            if (value == '\r')
+              pasted.push_back('\n');
+            else if (value == '\n') {
+              if (!carriageReturn) pasted.push_back('\n');
+            } else if (value == '\t' || value >= 32)
+              pasted.push_back(static_cast<char>(value));
+            carriageReturn = value == '\r';
+          }
+        }
+        line.insert(cursor, pasted);
+        cursor += pasted.size();
+      } else if (number == 1 || number == 7)
         cursor = 0;
       else if (number == 4 || number == 8)
         cursor = line.size();
@@ -372,6 +411,14 @@ namespace utilities {
   }
 
   LineResult LineEditor::readLine(std::string_view prompt) {
+    // Keep newlines inside bracketed paste in the edit buffer until Enter.
+    struct PasteMode {
+      Writer &writer;
+      ~PasteMode() {
+        writer("\x1b[?2004l");
+      }
+    } pasteMode{writer_};
+    writer_("\x1b[?2004h");
     std::string line;
     std::string draft;
     std::string yank;

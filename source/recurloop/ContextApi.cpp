@@ -818,6 +818,9 @@ namespace recurloop {
     extern "C" std::uint64_t contextProcessInterrupted() noexcept {
       return ProcessControl::interrupted();
     }
+    extern "C" std::uint64_t contextProcessTerminal() noexcept {
+      return static_cast<std::uint64_t>(ProcessControl::terminal());
+    }
     extern "C" void contextProcessTrack(std::uint64_t pid) {
       ProcessControl::track(static_cast<pid_t>(pid));
     }
@@ -2387,6 +2390,8 @@ namespace recurloop {
                         reinterpret_cast<std::uintptr_t>(&contextActionsBindRoot));
     declareHostFunction(context, "context:process:active", "context:process:active", {}, u64,
                           reinterpret_cast<std::uintptr_t>(&contextProcessActive));
+    declareHostFunction(context, "context:process:terminal", "context:process:terminal", {}, u64,
+                        reinterpret_cast<std::uintptr_t>(&contextProcessTerminal));
     declareHostFunction(context, "context:process:interrupted", "context:process:interrupted", {}, u64,
                           reinterpret_cast<std::uintptr_t>(&contextProcessInterrupted));
       declareHostFunction(context, "context:process:track", "context:process:track", {u64}, voidType,

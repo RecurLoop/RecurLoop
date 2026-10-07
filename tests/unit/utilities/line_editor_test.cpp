@@ -190,3 +190,42 @@ TEST(LineEditor, PastedInputIsHighlightedOnce) {
   EXPECT_EQ(editor.readLine("> ").line, "print 123456789");
   EXPECT_EQ(requests, 1);
 }
+
+TEST(LineEditor, BracketedPastePreservesWholeBlockUntilEnter) {
+  ScriptedConsole console;
+  auto editor = console.editor();
+  console.push("\x1b[200~first\nsecond\n\x1b[201~X\n");
+  const auto input = editor.readLine("> ");
+  EXPECT_EQ(input.status, utilities::LineStatus::Line);
+  EXPECT_EQ(input.line, "first\nsecond\nX");
+  ASSERT_EQ(editor.history().size(), 1u);
+  EXPECT_EQ(editor.history().front(), input.line);
+  EXPECT_NE(console.output.find("\x1b[?2004h"), std::string::npos);
+  EXPECT_TRUE(console.output.ends_with("\x1b[?2004l"));
+}
+
+TEST(LineEditor, BracketedPasteNormalizesLineEndingsAndKeepsTabsLiteral) {
+  ScriptedConsole console;
+  int completions = 0;
+  utilities::LineEditor editor(
+      [&console](int) {
+        if (console.input.empty()) return utilities::LineEditor::End;
+        const int byte = console.input.front();
+        console.input.pop_front();
+        return byte;
+      },
+      [&console](std::string_view text) { console.output.append(text); return true; }, {},
+      [&completions](std::string_view, std::size_t) { ++completions; return utilities::Completion{}; });
+  console.push("\x1b[200~one\r\ntwo\rthree\tvalue\x1b[201~\n");
+  EXPECT_EQ(editor.readLine("> ").line, "one\ntwo\nthree\tvalue");
+  EXPECT_EQ(completions, 0);
+}
+
+TEST(LineEditor, CtrlCAfterPasteDiscardsEntireBlock) {
+  ScriptedConsole console;
+  auto editor = console.editor();
+  console.push("\x1b[200~first\nsecond\x1b[201~\x03");
+  EXPECT_EQ(editor.readLine("> ").status, utilities::LineStatus::Interrupt);
+  EXPECT_TRUE(editor.history().empty());
+  EXPECT_TRUE(console.output.ends_with("\x1b[?2004l"));
+}

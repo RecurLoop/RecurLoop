@@ -255,3 +255,26 @@ TEST(RecurloopServer, CompletionUsesCallingSessionAndDoesNotExecuteInput) {
   server.stop();
   thread.join();
 }
+
+TEST(RecurloopServer, EncodedEvaluationPreservesMultilineSourceAndRecoversFromInvalidHex) {
+  const std::string path = "/tmp/recurloop-server-paste-" + std::to_string(getpid()) + ".sock";
+  recurloop::ServerOptions options;
+  options.stdio = false;
+  options.unixPath = path;
+  recurloop::Server server(project(), options);
+  std::thread thread([&] { EXPECT_EQ(server.run(), 0); });
+  const int client = connectUnix(path);
+  EXPECT_GE(client, 0);
+  if (client >= 0) {
+    readPrompt(client);
+    sendLine(client, ":evaluate\t766172207061737465645f76616c7565203d2034300a7072696e74207061737465645f76616c7565202b2032");
+    EXPECT_EQ(readPrompt(client), "42\n> ");
+    sendLine(client, ":evaluate\tzz");
+    EXPECT_NE(readPrompt(client).find("invalid hexadecimal"), std::string::npos);
+    sendLine(client, "print pasted_value");
+    EXPECT_EQ(readPrompt(client), "40\n> ");
+    close(client);
+  }
+  server.stop();
+  thread.join();
+}

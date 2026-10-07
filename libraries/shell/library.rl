@@ -77,6 +77,8 @@ extern fopen(path:u8*, mode:u8*) -> u8* abi sysv-amd64
 extern fclose(stream:u8*) -> i64 abi sysv-amd64
 extern fread(pointer:u8*, size:u64, count:u64, stream:u8*) -> u64 abi sysv-amd64
 
+extern setsid() -> i32 abi sysv-amd64
+extern ioctl(fd:i32, request:u64, ...) -> i32 abi sysv-amd64
 extern setpgid(pid:i32, group:i32) -> i32 abi sysv-amd64
 extern fork() -> i32 abi sysv-amd64
 extern pipe(fds:i32*) -> i32 abi sysv-amd64
@@ -770,7 +772,7 @@ let Shell:run_builtin = fn (pipeline:Shell:Pipeline*) -> i64 {
 }
 
 let Shell:Invocation:start_impl = fn (
-    pipeline:Shell:Pipeline*, want_output:i64, managed:i64
+    pipeline:Shell:Pipeline*, want_output:i64, managed:i64, terminal:i32
 ) -> Shell:Invocation* {
     if !pipeline || pipeline.count <= 0 || (want_output == 1 && pipeline.output_path) {
         return cast(Shell:Invocation*, 0)
@@ -837,8 +839,16 @@ let Shell:Invocation:start_impl = fn (
             } else if pid == 0 {
                 // The interactive host ignores SIGINT while executing a line.
                 // Pipeline children must receive Ctrl+C normally.
-                if managed { setpgid(cast(i32, 0), cast(i32, 0)) }
                 signal(cast(i32, 2), cast(u8*, 0))
+                if managed {
+                    if terminal >= 0 {
+                        if setsid() < 0 { _exit(cast(i32, 126)) }
+                        // Linux TIOCSCTTY: /dev/tty must belong to this command,
+                        // rather than the background language server.
+                        if index == 0 && ioctl(terminal, cast(u64, 21518), cast(i32, 0)) < 0 { _exit(cast(i32, 126)) }
+                        dup2(terminal, cast(i32, 0))
+                    } else { setpgid(cast(i32, 0), cast(i32, 0)) }
+                }
                 if previous_read >= 0 { dup2(cast(i32, previous_read), cast(i32, 0)) }
                 if next_fds {
                     dup2(next_fds[1], cast(i32, 1))
@@ -869,7 +879,7 @@ let Shell:Invocation:start_impl = fn (
                 perror(command.argv[0])
                 _exit(cast(i32, 127))
             } else {
-                if managed {
+                if managed && terminal < 0 {
                     setpgid(pid, pid)
                 }
                 invocation.pids[invocation.count] = pid
@@ -957,7 +967,7 @@ let Shell:Invocation:destroy = fn (self:Shell:Invocation*) -> void {
 // A single pipeline stays asynchronous. Conditional lists wait between
 // pipelines in the parent, so cd and managed process groups keep their semantics.
 let Shell:Invocation:start = fn (pipeline:Shell:Pipeline*, want_output:i64) -> Shell:Invocation* {
-    if !pipeline || !pipeline.next { return Shell:Invocation:start_impl(pipeline, want_output, 0) }
+    if !pipeline || !pipeline.next { return Shell:Invocation:start_impl(pipeline, want_output, 0, cast(i32, -1)) }
     var current = pipeline
     var result = cast(Shell:Invocation*, 0)
     var status = 0
@@ -967,7 +977,7 @@ let Shell:Invocation:start = fn (pipeline:Shell:Pipeline*, want_output:i64) -> S
     while current {
         if current.condition == 0 || (current.condition == 1 && status == 0) || (current.condition == 2 && status != 0) {
             if result { result.destroy() }
-            result = Shell:Invocation:start_impl(current, want_output, 0)
+            result = Shell:Invocation:start_impl(current, want_output, 0, cast(i32, -1))
             if !result { return result }
             status = result.exit_code()
             if want_output { output.append_text(result.stdout()) }
@@ -984,7 +994,7 @@ let Shell:Invocation:start = fn (pipeline:Shell:Pipeline*, want_output:i64) -> S
 // Only phrase execution in a managed request calls host process-control APIs.
 // Keep these APIs outside the ordinary pipeline graph used by emit executable.
 let Shell:managed_single_invocation = fn (pipeline:Shell:Pipeline*, want_output:i64, state:Context*) -> Shell:Invocation* {
-    let invocation = Shell:Invocation:start_impl(pipeline, want_output, 1)
+    let invocation = Shell:Invocation:start_impl(pipeline, want_output, 1, cast(i32, context:process:terminal()))
     if !invocation { return cast(Shell:Invocation*, 0) }
     var index = 0
     while index < invocation.count {
@@ -2268,6 +2278,8 @@ set fflush.serializable = false
 set fopen.serializable = false
 set fclose.serializable = false
 set fread.serializable = false
+set setsid.serializable = false
+set ioctl.serializable = false
 set setpgid.serializable = false
 set fork.serializable = false
 set pipe.serializable = false

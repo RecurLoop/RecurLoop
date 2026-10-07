@@ -28,6 +28,7 @@ namespace recurloop {
   namespace {
     constexpr std::string_view streamHandshake = ":transport-stream-v1";
     constexpr std::string_view statusStreamHandshake = ":transport-stream-v2";
+    constexpr std::string_view consoleHandshake = ":transport-console-v3\t";
 
     bool sendBytes(int fd, std::string_view text) {
       while (!text.empty()) {
@@ -50,10 +51,11 @@ namespace recurloop {
 
     class SocketOutput : public std::streambuf {
     public:
-      SocketOutput(int fd, bool framed) : fd_(fd), framed_(framed) {}
+      SocketOutput(int fd, bool framed, std::mutex &mutex) : fd_(fd), framed_(framed), mutex_(mutex) {}
 
     protected:
       std::streamsize xsputn(const char *data, std::streamsize size) override {
+        std::lock_guard lock(mutex_);
         std::streamsize written = 0;
         while (written < size) {
           const auto count = std::min<std::streamsize>(size - written, 4096);
@@ -73,13 +75,16 @@ namespace recurloop {
     private:
       int fd_;
       bool framed_;
+      std::mutex &mutex_;
     };
 
     class ConsoleFrames {
     public:
-      explicit ConsoleFrames(utilities::LineEditor::Writer writer = [](std::string_view text) {
-        return utilities::LineEditor::writeDescriptor(STDOUT_FILENO, text);
-      }) : writer_(std::move(writer)) {}
+      explicit ConsoleFrames(utilities::LineEditor::Writer writer =
+                                 [](std::string_view text) {
+                                   return utilities::LineEditor::writeDescriptor(STDOUT_FILENO, text);
+                                 })
+          : writer_(std::move(writer)) {}
 
       bool consume(std::string_view bytes) {
         while (!bytes.empty()) {
@@ -250,7 +255,10 @@ namespace recurloop {
     utilities::Completion remoteCompletion(int fd, std::string_view line, std::size_t cursor) {
       if (!sendBytes(fd, ":complete\t" + std::to_string(cursor) + '\t' + hex(line) + '\n')) return {};
       std::string payload;
-      ConsoleFrames response([&](std::string_view bytes) { payload += bytes; return true; });
+      ConsoleFrames response([&](std::string_view bytes) {
+        payload += bytes;
+        return true;
+      });
       char bytes[4096];
       while (!response.completed) {
         const ssize_t count = recv(fd, bytes, sizeof(bytes), 0);
@@ -261,7 +269,8 @@ namespace recurloop {
       std::istringstream input(payload);
       std::string field;
       if (!std::getline(input, field) || !field.starts_with("completion\t") ||
-          !parseSize(std::string_view(field).substr(11), result.start) || result.start > cursor) return {};
+          !parseSize(std::string_view(field).substr(11), result.start) || result.start > cursor)
+        return {};
       try {
         while (std::getline(input, field)) result.candidates.push_back(unhex(field));
       } catch (...) {
@@ -330,6 +339,11 @@ namespace recurloop {
 
   Server::CommandResult Server::handle(Session &session, std::string_view line, std::ostream *out, std::ostream *err) {
     try {
+      std::string decoded;
+      if (line.starts_with(":evaluate\t")) {
+        decoded = unhex(line.substr(10));
+        line = decoded;
+      }
       constexpr std::string_view loadFilePrefix = ":load-file\t";
       constexpr std::string_view inspectPrefix = ":inspect\t";
       constexpr std::string_view tracePrefix = ":trace\t";
@@ -475,6 +489,8 @@ namespace recurloop {
     bool interruptBuffered = false;
     bool framed = false;
     bool framedStatus = false;
+    bool terminalConsole = false;
+    unsigned terminalRows = 24, terminalColumns = 80;
     while (!done) {
       const ssize_t bytes = recv(fd, chunk, sizeof(chunk), 0);
       if (bytes < 0) {
@@ -502,6 +518,20 @@ namespace recurloop {
           continue;
         }
 
+        if (!framed && line.starts_with(consoleHandshake)) {
+          std::istringstream dimensions(line.substr(consoleHandshake.size()));
+          if (!(dimensions >> terminalRows >> terminalColumns) || terminalRows == 0 || terminalColumns == 0 ||
+              terminalRows > 65535 || terminalColumns > 65535) {
+            done = true;
+            break;
+          }
+          framed = framedStatus = terminalConsole = true;
+          continue;
+        }
+        // Input arriving just after a command completed belongs to its terminal,
+        // never to the source parser of the next request.
+        if (terminalConsole && line.starts_with(":stdin\t")) continue;
+
         // Highlighting only reads a cached session palette. It cannot launch
         // a process, so skip the async task and its 20 ms interrupt polling.
         if (framed && line.starts_with(":highlight\t")) {
@@ -527,8 +557,16 @@ namespace recurloop {
           continue;
         }
 
-        ProcessControl processes;
-        SocketOutput socketOutput(fd, framed);
+        ProcessControl processes(terminalConsole);
+        if (terminalConsole && processes.terminalMaster() < 0) {
+          if (!sendFrame(fd, 'O', "cannot allocate command terminal\n") || !sendFrame(fd, 'S', "1") ||
+              !sendFrame(fd, 'P', {}))
+            done = true;
+          continue;
+        }
+        processes.resize(terminalRows, terminalColumns);
+        std::mutex outputMutex;
+        SocketOutput socketOutput(fd, framed, outputMutex);
         std::ostream output(&socketOutput);
         if (interruptBuffered) {
           processes.interrupt();
@@ -538,19 +576,56 @@ namespace recurloop {
           ProcessControl::Scope scope(processes);
           return handle(*session, line, &output, &output);
         });
+        const auto drainTerminal = [&] {
+          if (processes.terminalMaster() < 0) return;
+          char bytes[4096];
+          // Bound each drain so a noisy /dev/tty writer cannot starve Ctrl+C.
+          for (int chunk = 0; chunk < 16; ++chunk) {
+            const auto count = read(processes.terminalMaster(), bytes, sizeof(bytes));
+            if (count < 0 && errno == EINTR) continue;
+            if (count <= 0) break;
+            // Use a separate stream buffer: the worker may be streaming stdout
+            // concurrently, and each socket frame must remain indivisible.
+            std::lock_guard lock(outputMutex);
+            if (!sendFrame(fd, 'O', {bytes, static_cast<std::size_t>(count)})) {
+              done = true;
+              break;
+            }
+          }
+        };
         while (request.wait_for(std::chrono::milliseconds(0)) != std::future_status::ready) {
-          pollfd input{fd, POLLIN, 0};
-          const int ready = poll(&input, 1, 20);
+          while (terminalConsole && buffer.starts_with(":stdin\t")) {
+            const auto end = buffer.find('\n');
+            if (end == std::string::npos) break;
+            try {
+              processes.input(unhex(std::string_view(buffer).substr(7, end - 7)));
+            } catch (const Exception &) {
+              processes.interrupt();
+              done = true;
+              break;
+            }
+            buffer.erase(0, end + 1);
+          }
+          if (done) {
+            processes.interrupt();
+            break;
+          }
+          processes.flushInput();
+          drainTerminal();
+          pollfd inputs[] = {{fd, POLLIN, 0}, {processes.terminalMaster(), POLLIN, 0}};
+          const int ready = poll(inputs, 2, 20);
+          auto &input = inputs[0];
+          if (inputs[1].revents & POLLIN) drainTerminal();
           if (ready < 0 && errno == EINTR) continue;
           if (ready < 0 || (ready > 0 && (input.revents & (POLLERR | POLLHUP | POLLNVAL)))) {
-            processes.interrupt();
+            processes.interrupt(true);
             done = true;
             break;
           }
           if (ready > 0 && (input.revents & POLLIN)) {
             const ssize_t count = recv(fd, chunk, sizeof(chunk), 0);
             if (count <= 0) {
-              processes.interrupt();
+              processes.interrupt(true);
               done = true;
               break;
             }
@@ -563,6 +638,7 @@ namespace recurloop {
           }
         }
         CommandResult result = request.get();
+        drainTerminal();
         if (done) break;
         output << result.text << std::flush;
         if (!output.good()) {
@@ -573,12 +649,18 @@ namespace recurloop {
           done = true;
           break;
         }
-        if (framedStatus && !sendFrame(fd, 'S', std::to_string(result.status))) { done = true; break; }
+        if (framedStatus && !sendFrame(fd, 'S', std::to_string(result.status))) {
+          done = true;
+          break;
+        }
         if (!(framed ? sendFrame(fd, 'P', {}) : writeAll(fd, utilities::prompt::Default))) {
           done = true;
           break;
         }
-        if (result.quit) { done = true; break; }
+        if (result.quit) {
+          done = true;
+          break;
+        }
       }
     }
     {
@@ -709,7 +791,11 @@ namespace recurloop {
     }
     if (!initial.empty()) utilities::LineEditor::writeDescriptor(STDOUT_FILENO, initial);
 
-    if (!writeAll(fd, std::string(statusStreamHandshake) + '\n')) {
+    winsize dimensions{};
+    ioctl(STDIN_FILENO, TIOCGWINSZ, &dimensions);
+    const auto rows = dimensions.ws_row ? dimensions.ws_row : 24;
+    const auto columns = dimensions.ws_col ? dimensions.ws_col : 80;
+    if (!writeAll(fd, std::string(consoleHandshake) + std::to_string(rows) + '\t' + std::to_string(columns) + '\n')) {
       close(fd);
       return 1;
     }
@@ -744,8 +830,8 @@ namespace recurloop {
       }
       if (input.status == utilities::LineStatus::End) break;
 
-      std::string request = std::move(input.line);
-      request.push_back('\n');
+      // Hex encoding preserves all source newlines in one transport request.
+      std::string request = ":evaluate\t" + hex(input.line) + '\n';
       if (!writeAll(fd, request)) break;
 
       ConsoleFrames response;
@@ -766,16 +852,6 @@ namespace recurloop {
             const int ready = poll(inputs, 2, -1);
             if (ready < 0 && errno == EINTR) continue;
             if (ready < 0) break;
-            if (inputs[1].revents & POLLIN) {
-              char bytes[256];
-              const ssize_t count = read(STDIN_FILENO, bytes, sizeof(bytes));
-              for (ssize_t i = 0; i < count; ++i) {
-                if (bytes[i] == '\x03') {
-                  writeAll(fd, std::string_view("\x03", 1));
-                  utilities::LineEditor::writeDescriptor(STDOUT_FILENO, "^C\n");
-                }
-              }
-            }
             if (inputs[0].revents & POLLIN) {
               char bytes[4096];
               const ssize_t count = recv(fd, bytes, sizeof(bytes), 0);
@@ -787,6 +863,26 @@ namespace recurloop {
               }
             } else if (inputs[0].revents & (POLLERR | POLLHUP | POLLNVAL))
               break;
+            if (inputs[1].revents & POLLIN) {
+              char bytes[256];
+              const ssize_t count = read(STDIN_FILENO, bytes, sizeof(bytes));
+              std::string pending;
+              const auto flushInput = [&] {
+                if (!pending.empty()) {
+                  writeAll(fd, ":stdin\t" + hex(pending) + '\n');
+                  pending.clear();
+                }
+              };
+              for (ssize_t i = 0; i < count; ++i) {
+                if (bytes[i] == '\x03') {
+                  flushInput();
+                  writeAll(fd, std::string_view("\x03", 1));
+                  utilities::LineEditor::writeDescriptor(STDOUT_FILENO, "^C\n");
+                } else
+                  pending.push_back(bytes[i]);
+              }
+              flushInput();
+            }
           }
         }
       }

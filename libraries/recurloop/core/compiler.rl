@@ -182,6 +182,7 @@ compiler {
   extern "context:diagnostic:error:at" symbol "context:diagnostic:error:at" params [ "Context*" "u8*" "u64" "u64" "u8*" ] result "u64" abi "sysv-amd64" imported
   extern "context:actions:bind_root" symbol "context:actions:bind-root" params [ "Context*" "u64" ] result "u64" abi "sysv-amd64" imported
   extern "context:process:active" symbol "context:process:active" params [ ] result "u64" abi "sysv-amd64" imported
+  extern "context:process:terminal" symbol "context:process:terminal" params [ ] result "u64" abi "sysv-amd64" imported
   extern "context:process:interrupted" symbol "context:process:interrupted" params [ ] result "u64" abi "sysv-amd64" imported
   extern "context:process:track" symbol "context:process:track" params [ "u64" ] result "void" abi "sysv-amd64" imported
   extern "context:process:release" symbol "context:process:release" params [ "u64" ] result "void" abi "sysv-amd64" imported

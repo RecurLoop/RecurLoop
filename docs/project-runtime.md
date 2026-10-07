@@ -248,3 +248,16 @@ requests, refresh/publish, or custom completion. Keystrokes scan only the curren
 input against the cached palette. Highlight requests use a synchronous socket
 path without command-worker interrupt polling; queued input is coalesced before
 redrawing, so pasted text does not make one request per byte.
+
+Connected terminal consoles negotiate `:transport-console-v3<TAB>rows<TAB>columns`.
+They send an entire edited block as `:evaluate<TAB>hex(source)` and forward
+command input as `:stdin<TAB>hex(bytes)`. The server gives each request a private
+pseudoterminal for stdin and `/dev/tty`; ordinary stdout/stderr still stream
+through the existing output frames. Ctrl+C interrupts the request's process
+groups and resumes stopped children; a second Ctrl+C forces termination.
+The terminal client and server must come from the same updated installation.
+
+The editor enables bracketed paste while reading input. Pasted newlines and tabs
+stay in one editable buffer, and Enter submits the complete block. Ctrl+C before
+submission discards the block. During command execution, keyboard input goes to
+the command's terminal rather than being interpreted as RecurLoop source.
