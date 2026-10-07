@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.2.7
+
+- Require RecurLoop 0.2.7 or a newer patch in the 0.2 series.
+
 ## 0.2.6
 
 - Honor folder-specific runtime and analysis settings in multi-folder workspaces.
