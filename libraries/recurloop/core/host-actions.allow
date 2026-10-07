@@ -76,6 +76,7 @@ expressions.builtin.value
 expressions.constant
 expressions.literal.false
 expressions.literal.null
+expressions.literal.recurloop-version
 expressions.literal.true
 expressions.operator.infix-add
 expressions.operator.infix-and

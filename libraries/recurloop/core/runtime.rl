@@ -926,6 +926,13 @@ phrase null = "null" in root {
   type phrase_types_data
 }
 
+phrase recurloop_version = "recurloop_version" in root {
+  kind "literal"
+  color "#569CD6"
+  docs "Returns the running RecurLoop host version as a string."
+  type phrase_types_data
+}
+
 phrase object = "object" in root {
   kind "keyword"
   color "#569CD6"

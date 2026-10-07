@@ -275,6 +275,9 @@ namespace internal {
   void literalNull(context::Context &, lexicon::Phrase &) {
     builtinFrame().result = context::Value();
   }
+  void literalRecurloopVersion(context::Context &, lexicon::Phrase &) {
+    builtinFrame().result = context::Value(PROJECT_VERSION);
+  }
 
 } // namespace internal
 } // namespace recurloop

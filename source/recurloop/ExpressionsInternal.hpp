@@ -101,6 +101,7 @@ namespace recurloop {
     void literalTrue(context::Context &, lexicon::Phrase &);
     void literalFalse(context::Context &, lexicon::Phrase &);
     void literalNull(context::Context &, lexicon::Phrase &);
+    void literalRecurloopVersion(context::Context &, lexicon::Phrase &);
 
     void primaryGroup(context::Context &, lexicon::Phrase &);
     void postfixQualify(context::Context &, lexicon::Phrase &);

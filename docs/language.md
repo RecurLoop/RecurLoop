@@ -27,6 +27,17 @@ the current context and is not serialized in engine images.
 
 Runtime values are `null`, `bool`, `int`, `real`, and `string`.
 
+The `recurloop_version` phrase returns the running host's release version as a
+`string`, without a `v` prefix. It reads the host version on evaluation rather
+than storing a version in the language image:
+
+```rl
+var version = recurloop_version
+print version
+```
+
+For a host built from release 0.2.7, this prints `0.2.7`.
+
 ```rl
 const project = "Recur" + "Loop"
 var result = 2 + 3 * 4

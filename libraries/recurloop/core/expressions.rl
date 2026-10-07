@@ -331,6 +331,12 @@ phrase expressions_literals_null = "null" in expressions_literals {
   action host "expressions.literal.null"
 }
 
+phrase expressions_literals_recurloop_version = "recurloop_version" in expressions_literals {
+  prototype recurloop_version
+  type phrase_types_callable
+  action host "expressions.literal.recurloop-version"
+}
+
 phrase expressions_literals_true = "true" in expressions_literals {
   prototype true
   type phrase_types_callable

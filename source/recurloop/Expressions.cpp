@@ -184,6 +184,7 @@ namespace recurloop {
       defineCallable(literals, "true", literalTrue, marker("true"));
       defineCallable(literals, "false", literalFalse, marker("false"));
       defineCallable(literals, "null", literalNull, marker("null"));
+      defineCallable(literals, "recurloop_version", literalRecurloopVersion, marker("recurloop_version"));
 
       const auto defineAssignment = [&](std::string_view key, lexicon::Phrase prototype, bool declaration) {
         lexicon::Phrase markerPhrase = LanguageGrammar::ensureMarker(root, key, prototype);
@@ -352,6 +353,7 @@ namespace recurloop {
     context.actions().define("expressions.literal.true", internal::literalTrue);
     context.actions().define("expressions.literal.false", internal::literalFalse);
     context.actions().define("expressions.literal.null", internal::literalNull);
+    context.actions().define("expressions.literal.recurloop-version", internal::literalRecurloopVersion);
     context.actions().define("expressions.primary.group", internal::primaryGroup);
     context.actions().define("expressions.postfix.qualify", internal::postfixQualify);
     context.actions().define("expressions.postfix.call", internal::postfixCall);

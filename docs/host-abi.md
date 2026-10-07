@@ -65,6 +65,10 @@ dispatch, specialization and ownership remain in source libraries. LanguageKit
 uses this bridge so callables from Inferred and other libraries do not require
 language-specific C++ parser branches.
 
+The `expressions.literal.recurloop-version` host action exposes the running
+binary's build version as a core string. This host metadata is read on each
+evaluation, so an imported language image does not override the host version.
+
 Standalone expressions use that same core parser through the generic
 `context:expression:recognizes` probe. The probe parses without evaluation,
 source consumption or semantic tracing. LanguageKit registers it alongside its
