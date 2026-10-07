@@ -347,16 +347,47 @@ fi
 # Only the trusted completion registration is interpreted. Input words remain argv.
 eval \"options=($specification)\"
 options=(\"${options[@]:1:${#options[@]}-2}\")
+# Readline normally marks directories for filename completions. Capture the
+# registration and dynamic compopt changes when invoking functions directly.
+filenames=0
+compopt() {
+    local mode=1 option
+    while (($#)); do
+        case $1 in
+            -o|+o)
+                [[ $1 == -o ]] && mode=1 || mode=0
+                shift
+                option=${1-}
+                [[ $option == filenames || $option == dirnames ]] && filenames=$mode
+                ;;
+        esac
+        (($#)) && shift
+    done
+    return 0
+}
+emit_candidates() {
+    local candidate
+    for candidate in \"$@\"; do
+        if ((filenames)) && [[ $candidate != */ && -d $candidate ]]; then candidate+=/; fi
+        printf '%s\\n' \"$candidate\"
+    done
+}
+for ((index=0; index<${#options[@]}; index++)); do
+    if [[ ${options[index]} == -o ]]; then compopt -o \"${options[index+1]}\"; fi
+    if [[ ${options[index]} == -f || ${options[index]} == -d ]]; then filenames=1; fi
+    if [[ ${options[index]} == -A && ( ${options[index+1]} == file || ${options[index+1]} == directory ) ]]; then filenames=1; fi
+done
 for ((index=0; index<${#options[@]}; index++)); do
     if [[ ${options[index]} == -F ]]; then
         function=${options[index+1]}
         COMPREPLY=()
         \"$function\" \"$command\" \"$current\" \"$previous\" >/dev/null
-        if ((${#COMPREPLY[@]})); then printf '%s\\n' \"${COMPREPLY[@]}\"; fi
+        if ((${#COMPREPLY[@]})); then emit_candidates \"${COMPREPLY[@]}\"; fi
         exit 0
     fi
 done
-compgen \"${options[@]}\" -- \"$current\"
+mapfile -t COMPREPLY < <(compgen \"${options[@]}\" -- \"$current\")
+if ((${#COMPREPLY[@]})); then emit_candidates \"${COMPREPLY[@]}\"; fi
 exit 0
 "
     let pipeline = Shell:Pipeline:new()
