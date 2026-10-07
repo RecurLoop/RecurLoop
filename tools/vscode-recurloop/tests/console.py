@@ -24,8 +24,12 @@ client = subprocess.Popen([host, '--connect', socket_path], stdin=slave, stdout=
 os.close(slave)
 
 
+def visible_output(output):
+    return re.sub(rb'\x1b\[[0-?]*[ -/]*[@-~]', b'', output)
+
+
 def has_prompt(output):
-    visible = re.sub(rb'\x1b\[[0-?]*[ -/]*[@-~]', b'', output)
+    visible = visible_output(output)
     # The line editor returns to column zero before restoring the cursor with
     # CSI n C. Removing CSI leaves a trailing CR after the visible prompt.
     return re.search(rb'(?:^|[\n\r])> \r?$', visible) is not None
@@ -127,7 +131,11 @@ try:
     # hide a buffer proportional to the complete output.
     command('extern getpid() -> i32 abi sysv-amd64')
     pid_reply = command('print getpid()')
-    server_pid = int(re.search(rb'\r\n([0-9]+)\r\n', pid_reply).group(1))
+    # Bracketed-paste mode changes can appear between the submitted line and
+    # command output. Parse visible text, as prompt detection does above.
+    pid_match = re.search(rb'\r\n([0-9]+)\r\n', visible_output(pid_reply))
+    assert pid_match is not None, f'server PID missing from console reply: {pid_reply!r}'
+    server_pid = int(pid_match.group(1))
     def resident_kib(pid):
         with open(f'/proc/{pid}/status') as status:
             for line in status:
