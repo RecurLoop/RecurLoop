@@ -48,6 +48,20 @@ target cycle depends [cycle] {}
   await project.run(folder.uri, 'check'); // dependency state must survive in the same session
   await assert.rejects(project.run(folder.uri, 'bad'));
   await assert.rejects(project.run(folder.uri, 'cycle'), /Cyclic/);
+  // Disconnecting an active native loop must release the server worker too.
+  // A second request proves recovery, beyond rejecting the client's promise.
+  const cancellationEntry = path.join(root, 'recurloop.project.rl');
+  const beforeCancellation = fs.readFileSync(cancellationEntry, 'utf8');
+  fs.appendFileSync(cancellationEntry, '\nrecurloop fn native_spin() -> i64 { while 1 {} }\n');
+  await runtime.reload(folder.uri);
+  const controller = new AbortController();
+  const running = runtime.execute(folder.uri, ['recurloop native_spin()'], controller.signal);
+  const timer = setTimeout(() => controller.abort(new Error('native loop cancelled')), 100);
+  try { await assert.rejects(running, /native loop cancelled/); }
+  finally { clearTimeout(timer); }
+  assert.equal((await runtime.execute(folder.uri, ['print 42'])).trim(), '42');
+  fs.writeFileSync(cancellationEntry, beforeCancellation);
+  await runtime.reload(folder.uri);
   const trace = await runtime.inspect({ uri: { fsPath: path.join(root, 'main.rl') }, getText: () => 'greeting 42\n' });
   assert.ok(trace.includes(Buffer.from('greeting').toString('hex')), trace);
   assert.ok(!trace.includes(Buffer.from('undefined phrase').toString('hex')), trace);

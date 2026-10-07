@@ -953,6 +953,34 @@ TEST_F(RadixTesting, ItemEarlier) {
     EXPECT_TRUE(item.isNull());
 }
 
+TEST_F(RadixTesting, CheckpointRestoresAnEmptyTreeRepeatedly) {
+    EXPECT_TRUE(head.matchExact(Byte{}, 0, 0, matchFilter).isNull());
+    const auto used = radix.memoryUsed();
+    auto checkpoint = radix.checkpoint();
+    checkpoint.restore();
+    ASSERT_EQ(radix.memoryUsed(), used);
+    ASSERT_FALSE(head.append("a").push().isNull());
+    checkpoint.restore();
+    checkpoint.restore();
+    EXPECT_EQ(radix.memoryUsed(), used);
+    EXPECT_TRUE(radix.lastItem().isNull());
+}
+
+TEST_F(RadixTesting, KeysRespectTheirBitOffsetAndEnd) {
+    unsigned char key[] = {0xff, 'a', 'b'};
+    auto node = head.append(Byte(key), 8, 8);
+    ASSERT_FALSE(node.isNull());
+    const auto used = radix.memoryUsed();
+    EXPECT_EQ(head.append(Byte(key), 8, 8).getAddress(), node.getAddress());
+    EXPECT_EQ(radix.memoryUsed(), used);
+    EXPECT_EQ(head.append("a").getAddress(), node.getAddress());
+    ASSERT_FALSE(head.append("ab").push().isNull());
+    EXPECT_TRUE(head.matchExact(Byte(key), 8, 8, matchFilter).isNull());
+    EXPECT_TRUE(head.matchLongest(Byte(key), 8, 8, matchFilter).isNull());
+    EXPECT_TRUE(head.matchFirst(Byte(key), 8, 8, matchFilter).isNull());
+    EXPECT_EQ(head.matchExact(Byte(key), 8, 16, matchFilter).getBits(), 16u);
+}
+
 int main(int argc, char **argv) {
     ::testing::InitGoogleTest(&argc, argv);
     return RUN_ALL_TESTS();

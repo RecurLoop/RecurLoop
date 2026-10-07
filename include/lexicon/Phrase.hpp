@@ -3,6 +3,8 @@
 #include "_module_classes.hpp"
 #include "Dictionary.hpp"
 #include <utilities/Declaration.hpp>
+#include <cstring>
+#include <type_traits>
 
 namespace lexicon {
   namespace detail {
@@ -153,17 +155,20 @@ namespace lexicon {
   }
 
   template <typename... Args> Phrase &Phrase::store(const Args &...args) {
-    ((*(Args *)allocate(sizeof(Args)).toPtr() = args), ...);
+    static_assert((std::is_trivially_copyable_v<Args> && ...));
+    ((std::memcpy(allocate(sizeof(Args)).toPtr(), &args, sizeof(Args))), ...);
     return *this;
   }
 
   template <typename... Args> Phrase &Phrase::update(Size offset, const Args &...args) {
-    ((*(Args *)content(offset, sizeof(Args)).toPtr() = args, offset += sizeof(Args)), ...);
+    static_assert((std::is_trivially_copyable_v<Args> && ...));
+    ((std::memcpy(content(offset, sizeof(Args)).toPtr(), &args, sizeof(Args)), offset += sizeof(Args)), ...);
     return *this;
   }
 
   template <typename... Args> Phrase &Phrase::fetch(Size offset, Args &...args) {
-    ((args = *(Args *)content(offset, sizeof(Args)).toPtr(), offset += sizeof(Args)), ...);
+    static_assert((std::is_trivially_copyable_v<Args> && ...));
+    ((std::memcpy(&args, content(offset, sizeof(Args)).toPtr(), sizeof(Args)), offset += sizeof(Args)), ...);
     return *this;
   }
 } // namespace lexicon

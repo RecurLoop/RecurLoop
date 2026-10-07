@@ -2,6 +2,7 @@
 #include <compiler/LanguageState.hpp>
 #include <recurloop/Recurloop.hpp>
 #include <recurloop/Expressions.hpp>
+#include <recurloop/Execution.hpp>
 #include <lexicon/Lexicon.hpp>
 #include <utilities/Exception.hpp>
 
@@ -48,6 +49,36 @@ TEST(ValueTesting, MaintainsLexicalMutableAndConstantScopes) {
   values.popScope();
   EXPECT_EQ(values.get("answer").asInteger(), 42);
   EXPECT_THROW(values.popScope(), Exception);
+}
+
+TEST(ValueTesting, ReclaimsLocalScopesButPreservesOuterChangesAndDefinitions) {
+  ValueHost host;
+  auto &lexicon = host.getContext().lexicon;
+  auto values = host.values();
+  values.define("count", context::Value(std::int64_t{0}));
+  values.define("text", context::Value("short"));
+  const auto used = lexicon.memoryUsed();
+  for (int index = 0; index < 100; ++index) {
+    host.values().pushScope();
+    host.values().define("local", context::Value("temporary"));
+    host.values().pushScope();
+    host.values().define("nested", context::Value(std::int64_t{index}));
+    host.values().popScope();
+    values.assign("count", context::Value(std::int64_t{index + 1}));
+    host.values().popScope();
+    ASSERT_EQ(lexicon.memoryUsed(), used);
+  }
+  EXPECT_EQ(values.get("count").asInteger(), 100);
+  values.pushScope();
+  values.assign("text", context::Value("a longer outer value"));
+  auto root = lexicon.phrase();
+  auto definition = root.append("ScopePersistent").make().setType(root.getType()).save();
+  const auto address = definition.getAddress();
+  values.popScope();
+  EXPECT_EQ(values.get("text").asString(), "a longer outer value");
+  EXPECT_EQ(root.matchExact(Byte(const_cast<char *>("ScopePersistent")), 0, 15 * Byte::length).getPhrase().getAddress(), address);
+  EXPECT_EQ(values.scopeDepth(), 1u);
+  EXPECT_TRUE(host.getContext().exec.valueScopes.empty());
 }
 
 namespace {
@@ -314,6 +345,28 @@ print joined
             0)
       << errors.str();
   EXPECT_EQ(output.str(), "0123\n");
+}
+
+TEST_F(ExpressionLanguageTesting, ReusesStorageAcrossInterpretedLoopIterations) {
+  ASSERT_EQ(execute(R"(
+var index = 0
+while index < 100 {
+  var temporary = "local value"
+  set index += 1
+}
+)"), 0) << errors.str();
+  const auto used = context.lexicon.memoryUsed();
+  EXPECT_EQ(context.values().get("index").asInteger(), 100);
+  recurloop::executeSource(context, R"(
+while index < 200 {
+  var temporary = "local value"
+  set index += 1
+}
+)", "<scope-test>", 1, 1);
+  EXPECT_LT(context.lexicon.memoryUsed() - used, 4096u);
+  EXPECT_EQ(context.values().get("index").asInteger(), 200);
+  EXPECT_EQ(context.values().scopeDepth(), 1u);
+  EXPECT_TRUE(context.exec.valueScopes.empty());
 }
 
 TEST_F(ExpressionLanguageTesting, DefinesFunctionsAsRecursiveLanguagePhrases) {

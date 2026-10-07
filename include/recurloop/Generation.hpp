@@ -122,6 +122,7 @@ namespace recurloop {
     context::Reference reference_;
     context::Source source_;
     context::IOStreams io_;
+    std::vector<context::Values::ScopeFrame> valueScopes_;
     int argumentIndex_ = 0;
     bool argumentOptions_ = true;
     bool committed_ = false;

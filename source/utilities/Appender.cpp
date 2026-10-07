@@ -3,6 +3,7 @@
 
 #include <utilities/Utilities.hpp>
 #include <cstring>
+#include <limits>
 
 Appender::Appender(Byte memory, Size capacity)
     : memory(memory), capacity(capacity), offset(0) {
@@ -71,18 +72,25 @@ void Appender::append(const std::string& s) {
 }
 
 void Appender::append(const Appender& other) {
-    append(other.c_str(), other.size());
+    if (other.bits() % Byte::length == 0)
+        append(Byte((void *)other.c_str()), other.size());
+    else
+        append(Bit(Byte((void *)other.c_str())), other.bits());
 }
 
 void Appender::append(const Byte src, Size size) {
     if (size == 0) return;
     if (offset % Byte::length == 0) {
         Size bytesUsed = offset / Byte::length;
-        if (bytesUsed + size + 1 > capacity) THROW(, "Append fails, out of memory.")
+        if (bytesUsed >= capacity || size >= capacity - bytesUsed ||
+            size > (std::numeric_limits<Size>::max() - offset) / Byte::length)
+            THROW(, "Append fails, out of memory.")
         Byte::copy(src, memory + bytesUsed, size);
         offset += size * Byte::length;
         memory.toPtr()[offset / Byte::length] = '\0';
     } else {
+        if (size > std::numeric_limits<Size>::max() / Byte::length)
+            THROW(, "Append fails, out of memory.")
         append(Bit(src, 0), size * Byte::length);
     }
 }
@@ -91,10 +99,12 @@ void Appender::append(const Bit src, Size size) {
     if (size == 0) return;
 
     Size startBit = offset;
+    if (size > std::numeric_limits<Size>::max() - startBit)
+        THROW(, "Append fails, out of memory.")
     Size endBitPos = startBit + size;
     Size endBytes = Bit::bytes(endBitPos);
 
-    if (endBytes + 1 > capacity) THROW(, "Append fails, out of memory.")
+    if (endBytes >= capacity) THROW(, "Append fails, out of memory.")
 
     Bit dst(Byte(memory), startBit);
     for (Size i = 0; i < size; i++) {
@@ -103,7 +113,9 @@ void Appender::append(const Bit src, Size size) {
     }
 
     offset += size;
-    memory.toPtr()[offset / Byte::length] = '\0';
+    if (offset % Byte::length != 0)
+        memory.toPtr()[endBytes - 1] &= static_cast<unsigned char>(0xffu << (Byte::length - offset % Byte::length));
+    memory.toPtr()[endBytes] = '\0';
 }
 
 void Appender::truncate(Size bits) {
@@ -117,7 +129,7 @@ void Appender::truncate(Size bits) {
 
     Size usedBits = bits % Byte::length;
     if (usedBits != 0) {
-        unsigned char mask = (1u << usedBits) - 1u;
+        unsigned char mask = static_cast<unsigned char>(0xffu << (Byte::length - usedBits));
         memory.toPtr()[bytes - 1] &= mask;
     }
 }
@@ -129,7 +141,7 @@ Appender& Appender::operator+=(const std::string& s) { append(s); return *this; 
 Appender& Appender::operator+=(const Appender& other) { append(other); return *this; }
 
 bool Appender::operator==(const Appender& other) const {
-    return std::strcmp(c_str(), other.c_str()) == 0;
+    return offset == other.offset && (offset == 0 || std::memcmp(c_str(), other.c_str(), Bit::bytes(offset)) == 0);
 }
 bool Appender::operator!=(const Appender& other) const { return !(*this == other); }
 bool Appender::operator==(const char* s) const { return std::strcmp(c_str(), s) == 0; }

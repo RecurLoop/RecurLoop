@@ -12,6 +12,7 @@ class WorkspaceRuntime implements vscode.Disposable {
   private process?: ChildProcessWithoutNullStreams;
   private executable?: string;
   private socketPath?: string;
+  private socketDirectory?: string;
   private starting?: Promise<void>;
   private startup?: AbortController;
   private stderr = '';
@@ -20,7 +21,8 @@ class WorkspaceRuntime implements vscode.Disposable {
   public revision = 0;
   private readonly connections = new Set<RuntimeConnection>();
   private readonly inspections = new Map<string, { revision: number; source: string; promise: Promise<string>; controller: AbortController; users: number; done: boolean }>();
-  private readonly executions = new Set<Promise<string>>();
+  private readonly executions = new Set<Promise<unknown>>();
+  private executionQueue: Promise<void> = Promise.resolve();
 
   constructor(private readonly output: vscode.OutputChannel,
     private readonly prepareExecutable: (uri: vscode.Uri) => Promise<string>) {}
@@ -117,23 +119,38 @@ class WorkspaceRuntime implements vscode.Disposable {
     return `executable=${executable}${executable !== configured ? `\nconfigured executable=${configured}` : ''}\nruntime=${state}\nsocket=${this.socketPath ?? '-'}${this.stderr ? `\nlast stderr=${this.stderr.trim()}` : ''}`;
   }
 
-  public async execute(uri: vscode.Uri, commands: string[], signal?: AbortSignal): Promise<string> {
-    await this.ensureStarted(uri);
-    const request = this.request(this.socketPath!, commands, 120000, signal);
+  private enqueue<T>(operation: () => Promise<T>): Promise<T> {
+    const request = this.executionQueue.then(operation);
+    // A failed or cancelled request must not block subsequent work.
+    this.executionQueue = request.then(() => undefined, () => undefined);
     this.executions.add(request);
-    try { return await request; } finally { this.executions.delete(request); }
+    return request.finally(() => { this.executions.delete(request); });
   }
 
-  public async reload(uri: vscode.Uri): Promise<void> {
-    if (!hasProject(uri)) { this.stop(); return; }
+  public async execute(uri: vscode.Uri, commands: string[], signal?: AbortSignal): Promise<string> {
+    signal?.throwIfAborted();
     await this.ensureStarted(uri);
-    await Promise.allSettled([...this.executions]);
-    const entry = projectFile(uri);
-    const commands = [':baseline', ':cache'];
-    if (fs.existsSync(entry)) commands.push(`:load-file\t${entry}`);
-    commands.push(':publish');
-    await this.execute(uri, commands);
-    this.invalidateInspections();
+    return this.enqueue(async () => {
+      signal?.throwIfAborted();
+      return this.request(this.socketPath!, commands, 120000, signal);
+    });
+  }
+
+  public async reload(uri: vscode.Uri, signal?: AbortSignal): Promise<void> {
+    signal?.throwIfAborted();
+    if (!hasProject(uri)) { this.stop(); return; }
+    // Startup may install the runtime through maintenance. Only ready requests
+    // enter the queue that maintenance drains, avoiding a dependency cycle.
+    await this.ensureStarted(uri);
+    return this.enqueue(async () => {
+      signal?.throwIfAborted();
+      const entry = projectFile(uri);
+      const commands = [':baseline', ':cache'];
+      if (fs.existsSync(entry)) commands.push(`:load-file\t${entry}`);
+      commands.push(':publish');
+      await this.request(this.socketPath!, commands, 120000, signal);
+      this.invalidateInspections();
+    });
   }
 
   public async terminalOptions(uri: vscode.Uri): Promise<vscode.TerminalOptions> {
@@ -161,9 +178,8 @@ class WorkspaceRuntime implements vscode.Disposable {
     this.executable = executable;
     requireProject(uri);
     const root = workspaceRoot(uri);
-    const suffix = `${process.pid}-${Math.random().toString(16).slice(2, 8)}`;
-    const socketPath = path.join(os.tmpdir(), `rl-vscode-${suffix}.sock`);
-    try { fs.unlinkSync(socketPath); } catch { /* absent */ }
+    this.socketDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'rl-vscode-'));
+    const socketPath = path.join(this.socketDirectory, 'runtime.sock');
 
     const project = projectFile(uri);
     const args = ['--library', 'project', ...libraryArguments(uri), '--project-cache',
@@ -256,9 +272,10 @@ class WorkspaceRuntime implements vscode.Disposable {
     this.process = undefined;
     this.executable = undefined;
     if (child && !child.killed) child.kill('SIGTERM');
-    if (this.socketPath) {
-      try { fs.unlinkSync(this.socketPath); } catch { /* absent or already removed */ }
+    if (this.socketDirectory) {
+      try { fs.rmSync(this.socketDirectory, { recursive: true, force: true }); } catch { /* already removed */ }
     }
+    this.socketDirectory = undefined;
     this.socketPath = undefined;
   }
 
@@ -290,7 +307,7 @@ export class RecurLoopRuntime implements vscode.Disposable {
   openAnalysis(uri: vscode.Uri): Promise<RuntimeConnection> { return this.afterMaintenance(() => this.runtime(uri).openAnalysis(uri)); }
   execute(uri: vscode.Uri, commands: string[], signal?: AbortSignal): Promise<string> { return this.afterMaintenance(() => this.runtime(uri).execute(uri, commands, signal)); }
   terminalOptions(uri: vscode.Uri): Promise<vscode.TerminalOptions> { return this.afterMaintenance(() => this.runtime(uri).terminalOptions(uri)); }
-  reload(uri: vscode.Uri): Promise<void> { return this.afterMaintenance(() => this.runtime(uri).reload(uri)); }
+  reload(uri: vscode.Uri, signal?: AbortSignal): Promise<void> { return this.afterMaintenance(() => this.runtime(uri).reload(uri, signal)); }
   restart(uri?: vscode.Uri): Promise<void> {
     return this.afterMaintenance(async () => {
       if (uri) await this.runtime(uri).restart(uri);

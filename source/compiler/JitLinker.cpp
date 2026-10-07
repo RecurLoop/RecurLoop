@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <array>
 #include <limits>
+#include <unordered_map>
 
 namespace compiler {
   namespace {
@@ -90,13 +91,19 @@ namespace compiler {
   }
 
   JitImage JitLinker::link(const Module &module, JitMemory &memory, const Resolver &resolver) {
+    std::unordered_map<std::string, std::uintptr_t> overrides;
+    if (resolver) for (const Symbol &symbol : module.symbols()) {
+      if (!symbol.imported && symbol.binding == SymbolBinding::Weak)
+        if (const auto address = resolver(symbol.name)) overrides.emplace(symbol.name, *address);
+    }
+    const auto external = [&](const Symbol &symbol) { return symbol.imported || overrides.contains(symbol.name); };
     const std::size_t start = memory.size();
     Layout moduleLayout = layout(module, start);
     std::vector<ImportStub> importStubs;
     for (const Relocation &relocation : module.relocations()) {
       if (relocation.kind != RelocationKind::PLTRelative32) continue;
       const Symbol *symbol = module.findSymbol(relocation.symbol);
-      if (symbol == nullptr || !symbol->imported) continue;
+      if (symbol == nullptr || !external(*symbol)) continue;
       const auto existing = std::find_if(importStubs.begin(), importStubs.end(),
                                          [&](const ImportStub &stub) { return stub.symbol == relocation.symbol; });
       if (existing != importStubs.end()) continue;
@@ -119,7 +126,9 @@ namespace compiler {
 
     for (const Symbol &symbol : module.symbols()) {
       std::uintptr_t address = 0;
-      if (symbol.imported) {
+      if (const auto found = overrides.find(symbol.name); found != overrides.end()) {
+        address = found->second;
+      } else if (symbol.imported) {
         const std::optional<std::uintptr_t> resolved = resolver ? resolver(symbol.name) : std::nullopt;
         if (!resolved.has_value() && symbol.binding != SymbolBinding::Weak)
           THROW(, "unresolved JIT import: '" << symbol.name << "'")
@@ -174,7 +183,7 @@ namespace compiler {
       case RelocationKind::PCRelative32:
       case RelocationKind::PLTRelative32: {
         std::uintptr_t relocationTarget = target;
-        if (relocation.kind == RelocationKind::PLTRelative32 && symbol->imported) {
+        if (relocation.kind == RelocationKind::PLTRelative32 && external(*symbol)) {
           const auto stub = std::find_if(importStubs.begin(), importStubs.end(), [&](const ImportStub &candidate) {
             return candidate.symbol == relocation.symbol;
           });

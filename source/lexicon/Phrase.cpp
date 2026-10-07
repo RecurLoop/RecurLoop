@@ -3,6 +3,7 @@
   #include <context/Context.hpp>
   #include <lexicon/Lexicon.hpp>
   #include <lexicon/Draft.hpp>
+  #include <cstring>
 
 namespace lexicon {
   using phrase::Contains;
@@ -399,17 +400,17 @@ namespace lexicon {
   Phrase &Phrase::save(bool init) {
     if (isNull()) return *this;
 
-    *(phrase::Contains *)(radix::Item::content(0, sizeof(phrase::Contains)).toPtr()) = cached.contains;
+    std::memcpy(radix::Item::content(0, sizeof(phrase::Contains)).toPtr(), &cached.contains, sizeof(phrase::Contains));
 
     Size offset = sizeof(phrase::Contains);
 
     if (cached.contains & Contains::PROTOTYPE) {
-      *(Size *)(radix::Item::content(offset, sizeof(Size)).toPtr()) = cached.prototype;
+      std::memcpy(radix::Item::content(offset, sizeof(Size)).toPtr(), &cached.prototype, sizeof(Size));
       offset += sizeof(Size);
     }
 
     if (cached.contains & Contains::PARENT) {
-      *(Size *)(radix::Item::content(offset, sizeof(Size)).toPtr()) = cached.parent;
+      std::memcpy(radix::Item::content(offset, sizeof(Size)).toPtr(), &cached.parent, sizeof(Size));
       offset += sizeof(Size);
     }
 
@@ -419,17 +420,17 @@ namespace lexicon {
     }
 
     if (cached.contains & Contains::TYPE) {
-      *(Size *)(radix::Item::content(offset, sizeof(Size)).toPtr()) = cached.type;
+      std::memcpy(radix::Item::content(offset, sizeof(Size)).toPtr(), &cached.type, sizeof(Size));
       offset += sizeof(Size);
     }
 
     if (cached.contains & Contains::ACTION) {
-      *(ActionBinding *)(radix::Item::content(offset, sizeof(ActionBinding)).toPtr()) = cached.action;
+      std::memcpy(radix::Item::content(offset, sizeof(ActionBinding)).toPtr(), &cached.action, sizeof(ActionBinding));
       offset += sizeof(ActionBinding);
     }
 
     if (cached.contains & Contains::SUCCESSOR) {
-      *(Size *)(radix::Item::content(offset, sizeof(Size)).toPtr()) = cached.successor;
+      std::memcpy(radix::Item::content(offset, sizeof(Size)).toPtr(), &cached.successor, sizeof(Size));
       offset += sizeof(Size);
     }
 
@@ -442,12 +443,12 @@ namespace lexicon {
   Phrase &Phrase::load() {
     if (isNull()) return *this;
 
-    cached.contains = *(Contains *)(radix::Item::content(0, sizeof(Contains)).toPtr());
+    std::memcpy(&cached.contains, radix::Item::content(0, sizeof(Contains)).toPtr(), sizeof(Contains));
 
     Size offset = sizeof(Contains);
 
     if (cached.contains & Contains::PROTOTYPE) {
-      cached.prototype = *(Size *)(radix::Item::content(offset, sizeof(Size)).toPtr());
+      std::memcpy(&cached.prototype, radix::Item::content(offset, sizeof(Size)).toPtr(), sizeof(Size));
       offset += sizeof(Size);
     } else
       cached.prototype = 0;
@@ -455,7 +456,7 @@ namespace lexicon {
     auto prototype = Phrase(getLexicon(), cached.prototype).load();
 
     if (cached.contains & Contains::PARENT) {
-      cached.parent = *(Size *)(radix::Item::content(offset, sizeof(Size)).toPtr());
+      std::memcpy(&cached.parent, radix::Item::content(offset, sizeof(Size)).toPtr(), sizeof(Size));
       offset += sizeof(Size);
     } else
       cached.parent = prototype.cached.parent;
@@ -468,19 +469,19 @@ namespace lexicon {
       cached.subdictionary = prototype.cached.subdictionary;
 
     if (cached.contains & Contains::TYPE) {
-      cached.type = *(Size *)(radix::Item::content(offset, sizeof(Size)).toPtr());
+      std::memcpy(&cached.type, radix::Item::content(offset, sizeof(Size)).toPtr(), sizeof(Size));
       offset += sizeof(Size);
     } else
       cached.type = prototype.cached.type;
 
     if (cached.contains & Contains::ACTION) {
-      cached.action = *(ActionBinding *)(radix::Item::content(offset, sizeof(ActionBinding)).toPtr());
+      std::memcpy(&cached.action, radix::Item::content(offset, sizeof(ActionBinding)).toPtr(), sizeof(ActionBinding));
       offset += sizeof(ActionBinding);
     } else
       cached.action = prototype.cached.action;
 
     if (cached.contains & Contains::SUCCESSOR) {
-      cached.successor = *(Size *)(radix::Item::content(offset, sizeof(Size)).toPtr());
+      std::memcpy(&cached.successor, radix::Item::content(offset, sizeof(Size)).toPtr(), sizeof(Size));
       offset += sizeof(Size);
     } else
       cached.successor = prototype.cached.successor;

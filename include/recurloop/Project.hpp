@@ -23,6 +23,8 @@ namespace recurloop {
   struct ProjectCacheStamp {
     std::uintmax_t size = 0;
     std::int64_t mtime = 0;
+    std::uint64_t hash = 0;
+    bool operator==(const ProjectCacheStamp &) const = default;
   };
 
   // One project cache walk. Cached project sources are ordinary linked .rli

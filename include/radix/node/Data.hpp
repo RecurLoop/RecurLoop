@@ -4,6 +4,7 @@
 #include <utilities/Declaration.hpp>
 
 namespace radix::node {
+  #pragma pack(push, 1)
   class Data {
   protected:
     Size parent = 0;
@@ -17,6 +18,8 @@ namespace radix::node {
       Byte::Offset keyForeOffset : Byte::offsetBits = 0;
       Byte::Offset keyRearOffset : Byte::offsetBits = 0;
     };
+    // Preserve the record layout while allowing byte-aligned arena storage.
+    Byte::Offset reserved[sizeof(Size) - 1] = {};
 
     Size earlier = 0;
 
@@ -47,4 +50,5 @@ namespace radix::node {
     DECLARATION item::Data *getItem(Radix *radix);
     DECLARATION void setItem(Radix *radix, item::Data *item);
   };
+  #pragma pack(pop)
 } // namespace radix::node

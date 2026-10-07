@@ -309,6 +309,7 @@ namespace recurloop {
       }
 
       context::Value callNativeFunction(const Token &name, const std::vector<context::Value> &values) {
+        NativeExecution execution(context);
         const std::vector<compiler::TypeId> argumentTypes = nativeArgumentTypes(values);
         const std::optional<compiler::TypedFunction> function =
             context.language().resolveFunction(name.text, argumentTypes);
@@ -407,13 +408,16 @@ namespace recurloop {
           if (!scalarNativeSysvAvailable())
             expressionFail(context, name.offset, "scalar native runtime calls are only implemented on x86-64");
           const std::uintptr_t result = callScalarNativeSysv(entry, raw.data(), raw.size());
+          lexicon::detail::rethrowPendingPhraseException(context);
 
           if (resultType.kind == compiler::TypeKind::Void) return context::Value();
           return context::Value(static_cast<std::int64_t>(result));
         }
         if (function->parameterTypes.size() == 1 && function->resultType == context.language().types.find("i64") &&
             values[0].isReal()) {
-          return context::Value(reinterpret_cast<std::int64_t (*)(double)>(entry)(values[0].asReal()));
+          const auto result = reinterpret_cast<std::int64_t (*)(double)>(entry)(values[0].asReal());
+          lexicon::detail::rethrowPendingPhraseException(context);
+          return context::Value(result);
         }
         expressionFail(context, name.offset, "native runtime calls currently support only scalar integer ABI calls");
       }

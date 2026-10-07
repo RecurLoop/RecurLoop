@@ -1727,14 +1727,17 @@ namespace recurloop {
 
     extern "C" std::uint64_t contextFunctionInvokeScalar(context::Context *context, std::uint64_t entry,
                                                           const std::uint8_t *args, std::uint64_t count) noexcept {
-      return checked(context, std::uint64_t{0}, [&](context::Context &) {
+      return checked(context, std::uint64_t{0}, [&](context::Context &value) {
         if (entry == 0) THROW(, "context scalar function invocation received a null entry")
         if (count > 0 && args == nullptr) THROW(, "context scalar function invocation received null arguments")
         if (!scalarNativeSysvAvailable())
           THROW(, "context scalar function invocation is only implemented for sysv-amd64")
-        return static_cast<std::uint64_t>(
+        NativeExecution execution(value);
+        const auto result = static_cast<std::uint64_t>(
             callScalarNativeSysv(static_cast<std::uintptr_t>(entry), reinterpret_cast<const std::uintptr_t *>(args),
                                  static_cast<std::size_t>(count)));
+        lexicon::detail::rethrowPendingPhraseException(value);
+        return result;
       });
     }
 
@@ -1948,6 +1951,7 @@ namespace recurloop {
   namespace {
     void installContextApi(context::Context &context) {
     NativeIO::install();
+    NativeExecution::install();
     compiler::LanguageState language = context.language();
     const compiler::TypeId contextPointer = language.types.find("Context*");
     const compiler::TypeId bytePointer = language.types.find("u8*");

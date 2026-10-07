@@ -7,6 +7,7 @@
 #include <string>
 #include <vector>
 #include <utilities/Declaration.hpp>
+#include "Values.hpp"
 
 namespace lexicon {
   class Phrase;
@@ -53,6 +54,9 @@ namespace context {
     // here and the Phrase elaboration/invocation boundary rethrows it after the
     // JIT function returns.
     std::exception_ptr pendingException;
+    // Allocation watermarks only; bindings remain ordinary lexicon phrases.
+    // These frames belong to this context and never enter portable images.
+    std::vector<Values::ScopeFrame> valueScopes;
     std::uintptr_t pendingNativeEntry = 0;
     std::string pendingNativeSymbol;
     std::string definitionSymbolOverride;

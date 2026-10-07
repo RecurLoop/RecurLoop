@@ -2174,6 +2174,84 @@ TEST_F(AssemblerTesting, DebugExecutableKeepsSymbolsWhileRetainingLinkerHardenin
   std::filesystem::remove(path);
 }
 
+TEST_F(AssemblerTesting, DebugFunctionsPreserveUnsignedFloatingAndNarrowIntegerSemantics) {
+  const std::string path = executablePath("debug-arithmetic-semantics");
+  const std::string source = std::string(R"(
+fn unsigned_probe(a:u64, b:u64) -> i64 {
+  if a / b != cast(u64, 9223372036854775807) { return 1 }
+  if a % b != cast(u64, 0) { return 2 }
+  if a < b { return 3 }
+  if a <= b { return 4 }
+  if a > b {} else { return 5 }
+  if a >= b {} else { return 6 }
+  return 0
+}
+fn float_probe(a:i64, b:i64) -> i64 {
+  var left:f64 = cast(f64, a)
+  var right:f64 = cast(f64, b)
+  if left < right {} else { return 7 }
+  if left >= right { return 8 }
+  var zero:f64 = 0.0
+  var nan:f64 = zero / zero
+  if nan == nan { return 9 }
+  if nan != nan { return 10 }
+  if nan < zero { return 11 }
+  if nan <= zero { return 12 }
+  if nan > zero { return 13 }
+  if nan >= zero { return 14 }
+  return 0
+}
+fn narrow_probe(a:i8, b:i8) -> i64 {
+  if a + b != cast(i8, -128) { return 15 }
+  if -cast(i8, -128) != cast(i8, -128) { return 16 }
+  return 0
+}
+fn arithmetic_probe() -> i64 {
+  return unsigned_probe(cast(u64, -2), cast(u64, 2)) + float_probe(-2, -1) + narrow_probe(cast(i8, 127), cast(i8, 1))
+}
+print arithmetic_probe()
+)") + "emit executable debug \"" + path + R"(" debug_arithmetic_entry = fn () -> i64 {
+  return arithmetic_probe()
+}
+)";
+  ASSERT_EQ(execute(source), 0) << error();
+  EXPECT_EQ(output(), "0\n");
+  const pid_t process = fork();
+  ASSERT_NE(process, -1);
+  if (process == 0) {
+    execl(path.c_str(), path.c_str(), static_cast<char *>(nullptr));
+    _exit(127);
+  }
+  int status = 0;
+  ASSERT_EQ(waitpid(process, &status, 0), process);
+  ASSERT_TRUE(WIFEXITED(status));
+  EXPECT_EQ(WEXITSTATUS(status), 0);
+  std::filesystem::remove(path);
+}
+
+TEST_F(AssemblerTesting, StandaloneIntegerDivisionFaultsExitCleanlyInBothBackends) {
+  for (const auto *mode : {"", "debug "}) {
+    const std::string path = executablePath(std::string("division-fault-") + mode);
+    const std::string source = "fn fault_div(a:i64, b:i64) -> i64 { return a / b }\n"
+        "emit executable " + std::string(mode) + "\"" + path + R"(" fault_entry = fn () -> i64 {
+  return fault_div(7, 0)
+}
+)";
+    ASSERT_EQ(execute(source), 0) << error();
+    const pid_t process = fork();
+    ASSERT_NE(process, -1);
+    if (process == 0) {
+      execl(path.c_str(), path.c_str(), static_cast<char *>(nullptr));
+      _exit(127);
+    }
+    int status = 0;
+    ASSERT_EQ(waitpid(process, &status, 0), process);
+    ASSERT_TRUE(WIFEXITED(status)) << status;
+    EXPECT_EQ(WEXITSTATUS(status), 1);
+    std::filesystem::remove(path);
+  }
+}
+
 TEST_F(AssemblerTesting, ReturnsTheNativeEntrypointStatusFromAStaticExecutable) {
   const std::string path = executablePath("exit-status");
   std::filesystem::remove(path);

@@ -88,6 +88,12 @@ The manifest stores the baseline identity plus source stamps for the complete
 observed it, while unrelated workspace files remain outside the reload graph.
 `:cache-dependencies` exposes that canonical source set to the IDE watcher.
 
+Stamps include a content hash, so restoring a timestamp or replacing bytes with
+the same file size still invalidates the cache. Writers recheck their inputs
+before publication. A process-shared lock protects image/manifest replacement;
+the manifest also identifies the image bytes, so an interrupted replacement is
+a cache miss. Older manifest versions are rebuilt automatically.
+
 Cache-build sessions compile ordinary in-memory functions with LLVM's quick
 pipeline. Explicit `emit object` and `emit executable` directives keep their
 normal output policy. This avoids spending production optimization time on

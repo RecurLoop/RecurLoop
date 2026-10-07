@@ -197,7 +197,7 @@ Size Bit::compare(Bit leftFore, Bit leftRear, Bit rightFore, Bit rightRear) {
 }
 
 Size Bit::bytes(Size bits) {
-  return (bits + Byte::length - 1) / Byte::length;
+  return bits / Byte::length + (bits % Byte::length != 0);
 }
 
 #endif

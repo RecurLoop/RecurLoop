@@ -148,6 +148,10 @@ clients, also pass `--unix /tmp/my-project.sock`; connect another console with
 `recurloop --connect /tmp/my-project.sock`. Standalone CLI use does not require
 the VS Code project marker.
 
+The server refuses an existing Unix socket path and removes only the socket it
+created. After an unclean shutdown, remove the stale socket before restarting;
+an active server or another file at that path is never replaced automatically.
+
 The entry declares targets with source-defined syntax:
 
 ```rl

@@ -48,6 +48,7 @@ namespace recurloop {
                                 std::ostream *err = nullptr);
     int runStdio();
     void openUnix();
+    void removeUnixSocket() noexcept;
     void runUnix();
     void serveUnixClient(int fd);
     void reapClients(bool all = false);
@@ -57,6 +58,7 @@ namespace recurloop {
     ServerOptions options_;
     std::atomic<bool> stopping_{false};
     std::atomic<int> listener_{-1};
+    std::uintmax_t unixDevice_ = 0, unixInode_ = 0;
     std::mutex clientsMutex_;
     std::unordered_set<int> clientFds_;
     std::vector<ClientThread> clientThreads_;

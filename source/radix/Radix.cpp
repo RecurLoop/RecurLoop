@@ -110,7 +110,7 @@ namespace radix {
   Byte Radix::pointerFromAddress(Size base, Size address) {
     Size size = memorySize();
 
-    if (size < base || size < address || size < base + address) return (void *)nullptr;
+    if (size < base || address > size - base) return (void *)nullptr;
 
     #if RADIX_REVERSE
       return memoryRear() - base - address;

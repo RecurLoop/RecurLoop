@@ -1,4 +1,5 @@
 #include "AssemblerInternal.hpp"
+#include <recurloop/NativeCall.hpp>
 
 #include <recurloop/Expressions.hpp>
 #include <recurloop/Blocks.hpp>
@@ -292,6 +293,7 @@ namespace recurloop {
     void invoke_native_entry(context::Context &context, lexicon::Phrase &invoked, std::uintptr_t entry,
                              const std::string &symbol) {
       if (entry == 0) THROW(, "compiled phrase entrypoint is null for '" << invoked.getKeyEscaped() << "'")
+      NativeExecution execution(context);
       const std::optional<compiler::TypedFunction> function =
           symbol.empty() ? std::nullopt : context.language().findFunction(symbol);
       if (function && actionSignature(context, *function)) {

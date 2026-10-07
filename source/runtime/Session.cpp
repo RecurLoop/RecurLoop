@@ -241,6 +241,11 @@ namespace recurloop {
     NativeIO::Scope nativeIo({nullptr, requestOut, requestErr});
     SessionRequestState sessionRequest;
     SessionResponse response;
+    const auto requestFailure = [&](int status, std::string error) {
+      SessionResponse failed = failure(status, std::move(error));
+      if (out == nullptr) failed.output = capturedOutput.str();
+      return failed;
+    };
 
     {
       context::Context &context = contextGeneration_->context();
@@ -270,7 +275,7 @@ namespace recurloop {
         std::string text = err == nullptr ? capturedErrors.str() : std::string{};
         if (!text.empty() && text.back() != '\n') text.push_back('\n');
         text += describe(error);
-        return failure(status, std::move(text));
+        return requestFailure(status, std::move(text));
       } catch (const std::exception &error) {
         request.rollback();
         context.io = previousIo;
@@ -279,13 +284,13 @@ namespace recurloop {
         std::string text = err == nullptr ? capturedErrors.str() : std::string{};
         if (!text.empty() && text.back() != '\n') text.push_back('\n');
         text += std::string("<session>:1:1: ") + error.what();
-        return failure(1, std::move(text));
+        return requestFailure(1, std::move(text));
       } catch (...) {
         request.rollback();
         context.io = previousIo;
         requestOut->flush();
         requestErr->flush();
-        return failure(1, "<session>:1:1: unknown internal error");
+        return requestFailure(1, "<session>:1:1: unknown internal error");
       }
     }
 
@@ -373,14 +378,14 @@ namespace recurloop {
       std::string text = err == nullptr ? capturedErrors.str() : std::string{};
       if (!text.empty() && text.back() != '\n') text.push_back('\n');
       text += describe(error);
-      return failure(error.status(), std::move(text));
+      return requestFailure(error.status(), std::move(text));
     } catch (const std::exception &error) {
       requestOut->flush();
       requestErr->flush();
       std::string text = err == nullptr ? capturedErrors.str() : std::string{};
       if (!text.empty() && text.back() != '\n') text.push_back('\n');
       text += std::string("<session>:1:1: ") + error.what();
-      return failure(1, std::move(text));
+      return requestFailure(1, std::move(text));
     }
 
     requestOut->flush();

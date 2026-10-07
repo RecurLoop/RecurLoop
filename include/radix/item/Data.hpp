@@ -4,6 +4,7 @@
 #include <utilities/Declaration.hpp>
 
 namespace radix::item {
+  #pragma pack(push, 1)
   class Data {
   protected:
     Size node = 0;
@@ -40,4 +41,5 @@ namespace radix::item {
     DECLARATION void setContentBytes(Size bytes);
     DECLARATION void addContentBytes(Size bytes);
   };
+  #pragma pack(pop)
 } // namespace radix::item

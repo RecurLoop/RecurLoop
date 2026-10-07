@@ -766,6 +766,7 @@ namespace recurloop::internal {
 
     const auto registeredActions = context.actions().snapshot();
     context.lexicon.clear();
+    context.exec.valueScopes.clear();
     context.actions().restore(registeredActions);
     lexicon::Phrase undefined(&context.lexicon);
     const PhraseSpec &rootSpec = *specs.at("root");

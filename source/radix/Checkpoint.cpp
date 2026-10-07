@@ -17,7 +17,7 @@ namespace radix {
     auto addr = getAddress();
 
     // Restore items
-    for (item::Data *drop = meta->getLastItem(radix); drop->address(radix) >= addr;) {
+    for (item::Data *drop = meta->getLastItem(radix); drop && drop->address(radix) >= addr;) {
       node::Data *node = drop->getNode(radix);
       item::Data *prev = drop->getPrev(radix);
 
@@ -31,7 +31,7 @@ namespace radix {
     }
 
     // Restore nodes
-    for (node::Data *drop = meta->getLastNode(radix); drop->address(radix) >= addr;) {
+    for (node::Data *drop = meta->getLastNode(radix); drop && drop->address(radix) >= addr;) {
       bool direction = drop->getKeyFore(radix).get();
 
       // If node has child it means that node is spliting node (child is splitted)

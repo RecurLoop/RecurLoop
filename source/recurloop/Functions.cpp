@@ -1,4 +1,5 @@
 #include <recurloop/Functions.hpp>
+#include <recurloop/NativeCall.hpp>
 
 #include "FunctionsInternal.hpp"
 #ifdef RECURLOOP_ENABLE_LLVM
@@ -351,6 +352,7 @@ namespace recurloop {
       entry = image.address(symbol);
       binding.setActionEntry(entry).save();
     }
+    NativeExecution execution(context);
     reinterpret_cast<void (*)(context::Context *, lexicon::Phrase *)>(entry)(&context, &invoked);
   }
 

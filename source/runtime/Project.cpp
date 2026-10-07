@@ -15,12 +15,46 @@
 #include <fstream>
 #include <iomanip>
 #include <sstream>
+#include <cerrno>
+#include <fcntl.h>
+#include <sys/file.h>
+#include <unistd.h>
 
 namespace recurloop {
   namespace {
-    constexpr std::string_view CacheMagic{"recurloop-project-module-cache-v13"};
+    constexpr std::string_view CacheMagic{"recurloop-project-module-cache-v14"};
     constexpr std::uint64_t FnvOffset = 1469598103934665603ULL;
     constexpr std::uint64_t FnvPrime = 1099511628211ULL;
+
+    // Keep the existing one-source/one-image layout. Writers publish the pair
+    // under a process-shared lock; the image stamp also detects interrupted writes.
+    class CacheLock {
+    public:
+      explicit CacheLock(const std::string &directory, bool write) {
+        descriptor = ::open((std::filesystem::path(directory) / ".lock").c_str(), O_CREAT | O_RDWR | O_CLOEXEC, 0600);
+        if (descriptor < 0) THROW(, "Cannot open project cache lock")
+        int result;
+        do { result = ::flock(descriptor, write ? LOCK_EX : LOCK_SH); } while (result < 0 && errno == EINTR);
+        if (result < 0) {
+          ::close(descriptor);
+          THROW(, "Cannot lock project cache")
+        }
+      }
+      ~CacheLock() { ::close(descriptor); }
+      CacheLock(const CacheLock &) = delete;
+      CacheLock &operator=(const CacheLock &) = delete;
+    private:
+      int descriptor = -1;
+    };
+
+    struct CacheTemporaryFiles {
+      std::filesystem::path image, manifest;
+      ~CacheTemporaryFiles() {
+        std::error_code error;
+        std::filesystem::remove(image, error);
+        std::filesystem::remove(manifest, error);
+      }
+    };
 
     bool sourceStamp(const std::string &path, ProjectCacheStamp &stamp) {
       namespace fs = std::filesystem;
@@ -32,12 +66,27 @@ namespace recurloop {
       const auto time = fs::last_write_time(file, error);
       if (error) return false;
       stamp.mtime = static_cast<std::int64_t>(time.time_since_epoch().count());
+      std::ifstream input(file, std::ios::binary);
+      if (!input.is_open()) return false;
+      stamp.hash = FnvOffset;
+      std::uintmax_t bytesRead = 0;
+      char buffer[8192];
+      while (input.read(buffer, sizeof(buffer)) || input.gcount() != 0) {
+        bytesRead += static_cast<std::uintmax_t>(input.gcount());
+        for (std::streamsize index = 0; index < input.gcount(); ++index) {
+          stamp.hash ^= static_cast<unsigned char>(buffer[index]);
+          stamp.hash *= FnvPrime;
+        }
+      }
+      if (!input.eof() || bytesRead != stamp.size) return false;
+      const auto finalTime = fs::last_write_time(file, error);
+      if (error || finalTime != time) return false;
       return true;
     }
 
     bool sameStamp(const std::string &path, const ProjectCacheStamp &expected) {
       ProjectCacheStamp actual;
-      return sourceStamp(path, actual) && actual.size == expected.size && actual.mtime == expected.mtime;
+      return sourceStamp(path, actual) && actual == expected;
     }
 
     bool endsWith(std::string_view value, std::string_view suffix) {
@@ -72,6 +121,7 @@ namespace recurloop {
       bool directEntry = true;
       std::string source;
       ProjectCacheStamp sourceStamp;
+      ProjectCacheStamp imageStamp;
       std::unordered_map<std::string, ProjectCacheStamp> dependencies;
       std::vector<std::pair<std::string, ProjectCacheStamp>> inputImages;
     };
@@ -85,7 +135,8 @@ namespace recurloop {
       std::size_t dependencyCount = 0;
       std::size_t inputCount = 0;
       if (!(input >> magic >> std::hex >> manifest.baseline >> std::dec >> linked >> directEntry >> manifest.sourceStamp.size >>
-            manifest.sourceStamp.mtime >> std::quoted(manifest.source) >> dependencyCount >> inputCount))
+            manifest.sourceStamp.mtime >> manifest.sourceStamp.hash >> manifest.imageStamp.size >> manifest.imageStamp.mtime >>
+            manifest.imageStamp.hash >> std::quoted(manifest.source) >> dependencyCount >> inputCount))
         return false;
       if (magic != CacheMagic || (linked != 0 && linked != 1) || (directEntry != 0 && directEntry != 1) ||
           dependencyCount == 0) return false;
@@ -94,14 +145,14 @@ namespace recurloop {
       for (std::size_t index = 0; index < dependencyCount; ++index) {
         ProjectCacheStamp stamp;
         std::string dependency;
-        if (!(input >> stamp.size >> stamp.mtime >> std::quoted(dependency))) return false;
+        if (!(input >> stamp.size >> stamp.mtime >> stamp.hash >> std::quoted(dependency))) return false;
         manifest.dependencies.emplace(std::move(dependency), stamp);
       }
       manifest.inputImages.reserve(inputCount);
       for (std::size_t index = 0; index < inputCount; ++index) {
         ProjectCacheStamp stamp;
         std::string image;
-        if (!(input >> stamp.size >> stamp.mtime >> std::quoted(image))) return false;
+        if (!(input >> stamp.size >> stamp.mtime >> stamp.hash >> std::quoted(image))) return false;
         manifest.inputImages.emplace_back(std::move(image), stamp);
       }
       input >> std::ws;
@@ -109,7 +160,7 @@ namespace recurloop {
     }
 
     bool writeManifest(const std::filesystem::path &path, std::uint64_t baseline, bool linked, bool directEntry,
-                       const std::string &source, const ProjectCacheStamp &sourceStamp,
+                       const std::string &source, const ProjectCacheStamp &sourceStamp, const ProjectCacheStamp &imageStamp,
                        const std::unordered_map<std::string, ProjectCacheStamp> &dependencies,
                        const std::vector<std::pair<std::string, ProjectCacheStamp>> &inputImages) {
       std::vector<std::pair<std::string, ProjectCacheStamp>> ordered(dependencies.begin(), dependencies.end());
@@ -118,12 +169,13 @@ namespace recurloop {
       std::ofstream file(path, std::ios::trunc);
       if (!file.is_open()) return false;
       file << CacheMagic << ' ' << std::hex << baseline << std::dec << ' ' << (linked ? 1 : 0) << ' '
-           << (directEntry ? 1 : 0) << ' ' << sourceStamp.size << ' ' << sourceStamp.mtime << ' ' << std::quoted(source) << ' ' << ordered.size()
+           << (directEntry ? 1 : 0) << ' ' << sourceStamp.size << ' ' << sourceStamp.mtime << ' ' << sourceStamp.hash << ' '
+           << imageStamp.size << ' ' << imageStamp.mtime << ' ' << imageStamp.hash << ' ' << std::quoted(source) << ' ' << ordered.size()
            << ' ' << inputImages.size() << '\n';
       for (const auto &[dependency, stamp] : ordered)
-        file << stamp.size << ' ' << stamp.mtime << ' ' << std::quoted(dependency) << '\n';
+        file << stamp.size << ' ' << stamp.mtime << ' ' << stamp.hash << ' ' << std::quoted(dependency) << '\n';
       for (const auto &[image, stamp] : inputImages)
-        file << stamp.size << ' ' << stamp.mtime << ' ' << std::quoted(image) << '\n';
+        file << stamp.size << ' ' << stamp.mtime << ' ' << stamp.hash << ' ' << std::quoted(image) << '\n';
       file.close();
       return static_cast<bool>(file);
     }
@@ -400,10 +452,10 @@ namespace recurloop {
 
       const fs::path imagePath(cacheModuleImagePath(absolute));
       const fs::path manifestPath(cacheModuleManifestPath(absolute));
+      CacheLock cacheLock(cacheModulesDirectory_, false);
       Manifest manifest;
       if (!readManifest(manifestPath, manifest) || manifest.baseline != baselineHash() ||
-          manifest.source != absolute || manifest.sourceStamp.size != stamp.size ||
-          manifest.sourceStamp.mtime != stamp.mtime) {
+          manifest.source != absolute || manifest.sourceStamp != stamp || !sameStamp(imagePath.string(), manifest.imageStamp)) {
         cacheMisses_.fetch_add(1, std::memory_order_relaxed);
         return false;
       }
@@ -503,6 +555,7 @@ namespace recurloop {
 
       ProjectCacheState::Module module = std::move(state.modules.back());
       state.modules.pop_back();
+      if (!nested && state.modules.empty()) state.active = false;
 
       // In-place writes to state that existed before the current dependency
       // boundary cannot be represented by an append-only linked image. Keep a
@@ -515,32 +568,33 @@ namespace recurloop {
       if (imagePath.empty() || manifestPath.empty()) return false;
       fs::create_directories(imagePath.parent_path(), error);
       if (error) return false;
+      CacheLock cacheLock(cacheModulesDirectory_, true);
+
+      const auto inputsUnchanged = [&] {
+        if (!sameStamp(module.source, module.sourceStamp)) return false;
+        for (const auto &[path, stamp] : module.dependencies) if (!sameStamp(path, stamp)) return false;
+        for (const auto &[path, stamp] : module.inputImages) if (!sameStamp(path, stamp)) return false;
+        return true;
+      };
+      if (!inputsUnchanged()) return false;
 
       const std::uint64_t temporaryId = cacheTemporaryId_.fetch_add(1, std::memory_order_relaxed);
-      const fs::path imageTemporary = imagePath.string() + "." + std::to_string(temporaryId) + ".tmp";
-      const fs::path manifestTemporary = manifestPath.string() + "." + std::to_string(temporaryId) + ".tmp";
+      const std::string suffix = "." + std::to_string(::getpid()) + "." + std::to_string(temporaryId) + ".tmp";
+      const fs::path imageTemporary = imagePath.string() + suffix;
+      const fs::path manifestTemporary = manifestPath.string() + suffix;
+      CacheTemporaryFiles temporaryFiles{imageTemporary, manifestTemporary};
 
       if (module.linked) EngineImage::saveLinked(context, module.segmentUsed, imageTemporary.string());
       else EngineImage::saveFull(context, imageTemporary.string());
+      ProjectCacheStamp imageStamp;
+      if (!sourceStamp(imageTemporary.string(), imageStamp) || !inputsUnchanged()) return false;
       if (!writeManifest(manifestTemporary, baselineHash(), module.linked, module.directEntry, module.source,
-                         module.sourceStamp, module.dependencies, module.inputImages)) {
-        fs::remove(imageTemporary, error);
-        return false;
-      }
+                         module.sourceStamp, imageStamp, module.dependencies, module.inputImages)) return false;
 
-      error.clear();
       fs::rename(imageTemporary, imagePath, error);
-      if (error) {
-        fs::remove(imageTemporary, error);
-        fs::remove(manifestTemporary, error);
-        return false;
-      }
-      error.clear();
+      if (error) return false;
       fs::rename(manifestTemporary, manifestPath, error);
-      if (error) {
-        fs::remove(manifestTemporary, error);
-        return false;
-      }
+      if (error) return false;
 
       // The source was already executed in this context. Register the new image
       // as a dependency without loading it a second time, so the enclosing
@@ -752,6 +806,7 @@ namespace recurloop {
     namespace fs = std::filesystem;
     if (cacheModulesDirectory_.empty() || !endsWith(source, ".rl")) return false;
     try {
+      CacheLock cacheLock(cacheModulesDirectory_, false);
       std::error_code error;
       const std::string absolute = fs::absolute(fs::path(source), error).lexically_normal().string();
       if (error) return false;
@@ -782,6 +837,7 @@ namespace recurloop {
     namespace fs = std::filesystem;
     if (cacheModulesDirectory_.empty() || !endsWith(source, ".rl")) return false;
     try {
+      CacheLock cacheLock(cacheModulesDirectory_, false);
       std::error_code error;
       const std::string absolute = fs::absolute(fs::path(source), error).lexically_normal().string();
       if (error) return false;
@@ -790,8 +846,7 @@ namespace recurloop {
       const fs::path imagePath(cacheModuleImagePath(absolute));
       Manifest manifest;
       if (!readManifest(cacheModuleManifestPath(absolute), manifest) || manifest.baseline != baselineHash() ||
-          manifest.source != absolute || manifest.sourceStamp.size != sourceNow.size ||
-          manifest.sourceStamp.mtime != sourceNow.mtime)
+          manifest.source != absolute || manifest.sourceStamp != sourceNow || !sameStamp(imagePath.string(), manifest.imageStamp))
         return false;
       for (const auto &[dependency, expected] : manifest.dependencies)
         if (!sameStamp(dependency, expected)) return false;

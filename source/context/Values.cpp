@@ -132,12 +132,28 @@ namespace context {
       return active.getPrototype();
     }
 
-    void activate(lexicon::Phrase &root, lexicon::Phrase scope) {
-      root.append(std::string(ActiveScopeName))
+    lexicon::Phrase activate(lexicon::Phrase &root, lexicon::Phrase scope) {
+      return root.append(std::string(ActiveScopeName))
           .make()
           .setPrototype(scope)
           .setType(lexicon::phrase::type::getData(root))
           .save();
+    }
+
+    bool withinScope(radix::Node node, Size root) {
+      for (; !node.isNull(); node = node.predecessor())
+        if (node.getAddress() == root) return true;
+      return false;
+    }
+
+    bool ownsTail(lexicon::Lexicon &lexicon, const Values::ScopeFrame &frame, Size root) {
+      for (auto item = lexicon.lastItem(); !item.isNull() && item.getAddress() >= frame.checkpoint; item = item.earlier()) {
+        if (item.getAddress() == frame.scope || item.getAddress() == frame.marker) continue;
+        if (!withinScope(item.getNode(), root)) return false;
+      }
+      for (auto node = lexicon.lastNode(); !node.isNull() && node.getAddress() >= frame.checkpoint; node = node.earlier())
+        if (!withinScope(node, root)) return false;
+      return true;
     }
   } // namespace
 
@@ -217,7 +233,7 @@ namespace context {
     return stored == other.stored;
   }
 
-  Values::Values(lexicon::Lexicon &lexicon) : lexicon(&lexicon) {}
+  Values::Values(lexicon::Lexicon &lexicon, std::vector<ScopeFrame> *frames) : lexicon(&lexicon), frames(frames) {}
 
   void Values::setup(lexicon::Phrase root) {
     lexicon::Phrase values = dictionary(root, ValueDictionaryName);
@@ -230,9 +246,16 @@ namespace context {
     lexicon::Phrase values = valuesRoot(*lexicon);
     lexicon::Phrase scopes = exact(values, ScopesDictionaryName);
     lexicon::Phrase parent = activeScope(*lexicon);
-    lexicon::Phrase scope =
-        scopes.append("").make().enableSubdictionary().setPrototype(parent).setType(parent.getType()).save();
-    activate(values, scope);
+    auto checkpoint = lexicon->checkpoint();
+    try {
+      lexicon::Phrase scope =
+          scopes.append("").make().enableSubdictionary().setPrototype(parent).setType(parent.getType()).save();
+      lexicon::Phrase marker = activate(values, scope);
+      if (frames) frames->push_back({checkpoint.getAddress(), scope.getAddress(), marker.getAddress()});
+    } catch (...) {
+      checkpoint.restore();
+      throw;
+    }
   }
 
   void Values::popScope() {
@@ -240,6 +263,24 @@ namespace context {
     lexicon::Phrase scope = activeScope(*lexicon);
     lexicon::Phrase parent = scope.getPrototype();
     if (parent.isNull()) THROW(, "cannot pop the global value scope")
+    // A parser transaction can have discarded nested scopes. Match the active
+    // phrase before using any process-local allocation watermark.
+    if (frames) {
+      while (!frames->empty() && frames->back().scope != scope.getAddress()) frames->pop_back();
+      if (!frames->empty()) {
+        const ScopeFrame frame = frames->back();
+        if (ownsTail(*lexicon, frame, scope.getSubdictionary().getAddress())) {
+          radix::Checkpoint(lexicon, frame.checkpoint).restore();
+        } else {
+          // Definitions and resized outer values must survive. The marker was
+          // allocated by this frame, so updating it does not mutate older state.
+          lexicon::Phrase marker = exact(values, ActiveScopeName);
+          marker.setPrototype(parent).save();
+        }
+        frames->pop_back();
+        return;
+      }
+    }
     activate(values, parent);
   }
 

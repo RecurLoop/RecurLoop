@@ -11,6 +11,11 @@ serialization explicit. Allocation grows from the buffer ends according to the
 radix layout. Checkpoints record an address that can be restored for scoped
 rollback.
 
+Arena records are byte-aligned, including subdictionaries embedded in phrase
+metadata. Phrase fields and scalar payloads use `memcpy` rather than dereferencing
+typed pointers into that storage; a key of odd byte length must not change the
+validity of the following record.
+
 `utilities::Byte`, `Bit`, and `Size` provide byte/bit views and offset
 arithmetic. They do not own memory.
 
@@ -21,6 +26,13 @@ keys and generated code. The engine allocates and frees both workspace buffers.
 `Context::Workspace` contains temporary code, read-only data, writable data,
 BSS size, and custom native sections. These buffers are reset between output
 operations as required.
+
+Interpreted value scopes keep allocation checkpoints in the execution context.
+Closing a scope restores its checkpoint when the new graph records belong only
+to that scope. In-place updates to outer scalar values survive this restore.
+New definitions or resized outer values retain their graph records instead.
+The checkpoint stack is request-local, participates in rollback, and is cleared
+when an engine image replaces the graph.
 
 ## Executable memory
 
@@ -34,6 +46,14 @@ Compiled functions use the target ABI: stack frames for locals, explicit
 pointers for heap objects, and external allocators when linked by the program.
 RecurLoop does not currently provide automatic ownership or garbage
 collection for native records.
+
+Generated functions check integer division by zero and signed division overflow
+before executing the operation. In the host, they record the error and return
+through ordinary native frames; the host boundary then reports it as a request
+failure. Function entries, calls, and loop backedges also check pending errors
+and request cancellation. Standalone executables report arithmetic faults on
+stderr and exit with status 1. These checks apply to generated functions;
+explicit assembler and external native code retain their own fault behavior.
 
 ## Persistence rule
 

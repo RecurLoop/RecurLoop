@@ -37,11 +37,11 @@ export class ProjectController implements vscode.TaskProvider {
     return data.targets;
   }
 
-  async run(uri: vscode.Uri, name: string): Promise<string> {
-    await vscode.workspace.saveAll(false);
-    // Allow the file watcher to begin publishing saved project changes first.
-    await new Promise(resolve => setTimeout(resolve, 300));
-    return this.runtime.execute(uri, [`:project-run\t${hexEncode(name)}`]);
+  async run(uri: vscode.Uri, name: string, signal?: AbortSignal): Promise<string> {
+    signal?.throwIfAborted();
+    if (!await vscode.workspace.saveAll(false)) throw new Error('Save project files before running a target.');
+    await this.runtime.reload(uri, signal);
+    return this.runtime.execute(uri, [`:project-run\t${hexEncode(name)}`], signal);
   }
 
   private task(folder: vscode.WorkspaceFolder, name: string, definition = { type: 'recurloop', target: name }): vscode.Task {
@@ -49,16 +49,17 @@ export class ProjectController implements vscode.TaskProvider {
       const write = new vscode.EventEmitter<string>();
       const close = new vscode.EventEmitter<number>();
       let closed = false;
+      const controller = new AbortController();
       return {
         onDidWrite: write.event, onDidClose: close.event,
         open: () => {
-          void this.run(folder.uri, name).then(output => {
+          void this.run(folder.uri, name, controller.signal).then(output => {
             if (!closed) { write.fire(output.replace(/\r?\n/g, '\r\n')); close.fire(0); }
           }, error => {
             if (!closed) { write.fire(`${String(error)}\r\n`); close.fire(1); }
           });
         },
-        close: () => { closed = true; write.dispose(); close.dispose(); }
+        close: () => { closed = true; controller.abort(new vscode.CancellationError()); write.dispose(); close.dispose(); }
       };
     }), []);
   }
@@ -102,6 +103,8 @@ export class TargetRunAdapter implements vscode.DebugAdapter {
   readonly onDidSendMessage = this.emitter.event;
   private sequence = 1;
   private disposed = false;
+  private finished = false;
+  private readonly controller = new AbortController();
   private readonly terminalWrite = new vscode.EventEmitter<string>();
   private terminal?: vscode.Terminal;
   constructor(private readonly project: ProjectController, private readonly uri: vscode.Uri) {}
@@ -112,17 +115,19 @@ export class TargetRunAdapter implements vscode.DebugAdapter {
     if (message.command === 'launch') {
       this.terminal = vscode.window.createTerminal({ name: `RecurLoop: ${message.arguments.projectTarget}`,
         pty: { onDidWrite: this.terminalWrite.event, open: () => {
-          void this.project.run(this.uri, message.arguments.projectTarget).then(
+          void this.project.run(this.uri, message.arguments.projectTarget, this.controller.signal).then(
             output => this.finish(output), error => this.finish(String(error)));
-        }, close: () => {} } });
+        }, close: () => this.cancel() } });
       this.terminal.show(true);
     }
-    if (message.command === 'disconnect' || message.command === 'terminate') this.finish('');
+    if (message.command === 'disconnect' || message.command === 'terminate') this.cancel();
   }
+  private cancel(): void { this.controller.abort(new vscode.CancellationError()); this.finish(''); }
   private finish(output: string): void {
-    if (this.disposed) return;
+    if (this.disposed || this.finished) return;
+    this.finished = true;
     this.terminalWrite.fire(output.replace(/\r?\n/g, '\r\n'));
     this.emitter.fire({ seq: this.sequence++, type: 'event', event: 'terminated', body: {} });
   }
-  dispose(): void { this.disposed = true; this.emitter.dispose(); this.terminalWrite.dispose(); }
+  dispose(): void { this.controller.abort(new vscode.CancellationError()); this.disposed = true; this.emitter.dispose(); this.terminalWrite.dispose(); }
 }

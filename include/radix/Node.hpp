@@ -55,7 +55,7 @@ namespace radix {
 
   public:
     template <Size N> Node append(const char (&str)[N]) {
-      return append(str, 0, N - 1);
+      return append(Byte(const_cast<char *>(str)), 0, (N - 1) * Byte::length);
     }
   };
 } // namespace radix

@@ -47,6 +47,7 @@ namespace recurloop {
     context.exec.start = std::chrono::high_resolution_clock::now();
     context.exec.args = {1, argc, argv, true};
     context.exec.pendingException = nullptr;
+    context.exec.valueScopes.clear();
     context.exec.pendingNativeEntry = 0;
     context.exec.pendingNativeSymbol.clear();
     context.exec.definitionSymbolOverride.clear();
@@ -548,6 +549,7 @@ namespace recurloop {
   void Recurloop::resetToKernel() {
     EngineImage::releaseNativeState(context);
     context.lexicon.clear();
+    context.exec.valueScopes.clear();
     context.workspace.key.clear();
     context.workspace.code.clear();
     context.exec.pendingException = nullptr;

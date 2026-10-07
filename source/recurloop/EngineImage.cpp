@@ -1794,6 +1794,7 @@ namespace recurloop {
       };
 
       context.lexicon.clear();
+      context.exec.valueScopes.clear();
 
       std::unordered_map<std::uint64_t, lexicon::Phrase> phrases;
       lexicon::Phrase undefined(&context.lexicon);

@@ -119,7 +119,9 @@ To make a task your default build action, add `.vscode/tasks.json`:
 }
 ```
 
-Now **Ctrl+Shift+B** runs that target. To save a debug configuration, add
+Now **Ctrl+Shift+B** saves files, waits for the project to reload, and runs that
+target. Stopping a task or a target run sends cancellation to its runtime request.
+To save a debug configuration, add
 `.vscode/launch.json`:
 
 ```json

@@ -5,6 +5,7 @@
 #include <string_view>
 #include <variant>
 #include <vector>
+#include <utilities/Size.hpp>
 
 namespace lexicon {
   class Lexicon;
@@ -46,7 +47,10 @@ namespace context {
 
   class Values {
   public:
-    explicit Values(lexicon::Lexicon &lexicon);
+    struct ScopeFrame {
+      Size checkpoint = 0, scope = 0, marker = 0;
+    };
+    explicit Values(lexicon::Lexicon &lexicon, std::vector<ScopeFrame> *frames = nullptr);
     static void setup(lexicon::Phrase root);
 
     void pushScope();
@@ -60,5 +64,6 @@ namespace context {
 
   private:
     lexicon::Lexicon *lexicon;
+    std::vector<ScopeFrame> *frames;
   };
 } // namespace context

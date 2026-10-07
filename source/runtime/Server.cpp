@@ -308,7 +308,16 @@ namespace recurloop {
     const int listener = listener_.exchange(-1);
     if (listener >= 0) close(listener);
     reapClients(true);
-    if (!options_.unixPath.empty()) unlink(options_.unixPath.c_str());
+    removeUnixSocket();
+  }
+
+  void Server::removeUnixSocket() noexcept {
+    struct stat status{};
+    if (unixInode_ != 0 && lstat(options_.unixPath.c_str(), &status) == 0 && S_ISSOCK(status.st_mode) &&
+        static_cast<std::uintmax_t>(status.st_dev) == unixDevice_ &&
+        static_cast<std::uintmax_t>(status.st_ino) == unixInode_)
+      unlink(options_.unixPath.c_str());
+    unixInode_ = 0;
   }
 
   void Server::stop() noexcept {
@@ -605,7 +614,6 @@ namespace recurloop {
     const int listener = socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0);
     if (listener < 0) THROW(, "cannot create unix socket: " << std::strerror(errno))
 
-    unlink(options_.unixPath.c_str());
     sockaddr_un address{};
     address.sun_family = AF_UNIX;
     std::memcpy(address.sun_path, options_.unixPath.c_str(), options_.unixPath.size() + 1);
@@ -614,16 +622,23 @@ namespace recurloop {
       close(listener);
       THROW(, "cannot bind unix socket '" << options_.unixPath << "': " << std::strerror(error))
     }
+    struct stat status{};
+    if (lstat(options_.unixPath.c_str(), &status) != 0 || !S_ISSOCK(status.st_mode)) {
+      close(listener);
+      THROW(, "cannot identify unix socket '" << options_.unixPath << "'")
+    }
+    unixDevice_ = static_cast<std::uintmax_t>(status.st_dev);
+    unixInode_ = static_cast<std::uintmax_t>(status.st_ino);
     if (chmod(options_.unixPath.c_str(), S_IRUSR | S_IWUSR) != 0) {
       const int error = errno;
       close(listener);
-      unlink(options_.unixPath.c_str());
+      removeUnixSocket();
       THROW(, "cannot secure unix socket '" << options_.unixPath << "': " << std::strerror(error))
     }
     if (listen(listener, 64) != 0) {
       const int error = errno;
       close(listener);
-      unlink(options_.unixPath.c_str());
+      removeUnixSocket();
       THROW(, "cannot listen on unix socket: " << std::strerror(error))
     }
     listener_ = listener;

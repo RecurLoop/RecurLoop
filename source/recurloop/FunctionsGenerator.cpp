@@ -3,6 +3,7 @@
 #include <compiler/DebugInfo.hpp>
 #include <recurloop/BitString.hpp>
 #include <recurloop/PhraseAction.hpp>
+#include <recurloop/NativeCall.hpp>
 
 #include <bit>
 #include <charconv>
@@ -105,8 +106,14 @@ namespace recurloop {
             emit("mov", "rax, qword [rbp + " + std::to_string(16 + (index - std::size(registers)) * 8) + "]");
             emit("mov", slot(local.offset) + ", rax");
           }
+          if (parameter.kind == compiler::TypeKind::Integer && parameter.size < 8) {
+            emit("mov", "rax, " + slot(local.offset));
+            normalizeBitwise(parameter);
+            emit("mov", slot(local.offset) + ", rax");
+          }
         }
 
+        pendingGuard();
         statements(body);
         emit("xor", "eax, eax");
         const std::size_t epilogue = code.size();
@@ -131,6 +138,7 @@ namespace recurloop {
         module.append(compiler::SectionKind::Text, code, 16);
         if (!rodata.empty()) module.append(compiler::SectionKind::ReadOnlyData, rodata, rodataAlignment);
         Assembler::defineEntry(context, module, 0);
+        NativeExecution::addDefaults(module);
         for (const StringLiteral &literal : strings)
           module.define(literal.symbol, compiler::SectionKind::ReadOnlyData, literal.offset,
                         compiler::SymbolBinding::Local);
@@ -164,6 +172,7 @@ namespace recurloop {
           return type;
         }
         if (!instruction.empty()) emit(instruction, "rax");
+        if (descriptor.kind == compiler::TypeKind::Integer) normalizeBitwise(descriptor);
         return type;
       }
 
@@ -228,6 +237,7 @@ namespace recurloop {
           return left;
         }
         emit(instruction, "rax, rcx");
+        if (descriptor.kind == compiler::TypeKind::Integer) normalizeBitwise(descriptor);
         return left;
       }
 
@@ -243,17 +253,86 @@ namespace recurloop {
           emitBytes({0x66, 0x48, 0x0f, 0x7e, 0xc0}); // movq rax, xmm0
           return left;
         }
-        emit("cqo", "");
-        emit("idiv", "rcx");
+        emit("test", "rcx, rcx");
+        const auto nonzero = jump({0x0f, 0x85});
+        arithmeticError(1);
+        patchRelative(nonzero, code.size());
+        if (descriptor.isSigned) {
+          emit("mov", "rdx, " + std::to_string(std::numeric_limits<std::int64_t>::min() >> ((8 - descriptor.size) * 8)));
+          emit("cmp", "rax, rdx");
+          const auto ordinary = jump({0x0f, 0x85});
+          emit("cmp", "rcx, -1");
+          const auto divisor = jump({0x0f, 0x85});
+          arithmeticError(2);
+          patchRelative(ordinary, code.size());
+          patchRelative(divisor, code.size());
+          emit("cqo", "");
+          emit("idiv", "rcx");
+        } else {
+          emit("xor", "rdx, rdx");
+          emit("div", "rcx");
+        }
         if (remainder) emit("mov", "rax, rdx");
+        normalizeBitwise(descriptor);
         return left;
       }
 
+      void runtimeCall(const char *symbol) {
+        const bool padding = (temporaryDepth & 1u) != 0;
+        if (padding) emit("sub", "rsp, 8");
+        emitBytes({0xe8});
+        const auto patch = code.size();
+        little(0, 4);
+        relocations.push_back({compiler::SectionKind::Text, patch, compiler::RelocationKind::PLTRelative32, symbol, -4, true});
+        if (padding) emit("add", "rsp, 8");
+      }
+
+      void arithmeticError(unsigned code) {
+        emit("mov", "rdi, " + std::to_string(code));
+        runtimeCall(NativeErrorSymbol);
+        emit("xor", "eax, eax");
+        returns.push_back(jump({0xe9}));
+      }
+
+      void pendingGuard() {
+        const auto result = allocate();
+        emit("mov", slot(result) + ", rax");
+        runtimeCall(NativePendingSymbol);
+        emit("test", "eax, eax");
+        const auto clear = jump({0x0f, 0x84});
+        emit("xor", "eax, eax");
+        returns.push_back(jump({0xe9}));
+        patchRelative(clear, code.size());
+        emit("mov", "rax, " + slot(result));
+      }
+
       compiler::TypeId emitComparison(const Expression &value, std::uint8_t condition) {
-        binaryOperands(value);
-        emit("cmp", "rax, rcx");
+        const compiler::TypeId left = binaryOperands(value);
+        const compiler::TypeDescriptor descriptor = context.language().types.get(left);
+        const bool floating = descriptor.kind == compiler::TypeKind::FloatingPoint;
+        if (floating || !descriptor.isSigned) {
+          switch (condition) {
+          case 0x9c: condition = 0x92; break; // less: setb
+          case 0x9e: condition = 0x96; break; // less/equal: setbe
+          case 0x9f: condition = 0x97; break; // greater: seta
+          case 0x9d: condition = 0x93; break; // greater/equal: setae
+          }
+        }
+        if (floating) {
+          if (descriptor.size != sizeof(double)) fail({}, value.offset, "fn currently supports f64 comparisons");
+          emitBytes({0x66, 0x48, 0x0f, 0x6e, 0xc0}); // movq xmm0, rax
+          emitBytes({0x66, 0x48, 0x0f, 0x6e, 0xc9}); // movq xmm1, rcx
+          emitBytes({0x66, 0x0f, 0x2e, 0xc1});       // ucomisd xmm0, xmm1
+        } else {
+          emit("cmp", "rax, rcx");
+        }
         emit("mov", "rax, 0");
         emitBytes({0x0f, condition, 0xc0});
+        if (floating) {
+          // Match LLVM's ordered predicates: NaN makes every comparison false.
+          emitBytes({0x0f, 0x9b, 0xc2}); // setnp dl
+          emitBytes({0x20, 0xd0});       // and al, dl
+        }
         return integerType;
       }
 
@@ -296,6 +375,7 @@ namespace recurloop {
                                   target.kind == compiler::TypeKind::Function;
         if (!sourceScalar || !targetScalar || source.size > 8 || target.size > 8)
           fail({}, value.offset, "fn cast currently requires integer or pointer scalar types");
+        if (target.kind == compiler::TypeKind::Integer) normalizeBitwise(target);
         return value.declaredType;
       }
 
@@ -692,6 +772,7 @@ namespace recurloop {
 
       void generateLoop(const Statement &statement) {
         const std::size_t begin = code.size();
+        pendingGuard();
         expression(*statement.expression);
         emit("test", "rax, rax");
         const std::size_t end = jump({0x0f, 0x84});
@@ -1183,6 +1264,7 @@ namespace recurloop {
           emit("add", "rsp, 8");
           --temporaryDepth;
         }
+        pendingGuard();
         return callable ? callable->resultType : integerType;
       }
 

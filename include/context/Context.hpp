@@ -28,7 +28,7 @@ namespace context {
     }
 
     Values values() {
-      return Values(lexicon);
+      return Values(lexicon, &exec.valueScopes);
     }
 
     compiler::LanguageState language() {

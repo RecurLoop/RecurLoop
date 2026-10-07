@@ -218,7 +218,8 @@ namespace recurloop {
         readOnlyDataSize_(context.workspace.readOnlyData.size()), dataSize_(context.workspace.data.size()),
         bssBytes_(context.workspace.bssBytes), customSectionsSize_(context.workspace.customSections.size()),
         lookup_(context.lookup), staging_(context.staging), reference_(context.reference), source_(context.source),
-        io_(context.io), argumentIndex_(context.exec.args.index), argumentOptions_(context.exec.args.options) {
+        io_(context.io), valueScopes_(context.exec.valueScopes), argumentIndex_(context.exec.args.index),
+        argumentOptions_(context.exec.args.options) {
     rollbackBuffer.resize(lexiconUsed_);
     if (lexiconUsed_ != 0)
       std::memcpy(rollbackBuffer.data(), context.lexicon.getMemory().toPtr(), lexiconUsed_);
@@ -260,6 +261,7 @@ namespace recurloop {
       context_->reference = reference_;
       context_->source = source_;
       context_->io = io_;
+      context_->exec.valueScopes = valueScopes_;
       context_->exec.args.index = argumentIndex_;
       context_->exec.args.options = argumentOptions_;
       context_->exec.pendingException = nullptr;

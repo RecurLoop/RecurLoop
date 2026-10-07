@@ -60,6 +60,26 @@ namespace {
   }
 } // namespace
 
+TEST(RecurloopServer, DoesNotRemoveAUnixPathItDidNotBind) {
+  const auto path = std::filesystem::temp_directory_path() / ("recurloop-server-owned-" + std::to_string(getpid()));
+  {
+    std::ofstream file(path);
+    file << "preserve";
+  }
+  {
+    recurloop::ServerOptions options;
+    options.stdio = false;
+    options.unixPath = path.string();
+    recurloop::Server server(project(), options);
+    EXPECT_ANY_THROW(server.run());
+  }
+  std::ifstream file(path);
+  std::string contents;
+  file >> contents;
+  EXPECT_EQ(contents, "preserve");
+  std::filesystem::remove(path);
+}
+
 TEST(RecurloopServer, UnixClientsHaveIndependentSessionsAndCanPublish) {
   const std::string path = "/tmp/recurloop-server-unit-" + std::to_string(getpid()) + ".sock";
   std::filesystem::remove(path);

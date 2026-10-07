@@ -3,6 +3,7 @@
 #include <compiler/ElfReader.hpp>
 #include <recurloop/BitString.hpp>
 #include <recurloop/PhraseAction.hpp>
+#include <recurloop/NativeCall.hpp>
 
 // utilities/Console.hpp exposes this historical formatting macro globally;
 // LLVM uses RESET as a scoped enum member in raw_ostream.
@@ -121,7 +122,9 @@ namespace recurloop::function_internal {
         if (!machine) fail({}, 0, "LLVM could not create a target machine for '" + triple + "'");
         module.setDataLayout(machine->createDataLayout());
 
+        runtimeSupport();
         createFunction();
+        pendingGuard();
         statements(body);
         if (!builder.GetInsertBlock()->getTerminator()) defaultReturn();
         if (!executableEntry.empty()) createMainWrapper();
@@ -232,6 +235,61 @@ namespace recurloop::function_internal {
         } else {
           builder.CreateRet(llvm::Constant::getNullValue(type(signature.function.resultType)));
         }
+      }
+
+      void runtimeSupport() {
+        llvm::Type *i32 = builder.getInt32Ty();
+        auto *pending = llvm::Function::Create(llvm::FunctionType::get(i32, false),
+            llvm::GlobalValue::WeakAnyLinkage, NativePendingSymbol, module);
+        pending->addFnAttr(llvm::Attribute::NoInline);
+        llvm::IRBuilder<> output(llvm::BasicBlock::Create(llvmContext, "entry", pending));
+        output.CreateRet(output.getInt32(0));
+        auto *error = llvm::Function::Create(llvm::FunctionType::get(builder.getVoidTy(), {i32}, false),
+            llvm::GlobalValue::WeakAnyLinkage, NativeErrorSymbol, module);
+        error->addFnAttr(llvm::Attribute::NoInline);
+        output.SetInsertPoint(llvm::BasicBlock::Create(llvmContext, "entry", error));
+        constexpr std::string_view message = "recurloop: native integer arithmetic error\n";
+        auto *text = output.CreateGlobalString(llvm::StringRef(message.data(), message.size()), ".native.error", 0, &module);
+        auto write = module.getOrInsertFunction("write", llvm::FunctionType::get(builder.getInt64Ty(),
+            {i32, builder.getPtrTy(), builder.getInt64Ty()}, false));
+        output.CreateCall(write, {output.getInt32(2), text, output.getInt64(message.size())});
+        auto exit = module.getOrInsertFunction("_exit", llvm::FunctionType::get(builder.getVoidTy(), {i32}, false));
+        output.CreateCall(exit, {output.getInt32(1)});
+        output.CreateUnreachable();
+      }
+
+      void pendingGuard() {
+        auto pending = module.getOrInsertFunction(NativePendingSymbol, llvm::FunctionType::get(builder.getInt32Ty(), false));
+        auto *owner = builder.GetInsertBlock()->getParent();
+        auto *failed = llvm::BasicBlock::Create(llvmContext, "native.failed", owner);
+        auto *ready = llvm::BasicBlock::Create(llvmContext, "native.ready", owner);
+        builder.CreateCondBr(builder.CreateICmpNE(builder.CreateCall(pending), builder.getInt32(0)), failed, ready);
+        builder.SetInsertPoint(failed);
+        defaultReturn();
+        builder.SetInsertPoint(ready);
+      }
+
+      void checkedDivision(Emitted left, Emitted right) {
+        const auto descriptor = context.language().types.get(left.type);
+        auto *zero = llvm::ConstantInt::get(type(left.type), 0);
+        llvm::Value *byZero = builder.CreateICmpEQ(right.value, zero);
+        llvm::Value *overflow = builder.getFalse();
+        if (descriptor.isSigned) {
+          const unsigned bits = descriptor.size * 8;
+          overflow = builder.CreateAnd(
+              builder.CreateICmpEQ(left.value, llvm::ConstantInt::get(type(left.type), llvm::APInt::getSignedMinValue(bits))),
+              builder.CreateICmpEQ(right.value, llvm::ConstantInt::getAllOnesValue(type(left.type))));
+        }
+        auto *owner = builder.GetInsertBlock()->getParent();
+        auto *failed = llvm::BasicBlock::Create(llvmContext, "division.failed", owner);
+        auto *ready = llvm::BasicBlock::Create(llvmContext, "division.ready", owner);
+        builder.CreateCondBr(builder.CreateOr(byZero, overflow), failed, ready);
+        builder.SetInsertPoint(failed);
+        auto error = module.getOrInsertFunction(NativeErrorSymbol,
+            llvm::FunctionType::get(builder.getVoidTy(), {builder.getInt32Ty()}, false));
+        builder.CreateCall(error, {builder.CreateSelect(byZero, builder.getInt32(1), builder.getInt32(2))});
+        defaultReturn();
+        builder.SetInsertPoint(ready);
       }
 
       void createMainWrapper() {
@@ -481,6 +539,7 @@ namespace recurloop::function_internal {
         llvm::BasicBlock *end = llvm::BasicBlock::Create(llvmContext, "while.end", owner);
         builder.CreateBr(condition);
         builder.SetInsertPoint(condition);
+        pendingGuard();
         builder.CreateCondBr(truth(expression(*statement.expression)), body, end);
         loops.push_back({condition, end, defers.size()});
         builder.SetInsertPoint(body);
@@ -678,6 +737,7 @@ namespace recurloop::function_internal {
       Emitted binaryValue(std::string_view operation, Emitted left, Emitted right, std::size_t offset) {
         const compiler::TypeDescriptor descriptor = context.language().types.get(left.type);
         const bool floating = descriptor.kind == compiler::TypeKind::FloatingPoint;
+        if (!floating && (operation == "/" || operation == "%")) checkedDivision(left, right);
         llvm::Value *result = nullptr;
         if (operation == "+")
           result = floating ? builder.CreateFAdd(left.value, right.value) : builder.CreateAdd(left.value, right.value);
@@ -1088,6 +1148,7 @@ namespace recurloop::function_internal {
           arguments.push_back(argument.value);
         }
         llvm::CallInst *result = builder.CreateCall(functionType(callable), target, arguments);
+        pendingGuard();
         return {result, callable.resultType};
       }
 

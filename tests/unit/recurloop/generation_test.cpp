@@ -211,12 +211,39 @@ TEST(RecurloopGeneration, FailedRequestRollsBackInPlaceValueWrites) {
   auto session = state->openSession();
 
   ASSERT_EQ(session->evaluate("var value = 7").status, 0);
-  auto failed = session->evaluate("value = 99\nthis phrase does not exist");
+  auto failed = session->evaluate("value = 99\nprint value\nthis phrase does not exist");
   EXPECT_NE(failed.status, 0);
+  EXPECT_EQ(failed.output, "99\n");
 
   auto after = session->evaluate("print value");
   ASSERT_EQ(after.status, 0);
   EXPECT_EQ(after.output, "7\n");
+}
+
+TEST(RecurloopGeneration, NativeArithmeticFaultsDoNotTerminateTheHostOrRunLaterStatements) {
+  auto state = project();
+  auto session = state->openSession();
+  ASSERT_EQ(session->evaluate(R"(
+link shared "c"
+extern puts(text:u8*) -> i32 abi sysv-amd64
+fn checked_div(a:i64, b:i64) -> i64 { return a / b }
+fn checked_rem(a:i64, b:i64) -> i64 { return a % b }
+fn fault_parent(a:i64, b:i64) -> i64 {
+  var result = checked_div(a, b)
+  puts("must not execute")
+  return result
+}
+)").status, 0);
+  for (const auto *source : {"print checked_div(7, 0)", "print checked_rem(7, 0)", "print fault_parent(7, 0)"}) {
+    const auto failure = session->evaluate(source);
+    EXPECT_NE(failure.status, 0);
+    EXPECT_NE(failure.error.find("division by zero"), std::string::npos) << failure.error;
+    EXPECT_TRUE(failure.output.empty()) << failure.output;
+  }
+  const auto overflow = session->evaluate("print checked_div(-9223372036854775807 - 1, -1)");
+  EXPECT_NE(overflow.status, 0);
+  EXPECT_NE(overflow.error.find("division overflow"), std::string::npos) << overflow.error;
+  EXPECT_EQ(session->evaluate("print checked_div(8, 2)").output, "4\n");
 }
 
 TEST(RecurloopGeneration, InspectionPreservesPermanentDefinitions) {
@@ -479,6 +506,36 @@ TEST(RecurloopGeneration, ProjectFileCacheWritesAndRestoresLinkedRliModules) {
   EXPECT_EQ(second->evaluate("print cached_value").output, "17\n");
   EXPECT_EQ(second->evaluate("print cached_increment(cached_value)").output, "18\n");
   EXPECT_GE(state->cacheHits(), 1u);
+
+  // A restored timestamp and unchanged size cannot make different source bytes
+  // reuse an older module. Also reject a valid image from a different manifest.
+  std::ifstream originalImage(moduleImage, std::ios::binary);
+  const std::string originalBytes((std::istreambuf_iterator<char>(originalImage)), {});
+  const auto sourceTime = fs::last_write_time(source);
+  {
+    std::ofstream out(source);
+    out << "var cached_value = 29\n"
+           "fn cached_increment(value:i64) -> i64 { return value + 1 }\n";
+  }
+  fs::last_write_time(source, sourceTime);
+  const auto hitsBeforeChange = state->cacheHits();
+  auto changed = state->openSession();
+  ASSERT_EQ(changed->evaluate(":cache").status, 0);
+  ASSERT_EQ(changed->executeFile(source.string()).status, 0);
+  EXPECT_EQ(changed->evaluate("print cached_value").output, "29\n");
+  EXPECT_EQ(state->cacheHits(), hitsBeforeChange);
+
+  const auto imageTime = fs::last_write_time(moduleImage);
+  {
+    std::ofstream out(moduleImage, std::ios::binary | std::ios::trunc);
+    out.write(originalBytes.data(), originalBytes.size());
+  }
+  fs::last_write_time(moduleImage, imageTime);
+  auto mismatched = state->openSession();
+  ASSERT_EQ(mismatched->evaluate(":cache").status, 0);
+  ASSERT_EQ(mismatched->executeFile(source.string()).status, 0);
+  EXPECT_EQ(mismatched->evaluate("print cached_value").output, "29\n");
+  EXPECT_EQ(state->cacheHits(), hitsBeforeChange);
 
   fs::remove_all(root, error);
 }

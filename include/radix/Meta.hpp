@@ -4,6 +4,8 @@
 #include <utilities/Declaration.hpp>
 
 namespace radix {
+  // Arena records may start at any byte, including inside phrase payloads.
+  #pragma pack(push, 1)
   class Meta {
   protected:
     Size lastNode = 0;
@@ -21,4 +23,5 @@ namespace radix {
     DECLARATION Size getEnd();
     DECLARATION void setEnd(Size end);
   };
+  #pragma pack(pop)
 } // namespace radix

@@ -75,7 +75,7 @@ namespace radix {
       }
 
       Size matchedBits =
-          Bit::compare(Bit(key, keyProgress), Bit(key, keyBits), child->getKeyFore(radix), child->getKeyRear(radix));
+          Bit::compare(Bit(key, keyProgress), Bit(key, keyOffset + keyBits), child->getKeyFore(radix), child->getKeyRear(radix));
 
       // If key is not fully correct, split child
       if (matchedBits < child->getKeyRear(radix) - child->getKeyFore(radix)) {
@@ -174,7 +174,7 @@ namespace radix {
       }
 
       Bit keyFore = Bit(key, keyProgress);
-      Bit keyRear = Bit(key, keyProgress + keyBits + keyOffset);
+      Bit keyRear = Bit(key, keyOffset + keyBits);
       Bit childFore = child->getKeyFore(radix);
       Bit childRear = child->getKeyRear(radix);
 
@@ -254,6 +254,8 @@ namespace radix {
       if (keyBits <= keyProgress - keyOffset) {
         Match candidate(radix, current->address(radix), keyProgress - keyOffset, false);
         if (filter == nullptr || filter(this, &candidate)) return candidate;
+        result.more = (bool)current->getChildGreater(radix) || (bool)current->getChildSmaller(radix);
+        break;
       }
 
       node::Data *child = nullptr;
@@ -269,7 +271,7 @@ namespace radix {
       }
 
       Bit keyFore = Bit(key, keyProgress);
-      Bit keyRear = Bit(key, keyProgress + keyBits + keyOffset);
+      Bit keyRear = Bit(key, keyOffset + keyBits);
       Bit childFore = child->getKeyFore(radix);
       Bit childRear = child->getKeyRear(radix);
 

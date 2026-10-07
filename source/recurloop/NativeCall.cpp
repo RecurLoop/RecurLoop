@@ -1,4 +1,12 @@
 #include <recurloop/NativeCall.hpp>
+#include <recurloop/ProcessControl.hpp>
+#include <context/Context.hpp>
+#include <compiler/DynamicLinker.hpp>
+#include <compiler/Module.hpp>
+#include <utilities/Exception.hpp>
+#include <cstring>
+#include <string_view>
+#include <vector>
 
 #if defined(__x86_64__)
 extern "C" std::uintptr_t recurloop_call_scalar_native_sysv(std::uintptr_t entry, const std::uintptr_t *args,
@@ -64,6 +72,79 @@ recurloop_call_scalar_native_sysv:
 #endif
 
 namespace recurloop {
+  namespace {
+    thread_local context::Context *activeContext = nullptr;
+
+    void nativeError(std::uint32_t code) noexcept {
+      if (!activeContext) {
+        constexpr std::string_view message = "recurloop: native integer arithmetic error\n";
+        (void)::write(STDERR_FILENO, message.data(), message.size());
+        _exit(1);
+      }
+      if (activeContext->exec.pendingException) return;
+      try {
+        if (code == 1) THROW(, "integer division by zero")
+        THROW(, "integer division overflow")
+      } catch (...) {
+        activeContext->exec.pendingException = std::current_exception();
+      }
+    }
+
+    std::uint32_t nativePending() noexcept {
+      if (!activeContext) return 0;
+      if (!activeContext->exec.pendingException && ProcessControl::interrupted()) {
+        try { throw SourceException(__FILE__, __LINE__, __PRETTY_FUNCTION__,
+            {activeContext->source.path, activeContext->source.line, activeContext->source.position}, "request cancelled", 130); }
+        catch (...) { activeContext->exec.pendingException = std::current_exception(); }
+      }
+      return activeContext->exec.pendingException ? 1 : 0;
+    }
+  }
+
+  NativeExecution::NativeExecution(context::Context &context) noexcept : previous(activeContext) { activeContext = &context; }
+  NativeExecution::~NativeExecution() { activeContext = previous; }
+
+  void NativeExecution::install() {
+    auto &linker = compiler::DynamicLinker::instance();
+    linker.registerSymbol(NativeErrorSymbol, reinterpret_cast<std::uintptr_t>(nativeError));
+    linker.registerSymbol(NativePendingSymbol, reinterpret_cast<std::uintptr_t>(nativePending));
+  }
+
+  void NativeExecution::addDefaults(compiler::Module &module) {
+    // Standalone ELF output has the same checks without depending on the host.
+    // Weak definitions are replaced by the request-local implementations in JIT.
+    if (module.findSymbol(NativePendingSymbol) == nullptr) {
+      const std::uint8_t code[] = {0xf3, 0x0f, 0x1e, 0xfa, 0x31, 0xc0, 0xc3};
+      const auto offset = module.append(compiler::SectionKind::Text, code, 16);
+      module.define(NativePendingSymbol, compiler::SectionKind::Text, offset, compiler::SymbolBinding::Weak);
+    }
+    if (module.findSymbol(NativeErrorSymbol) != nullptr) return;
+    constexpr std::string_view message = "recurloop: native integer arithmetic error\n";
+    const std::string messageSymbol = module.symbols().front().name + ".native.error.message";
+    const auto text = module.append(compiler::SectionKind::ReadOnlyData,
+        std::span(reinterpret_cast<const std::uint8_t *>(message.data()), message.size()), 1);
+    module.define(messageSymbol, compiler::SectionKind::ReadOnlyData, text, compiler::SymbolBinding::Local);
+    std::vector<std::uint8_t> code = {
+      0xf3, 0x0f, 0x1e, 0xfa, 0x55, 0x48, 0x89, 0xe5, // endbr64; push rbp; mov rbp,rsp
+      0xbf, 2, 0, 0, 0,                               // mov edi,2
+      0x48, 0x8d, 0x35, 0, 0, 0, 0,                   // lea rsi,[rip+message]
+      0xba, 0, 0, 0, 0,                              // mov edx,length
+      0xe8, 0, 0, 0, 0,                              // call write
+      0xbf, 1, 0, 0, 0,                              // mov edi,1
+      0xe8, 0, 0, 0, 0,                              // call _exit
+      0x0f, 0x0b                                     // ud2
+    };
+    const std::uint32_t length = message.size();
+    std::memcpy(code.data() + 21, &length, sizeof(length));
+    const auto offset = module.append(compiler::SectionKind::Text, code, 16);
+    module.define(NativeErrorSymbol, compiler::SectionKind::Text, offset, compiler::SymbolBinding::Weak);
+    for (const auto *name : {"write", "_exit"}) if (!module.findSymbol(name)) module.import(name);
+    module.relocate(compiler::SectionKind::Text, offset + 16, compiler::RelocationKind::PCRelative32,
+                    messageSymbol, -4);
+    module.relocate(compiler::SectionKind::Text, offset + 26, compiler::RelocationKind::PLTRelative32, "write", -4);
+    module.relocate(compiler::SectionKind::Text, offset + 36, compiler::RelocationKind::PLTRelative32, "_exit", -4);
+  }
+
   bool scalarNativeSysvAvailable() noexcept {
 #if defined(__x86_64__)
     return true;

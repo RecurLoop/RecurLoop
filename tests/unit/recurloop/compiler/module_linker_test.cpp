@@ -312,6 +312,27 @@ TEST_F(ModuleLinkerTesting, ResolvesLocalPCRelativeCallsAndExecutesNativeCode) {
   EXPECT_GE(image.size(), code.size());
 }
 
+TEST_F(ModuleLinkerTesting, UsesTheResolverForWeakDefinitionsAndKeepsTheirFallback) {
+  compiler::Module module;
+  const std::uint8_t code[] = {
+      0x48, 0x83, 0xec, 0x08, 0xe8, 0, 0, 0, 0,
+      0x48, 0x83, 0xc4, 0x08, 0xc3,
+      0xb8, 7, 0, 0, 0, 0xc3
+  };
+  module.append(compiler::SectionKind::Text, code, 16);
+  module.define("entry", compiler::SectionKind::Text, 0);
+  module.define("fallback", compiler::SectionKind::Text, 14, compiler::SymbolBinding::Weak);
+  module.relocate(compiler::SectionKind::Text, 5, compiler::RelocationKind::PLTRelative32, "fallback", -4);
+  const auto original = compiler::JitLinker::link(module, memory);
+  EXPECT_EQ(reinterpret_cast<std::uint64_t (*)()>(original.address("entry"))(), 7u);
+  const auto replacement = +[]() -> std::uint64_t { return 55; };
+  const auto overridden = compiler::JitLinker::link(module, memory, [&](std::string_view name) -> std::optional<std::uintptr_t> {
+    if (name == "fallback") return reinterpret_cast<std::uintptr_t>(replacement);
+    return std::nullopt;
+  });
+  EXPECT_EQ(reinterpret_cast<std::uint64_t (*)()>(overridden.address("entry"))(), 55u);
+}
+
 TEST_F(ModuleLinkerTesting, AlignsASecondLinkedModuleWithoutMovingTheFirstOne) {
   compiler::Module first;
   const std::array<std::uint8_t, 1> firstCode = {0xc3};
