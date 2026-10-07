@@ -13,6 +13,15 @@ record Shell:Completion:Input {
     phrases:i64
     implicit:i64
     root:u64
+    words:Shell:Command*
+    programmable:i64
+    command_start:u64
+}
+
+let Shell:Completion:new_command = fn (input:Shell:Completion:Input*) -> void {
+    Shell:Command:destroy(input.words)
+    input.words = Shell:Command:new()
+    input.programmable = 1
 }
 
 let Shell:Completion:reset = fn (input:Shell:Completion:Input*, next:u64) -> void {
@@ -54,6 +63,9 @@ let Shell:Completion:scan = fn (state:Context*) -> Shell:Completion:Input* {
     input.commands = 0
     input.phrases = 0
     input.implicit = 0
+    input.words = cast(Shell:Command*, 0)
+    input.command_start = 0
+    Shell:Completion:new_command(input)
     Shell:Completion:reset(input, 0)
     let count = context:completion:dictionary:count(state)
     input.root = context:completion:dictionary(state, count - 1)
@@ -82,7 +94,14 @@ let Shell:Completion:scan = fn (state:Context*) -> Shell:Completion:Input* {
         var handled = 0
         if comment == 1 {
             handled = 1
-            if byte == 10 { comment = 0; mode = 0; Shell:Completion:reset(input, index + 1) }
+            if byte == 10 {
+                comment = 0
+                mode = 0
+                command = 1
+                Shell:Completion:new_command(input)
+                input.command_start = index + 1
+                Shell:Completion:reset(input, index + 1)
+            }
         } else if comment == 2 {
             handled = 1
             if byte == 42 && index + 1 < cursor && source[index + 1] == 47 {
@@ -116,6 +135,7 @@ let Shell:Completion:scan = fn (state:Context*) -> Shell:Completion:Input* {
                     command = 1
                     statement_token = 0
                     Shell:Completion:reset(input, index + 1)
+                    input.command_start = index + 1
                     handled = 1
                     // `shell { ... }` selects a block, rather than starting a
                     // command interpolation. Each statement still uses lookup.
@@ -126,6 +146,7 @@ let Shell:Completion:scan = fn (state:Context*) -> Shell:Completion:Input* {
                         if next < cursor && source[next] == 123 {
                             index = next
                             mode = 0
+                            input.command_start = index + 1
                             Shell:Completion:reset(input, index + 1)
                         }
                     }
@@ -154,6 +175,7 @@ let Shell:Completion:scan = fn (state:Context*) -> Shell:Completion:Input* {
                 redirect = 0
                 index += length - 1
                 Shell:Completion:reset(input, index + 1)
+                input.command_start = index + 1
                 handled = 1
             }
             expression_start = 0
@@ -162,6 +184,7 @@ let Shell:Completion:scan = fn (state:Context*) -> Shell:Completion:Input* {
             if byte == 34 || byte == 39 {
                 input.quote = byte
             } else if mode == 2 && byte == 123 {
+                input.programmable = 0
                 shell_quote = input.quote
                 mode = 1
                 interpolation = 1
@@ -181,6 +204,8 @@ let Shell:Completion:scan = fn (state:Context*) -> Shell:Completion:Input* {
                 command = 1
                 redirect = 0
                 statement_token = 0
+                Shell:Completion:new_command(input)
+                input.command_start = index + 1
                 Shell:Completion:reset(input, index + 1)
             } else if mode == 2 && (byte == 124 || byte == 59 || byte == 62 || byte == 38) {
                 var size:u64 = 1
@@ -195,8 +220,13 @@ let Shell:Completion:scan = fn (state:Context*) -> Shell:Completion:Input* {
                     free(single)
                 }
                 if selected_operator {
-                    if byte == 62 { redirect = 1 }
-                    else { command = 1; redirect = 0 }
+                    if byte == 62 { redirect = 1; input.programmable = 0 }
+                    else {
+                        command = 1
+                        redirect = 0
+                        Shell:Completion:new_command(input)
+                        input.command_start = index + size
+                    }
                     index += size - 1
                     statement_token = 0
                     interpolated_word = 0
@@ -207,6 +237,7 @@ let Shell:Completion:scan = fn (state:Context*) -> Shell:Completion:Input* {
             } else if Completion:space(byte) {
                 if input.token.length || input.start < index || interpolated_word {
                     if mode == 2 {
+                        if input.words && !input.words.add(input.token.data) { input.programmable = 0 }
                         if redirect { redirect = 0 }
                         else { command = 0 }
                     }
@@ -226,7 +257,7 @@ let Shell:Completion:scan = fn (state:Context*) -> Shell:Completion:Input* {
     }
     input.files = mode == 2
     input.commands = input.files && command && !redirect
-    input.phrases = mode != 2 || statement_token
+    input.phrases = 1
     input.implicit = mode == 0 || statement_token
     if implicit && input.implicit { input.commands = 1 }
     if input.quote && mode != 2 { input.commands = 0; input.phrases = 0 }
@@ -257,31 +288,112 @@ let Shell:Completion:escape = fn (byte:u8, quote:u8) -> i64 {
            byte == 93 || byte == 36 || byte == 96 || byte == 42 || byte == 63 || byte == 33
 }
 
+let Shell:Completion:add_candidate = fn (state:Context*, input:Shell:Completion:Input*, candidate:u8*) -> i64 {
+    if !Completion:starts(candidate, input.token.data) { return 0 }
+    if input.commands && input.implicit && !input.quote {
+        let matched = context:phrase:probe:longest(state, input.root, candidate, Completion:length(candidate))
+        if matched && context:phrase:key(state, matched, cast(u8*, 0), 0) { return 0 }
+    }
+    let encoded = Shell:Text:new()
+    if !encoded { return 0 }
+    defer Shell:Text:destroy(encoded)
+    if input.opening { encoded.append_byte(input.opening) }
+    var index = 0
+    while candidate[index] {
+        let byte = candidate[index]
+        if byte < 32 || byte == 127 { return 0 }
+        if Shell:Completion:escape(byte, input.quote) { encoded.append_byte(92) }
+        if !encoded.append_byte(byte) { return 0 }
+        index += 1
+    }
+    return cast(i64, context:completion:add(state, encoded.data))
+}
+
 let Shell:Completion:candidate = phrase {
     type = <phrase-types:elaborate>
     action = fn (state:Context*, called:Phrase*) -> void {
         let input = cast(Shell:Completion:Input*, context:completion:data(state))
         if !input { return }
-        let candidate = context:completion:candidate(state)
-        if !Completion:starts(candidate, input.token.data) { return }
-        if input.commands && input.implicit && !input.quote {
-            let matched = context:phrase:probe:longest(state, input.root, candidate, Completion:length(candidate))
-            if matched && context:phrase:key(state, matched, cast(u8*, 0), 0) { return }
-        }
-        let encoded = Shell:Text:new()
-        if !encoded { return }
-        defer Shell:Text:destroy(encoded)
-        if input.opening { encoded.append_byte(input.opening) }
-        var index = 0
-        while candidate[index] {
-            let byte = candidate[index]
-            if byte < 32 || byte == 127 { return }
-            if Shell:Completion:escape(byte, input.quote) { encoded.append_byte(92) }
-            if !encoded.append_byte(byte) { return }
-            index += 1
-        }
-        context:completion:add(state, encoded.data)
+        Shell:Completion:add_candidate(state, input, context:completion:candidate(state))
     }
+}
+
+// Ask installed Bash completion functions about the current command only.
+// Decoded words travel as argv; the edited command is never executed or eval'd.
+let Shell:Completion:bash = fn (state:Context*, input:Shell:Completion:Input*) -> i64 {
+    if !input.words { return 0 }
+    let script = "exec 2>/dev/null
+for file in /usr/share/bash-completion/bash_completion /etc/bash_completion /usr/local/share/bash-completion/bash_completion; do
+    if [[ -r $file ]]; then source \"$file\" >/dev/null; break; fi
+done
+COMP_LINE=\"$1\"
+shift
+COMP_WORDS=(\"$@\")
+COMP_CWORD=$((${#COMP_WORDS[@]} - 1))
+COMP_TYPE=9
+COMP_KEY=9
+COMP_WORDBREAKS=$' \\t\\n\"\\'><=;|&(:'
+COMP_POINT=${#COMP_LINE}
+if ((COMP_CWORD == 0)); then compgen -c -- \"${COMP_WORDS[0]}\"; exit 0; fi
+command=${COMP_WORDS[0]}
+current=${COMP_WORDS[COMP_CWORD]}
+previous=${COMP_WORDS[COMP_CWORD-1]}
+if ! specification=$(complete -p -- \"$command\"); then
+    if declare -F _comp_load >/dev/null; then _comp_load \"$command\" >/dev/null
+    elif declare -F _completion_loader >/dev/null; then _completion_loader \"$command\" >/dev/null
+    fi
+    specification=$(complete -p -- \"$command\") || exit 0
+fi
+# Only the trusted completion registration is interpreted. Input words remain argv.
+eval \"options=($specification)\"
+options=(\"${options[@]:1:${#options[@]}-2}\")
+for ((index=0; index<${#options[@]}; index++)); do
+    if [[ ${options[index]} == -F ]]; then
+        function=${options[index+1]}
+        COMPREPLY=()
+        \"$function\" \"$command\" \"$current\" \"$previous\" >/dev/null
+        if ((${#COMPREPLY[@]})); then printf '%s\\n' \"${COMPREPLY[@]}\"; fi
+        exit 0
+    fi
+done
+compgen \"${options[@]}\" -- \"$current\"
+exit 0
+"
+    let pipeline = Shell:Pipeline:new()
+    if !pipeline { return 0 }
+    defer Shell:Pipeline:destroy(pipeline)
+    let command = Shell:Command:new()
+    if !command { return 0 }
+    if !pipeline.add(command) { command.destroy(); return 0 }
+    if !command.add("bash") || !command.add("--noprofile") || !command.add("--norc") ||
+       !command.add("-c") || !command.add(script) || !command.add("recurloop-completion") { return 0 }
+    let line = Completion:copy(state, context:completion:source(state), input.command_start, context:completion:cursor(state))
+    if !line { return 0 }
+    defer context:memory:release(state, line)
+    if !command.add(line) { return 0 }
+    var index:i64 = 0
+    while index < input.words.argc {
+        if !command.add(input.words.argv[index]) { return 0 }
+        index += 1
+    }
+    if !command.add(input.token.data) { return 0 }
+    let result = Shell:capture_pipeline(pipeline)
+    if !result { return 0 }
+    defer Shell:Capture:destroy(result)
+    if result.exit_code || !result.output { return 0 }
+    var count:i64 = 0
+    var begin:i64 = 0
+    index = 0
+    while result.output[index] {
+        if result.output[index] == 10 {
+            result.output[index] = 0
+            count += Shell:Completion:add_candidate(state, input, &result.output[begin])
+            begin = index + 1
+        }
+        index += 1
+    }
+    if begin < index { count += Shell:Completion:add_candidate(state, input, &result.output[begin]) }
+    return count
 }
 
 let Shell:Completion:complete = phrase {
@@ -291,6 +403,7 @@ let Shell:Completion:complete = phrase {
         if !input { return }
         defer free(cast(u8*, input))
         defer Shell:Text:destroy(input.token)
+        defer Shell:Command:destroy(input.words)
         let previous = context:completion:data(state)
         context:completion:data(state, cast(u64, input))
         defer context:completion:data(state, previous)
@@ -304,7 +417,11 @@ let Shell:Completion:complete = phrase {
         let consumer = context:phrase:find(state, "Shell")
         let owner = context:phrase:find:exact(state, consumer, "Completion")
         let callback = context:phrase:find:exact(state, owner, "candidate")
-        if input.files && (!input.commands || slash) {
+        var programmable = 0
+        if (input.files || input.commands) && input.programmable && (!input.commands || !slash) {
+            programmable = Shell:Completion:bash(state, input)
+        }
+        if !programmable && input.files && (!input.commands || slash) {
             context:completion:paths(state, input.token.data, input.commands, callback)
         }
         if input.commands && !slash { context:completion:programs(state, input.token.data, callback) }

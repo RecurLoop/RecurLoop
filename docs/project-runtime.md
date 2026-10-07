@@ -169,10 +169,17 @@ Completion follows the active lexicon's longest-prefix priority. With Shell
 loaded, the first word can complete phrases or unshadowed executable names;
 `run`, `capture`, `spawn`, and `shell` select command completion explicitly,
 including aliases and assignment right-hand sides. Pipelines and shell list
-separators start another command. Shell arguments and redirection targets
-complete paths, while language expressions and Shell `{...}` interpolation
-complete phrases, including qualified dictionary names. Loading Shell does not
-enable filesystem suggestions inside every RecurLoop expression.
+separators start another command. Shell combines executable and Bash command
+names with lexicon phrases. For arguments it queries the installed
+`bash-completion` functions using the current command's decoded words, then
+adds lexicon phrases. For example, Tab after `make build && make libr` suggests
+the Makefile target `libraries`, rather than the directory `libraries/`.
+When Bash supplies no matching candidates (or Bash/`bash-completion` is absent),
+arguments fall back to paths. Redirection targets also complete paths.
+Language expressions and Shell `{...}` interpolation complete phrases,
+including qualified dictionary names. Loading Shell does not enable filesystem
+suggestions inside every RecurLoop expression. The completion adapter passes
+input words as arguments to Bash; it does not execute the edited command.
 
 Other libraries can publish a provider in exactly the same way:
 

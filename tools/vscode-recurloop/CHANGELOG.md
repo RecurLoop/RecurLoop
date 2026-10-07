@@ -2,6 +2,7 @@
 
 ## 0.2.7
 
+- Show phrase span documentation in hovers when the selected symbol has no docs.
 - Require RecurLoop 0.2.7 or a newer patch in the 0.2 series.
 
 ## 0.2.6

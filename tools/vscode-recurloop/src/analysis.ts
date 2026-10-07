@@ -314,7 +314,8 @@ export class AnalysisController implements vscode.Disposable {
       markdown.appendCodeblock(fact.signature || fact.name, 'recurloop');
       const metadata = [fact.kind, fact.type ? `type: ${fact.type}` : '', fact.prototype ? `prototype: ${fact.prototype}` : ''].filter(Boolean);
       if (metadata.length) markdown.appendMarkdown(`*${metadata.join(' · ')}*\n\n`);
-      if (fact.docs) markdown.appendMarkdown(fact.docs);
+      const docs = fact.docs || span?.docs;
+      if (docs) markdown.appendMarkdown(docs);
     } else if (span) {
       if (span.kind) markdown.appendMarkdown(`*${span.kind}*\n\n`);
       markdown.appendMarkdown(span.docs);
