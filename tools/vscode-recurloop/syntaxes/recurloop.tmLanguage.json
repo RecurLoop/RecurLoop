@@ -8,6 +8,8 @@
     {"include": "#numbers"},
     {"include": "#declarations"},
     {"include": "#keywords"},
+    {"include": "#builtins"},
+    {"include": "#phraseFields"},
     {"include": "#types"},
     {"include": "#operators"}
   ],
@@ -60,7 +62,15 @@
     },
     "keywords": {
       "name": "keyword.control.recurloop",
-      "match": "\\b(?:let|var|const|fn|record|type|dictionary|phrase|in|return|if|else|while|for|break|continue|module|engine|import|include|emit|executable|extern|symbol|params|result|abi|imported|true|false|null)\\b"
+      "match": "\\b(?:let|var|const|fn|forward|function|method|record|struct|type|pointer|dictionary|phrase|syntax|extend|replace|in|as|action|return|if|else|while|for|break|continue|defer|assert|exit|module|link|engine|import|export|include|merge|lexicon|emit|executable|object|raw|debug|asm|hex|extern|symbol|params|result|abi|imported|packed|true|false|null)\\b"
+    },
+    "builtins": {
+      "name": "support.function.builtin.recurloop",
+      "match": "\\b(?:print|str|len|contains|starts_with|ends_with|upper|lower|trim|substr|value|cast|alloc|sizeof)\\b"
+    },
+    "phraseFields": {
+      "name": "variable.other.property.recurloop",
+      "match": "\\b(?:prototype|successor|payload|permanent|rewrite|serializable|kind|color|docs|parent)\\b(?=\\s*=)"
     },
     "types": {
       "name": "storage.type.builtin.recurloop",

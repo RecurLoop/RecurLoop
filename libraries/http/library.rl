@@ -1719,6 +1719,7 @@ let HttpSyntax:handler_end = fn (reader:LanguageKit:SliceReader*) -> i64 {
 }
 
 let http = phrase {
+    docs = "```recurloop\nhttp \"address\" port {\n    METHOD \"path\" -> handler\n    ...\n}\n```\n\nStarts an HTTP server with a route table. Handlers have signature `(request:Http:Request*, response:Http:Response*) -> void`; a handler may also be an inline `fn`. Add `once` after `http` to serve one request.\n\n**Example**\n\n```recurloop\nhttp \"127.0.0.1\" 8080 {\n    GET \"/\" -> home\n    POST \"/echo\" -> echo\n}\n```"
     type = <phrase-types:elaborate>
     rewrite = true
     action = fn (state:Context*, called:Phrase*) -> void {

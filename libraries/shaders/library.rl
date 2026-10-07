@@ -790,6 +790,8 @@ syntax shader (glsl | spirv <stage:id>) <body:block> action fn (state:Context*, 
     Shaders:Source:emit_spirv(state, stage)
 }
 
+set shader.docs = "```recurloop\nshader glsl { ... }\nshader spirv stage { ... }\n```\n\nExpands shader phrases inside GLSL source. `glsl` produces source text; `spirv` compiles and embeds SPIR-V bytes for the selected stage.\n\nRequires the Shaders library and shaderc. Common stages: `vertex`, `fragment`, `compute`.\n\n**Example**\n\n```recurloop\nlet source = shader glsl {\n    #version 450\n    void main() {}\n}\n```"
+
 set shaderc_compiler_initialize.serializable = false
 set shaderc_compiler_release.serializable = false
 set shaderc_compile_options_initialize.serializable = false

@@ -46,4 +46,4 @@ syntax target <name:raw> [depends "[" <dependencies:raw> "]"] [debug (executable
 }
 set target.kind = "keyword"
 set target.color = "#C586C0"
-set target.docs = "Declares a deferred project target, dependencies and optional native or source debug entry."
+set target.docs = "```recurloop\ntarget name { ... }\ntarget name depends [dependency, ...] { ... }\ntarget name debug executable \"path\" { ... }\ntarget name debug source \"path.rl\" { ... }\n```\n\nDeclares a deferred project target. Dependencies run first; the body runs when the target is selected. The `depends [dependency, ...]` clause is optional and goes before `debug`.\n\n**Example**\n\n```recurloop\ntarget build { include \"build.rl\" }\ntarget debug depends [build] debug executable \"./app\" {}\n```"

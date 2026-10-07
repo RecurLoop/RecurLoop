@@ -1993,6 +1993,7 @@ let Shell:top_level_assignment = fn (
 }
 
 let shell_top_level_var = phrase {
+    docs = "```recurloop\nvar name = expression\n```\n\nDefines a mutable runtime binding.\n\nWith Shell loaded, a right-hand side beginning with `run` or `capture` stores its result. Other definitions retain core behavior.\n\n**Example**\n\n```recurloop\nvar output = capture echo \"hello\"\n```"
     type = <phrase-types:elaborate>
     action = fn (state:Context*, called:Phrase*) -> void {
         Shell:top_level_assignment(state, "var", 1)
@@ -2000,6 +2001,7 @@ let shell_top_level_var = phrase {
 }
 
 let shell_top_level_let = phrase {
+    docs = "```recurloop\nlet name = expression\n```\n\nDefines a phrase or runtime binding according to its definition.\n\nWith Shell loaded, a right-hand side beginning with `run` or `capture` stores its result. Other definitions retain core behavior.\n\n**Example**\n\n```recurloop\nlet output = capture echo \"hello\"\n```"
     type = <phrase-types:elaborate>
     action = fn (state:Context*, called:Phrase*) -> void {
         Shell:top_level_assignment(state, "let", 1)
@@ -2007,6 +2009,7 @@ let shell_top_level_let = phrase {
 }
 
 let shell_top_level_set = phrase {
+    docs = "```recurloop\nset name = expression\n```\n\nUpdates an existing binding or phrase field.\n\nWith Shell loaded, a right-hand side beginning with `run` or `capture` stores its result. Other definitions retain core behavior.\n\n**Example**\n\n```recurloop\nset output = capture echo \"hello\"\n```"
     type = <phrase-types:elaborate>
     action = fn (state:Context*, called:Phrase*) -> void {
         Shell:top_level_assignment(state, "set", 0)
@@ -2038,6 +2041,7 @@ let Shell:rewrite_command = fn (state:Context*, mode:i64) -> void {
 }
 
 let run = phrase {
+    docs = "```recurloop\nrun command arguments ...\n```\n\nRuns an external command or pipeline. Supports `|`, `&&`, `||`, `;`, `>` and `>>`. Interpolate RecurLoop expressions with `{expression}`. At top level, updates `status`; inside `fn`, returns the exit code.\n\n**Example**\n\n```recurloop\nrun echo \"hello\" | tr a-z A-Z\n```"
     type = <phrase-types:elaborate>
     permanent = true
     rewrite = true
@@ -2078,6 +2082,7 @@ let LanguageKit:Fallbacks:Shell = phrase {
 // another root phrase has the same command name or Amber has disabled the
 // generic shell fallback.
 let Shell:explicit_form = phrase {
+    docs = "```recurloop\nshell command arguments ...\nshell { ... }\n```\n\nExplicitly selects Shell command syntax, including commands whose names overlap RecurLoop phrases. The block form selects Shell for its contents.\n\n**Example**\n\n```recurloop\nshell echo \"hello\"\n```"
     type = <phrase-types:elaborate>
     permanent = true
     action = fn (state:Context*, called:Phrase*) -> void {
@@ -2095,6 +2100,7 @@ let "shell " = <Shell:explicit_form>
 let LanguageKit:Selectors:"shell " = <Shell:explicit_form>
 
 let capture = phrase {
+    docs = "```recurloop\ncapture command arguments ...\n```\n\nRuns a command and captures stdout. At top level, updates `captured` and `status`; inside `fn`, returns owned `u8*` text that must be freed.\n\n**Example**\n\n```recurloop\nvar output = capture printf \"hello\"\nprint output\n```"
     type = <phrase-types:elaborate>
     permanent = true
     rewrite = true
@@ -2105,6 +2111,7 @@ let capture = phrase {
 }
 
 let spawn = phrase {
+    docs = "```recurloop\nspawn command arguments ...\n```\n\nStarts a command asynchronously with output capture. Inside `fn`, returns a `Shell:Invocation*`; wait or inspect it, then call `destroy()`.\n\nAvailable only inside compiled functions.\n\n**Example (inside fn)**\n\n```recurloop\nlet job = spawn echo \"hello\"\nlet code = job.exit_code()\njob.destroy()\n```"
     type = <phrase-types:elaborate>
     permanent = true
     rewrite = true
@@ -2182,6 +2189,7 @@ let Shell:Grammar:double_expression_single:"'" = phrase { type = <phrase-types:s
 // Generic block capture remains a core RecurLoop phrase facility. Headers are
 // evaluated by the ordinary expression engine; these actions do no scanning.
 let directory = phrase {
+    docs = "```recurloop\ndirectory path_expression { ... }\n```\n\nRuns a source block in the selected working directory, then restores the previous directory.\n\n**Example**\n\n```recurloop\ndirectory \"/tmp\" { run pwd }\n```"
     type = <phrase-types:elaborate>
     permanent = true
     action = fn (state:Context*, called:Phrase*) -> void {
@@ -2205,6 +2213,7 @@ let directory = phrase {
 // The header evaluates to the name of a RecurLoop value. Its formatted value
 // becomes the environment value for the duration of the ordinary phrase block.
 let environment = phrase {
+    docs = "```recurloop\nenvironment name_expression { ... }\n```\n\nTemporarily exports a RecurLoop runtime binding as an environment variable. The header evaluates to the binding name; the previous environment is restored on exit.\n\n**Example**\n\n```recurloop\nvar GREETING = \"hello\"\nenvironment \"GREETING\" { run printenv GREETING }\n```"
     type = <phrase-types:elaborate>
     permanent = true
     action = fn (state:Context*, called:Phrase*) -> void {
@@ -2231,6 +2240,7 @@ let environment = phrase {
 // The block body is executed normally. The only state is the active supervisor;
 // each ordinary run phrase therefore spawns its already-built pipeline.
 let parallel = phrase {
+    docs = "```recurloop\nparallel { ... }\n```\n\nStarts the block's shell pipelines concurrently and waits for them before leaving. Updates `status` with the supervisor result.\n\n**Example**\n\n```recurloop\nparallel {\n    run echo \"first\"\n    run echo \"second\"\n}\n```"
     type = <phrase-types:elaborate>
     permanent = true
     action = fn (state:Context*, called:Phrase*) -> void {

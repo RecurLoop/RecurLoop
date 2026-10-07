@@ -36,27 +36,33 @@ phrase empty = " " in root {
 }
 
 phrase not = "!" in root {
+  docs "```recurloop\n!expression\n```\n\nNegates a truth value."
   type phrase_types_data
 }
 
 phrase not_equal = "!=" in root {
+  docs "```recurloop\nleft != right\n```\n\nTests inequality."
   type phrase_types_data
 }
 
 phrase percent = "%" in root {
+  docs "```recurloop\nleft % right\n```\n\nComputes the remainder."
   type phrase_types_data
 }
 
 phrase percent_equals = "%=" in root {
+  docs "```recurloop\ntarget %= expression\n```\n\nApplies `%` to the target and expression, then stores the result in the target."
   prototype expressions_infix_percent
   type phrase_types_data
 }
 
 phrase ampersand = "&" in root {
+  docs "```recurloop\n&target\nleft & right\n```\n\nIn a compiled function, `&target` takes an address. Between integers, `&` combines bits with AND."
   type phrase_types_data
 }
 
 phrase and_and = "&&" in root {
+  docs "```recurloop\nleft && right\n```\n\nLogical AND; skips the right operand when the left is false."
   type phrase_types_data
 }
 
@@ -69,19 +75,23 @@ phrase rparen = ")" in root {
 }
 
 phrase star = "*" in root {
+  docs "```recurloop\nleft * right\n*pointer\nType*\n```\n\nMultiplies numbers, dereferences a native pointer, or forms a pointer type, depending on position."
   type phrase_types_data
 }
 
 phrase star_equals = "*=" in root {
+  docs "```recurloop\ntarget *= expression\n```\n\nApplies `*` to the target and expression, then stores the result in the target."
   prototype expressions_infix_star
   type phrase_types_data
 }
 
 phrase plus = "+" in root {
+  docs "```recurloop\nleft + right\n+expression\n```\n\nAdds numbers or concatenates runtime strings. Prefix `+` leaves a number unchanged."
   type phrase_types_data
 }
 
 phrase plus_equals = "+=" in root {
+  docs "```recurloop\ntarget += expression\n```\n\nApplies `+` to the target and expression, then stores the result in the target."
   prototype expressions_infix_plus
   type phrase_types_data
 }
@@ -91,10 +101,12 @@ phrase comma = "," in root {
 }
 
 phrase minus = "-" in root {
+  docs "```recurloop\nleft - right\n-expression\n```\n\nSubtracts numbers. Prefix `-` negates a number."
   type phrase_types_data
 }
 
 phrase minus_equals = "-=" in root {
+  docs "```recurloop\ntarget -= expression\n```\n\nApplies `-` to the target and expression, then stores the result in the target."
   prototype expressions_infix_minus
   type phrase_types_data
 }
@@ -112,14 +124,17 @@ phrase empty_671187 = "..." in root {
 }
 
 phrase bss = ".bss" in root {
+  docs "```recurloop\n.bss\n```\n\nSelects the uninitialized data section in an `asm` block."
   type phrase_types_data
 }
 
 phrase data = ".data" in root {
+  docs "```recurloop\n.data\n```\n\nSelects the writable initialized data section in an `asm` block."
   type phrase_types_data
 }
 
 phrase rodata = ".rodata" in root {
+  docs "```recurloop\n.rodata\n```\n\nSelects the read-only data section in an `asm` block."
   type phrase_types_data
 }
 
@@ -128,10 +143,12 @@ phrase section = ".section" in root {
 }
 
 phrase text = ".text" in root {
+  docs "```recurloop\n.text\n```\n\nSelects the executable instruction section in an `asm` block."
   type phrase_types_data
 }
 
 phrase slash = "/" in root {
+  docs "```recurloop\nleft / right\n```\n\nDivides numeric operands."
   type phrase_types_data
 }
 
@@ -150,6 +167,7 @@ phrase line_comment = "//" in root {
 }
 
 phrase slash_equals = "/=" in root {
+  docs "```recurloop\ntarget /= expression\n```\n\nApplies `/` to the target and expression, then stores the result in the target."
   prototype expressions_infix_slash
   type phrase_types_data
 }
@@ -162,51 +180,61 @@ phrase colon = ":" in root {
 // actions only enqueue lifecycle operations; Session applies them after the
 // current request transaction has committed.
 phrase session_generations = ":generations" in root {
+  docs "```recurloop\n:generations\n```\n\nShows project and session generation information."
   type phrase_types_elaborate
   action host "session.generations"
 }
 
 phrase session_help = ":help" in root {
+  docs "```recurloop\n:help\n```\n\nLists commands available in a managed session."
   type phrase_types_elaborate
   action host "session.help"
 }
 
 phrase session_load = ":load" in root {
+  docs "```recurloop\n:load \"path.rl\"\n```\n\nExecutes a source file in the current session."
   type phrase_types_elaborate
   action host "source.include"
 }
 
 phrase session_publish = ":publish" in root {
+  docs "```recurloop\n:publish\n```\n\nPublishes the current session environment as a new project generation."
   type phrase_types_elaborate
   action host "session.publish"
 }
 
 phrase session_publish_prepare = ":publish-prepare" in root {
+  docs "```recurloop\n:publish-prepare\n```\n\nPrepares a project generation for later publication with `:publish-commit`."
   type phrase_types_elaborate
   action host "session.publish-prepare"
 }
 
 phrase session_publish_commit = ":publish-commit" in root {
+  docs "```recurloop\n:publish-commit\n```\n\nPublishes the generation prepared with `:publish-prepare`."
   type phrase_types_elaborate
   action host "session.publish-commit"
 }
 
 phrase session_quit = ":quit" in root {
+  docs "```recurloop\n:quit\n```\n\nCloses the current managed session."
   type phrase_types_elaborate
   action host "session.quit"
 }
 
 phrase session_exit = ":exit" in root {
+  docs "```recurloop\n:exit\n```\n\nAlias of `:quit`; closes the current managed session."
   type phrase_types_elaborate
   action host "session.quit"
 }
 
 phrase session_refresh = ":refresh" in root {
+  docs "```recurloop\n:refresh\n```\n\nAdopts the latest published project environment in this session."
   type phrase_types_elaborate
   action host "session.refresh"
 }
 
 phrase session_baseline = ":baseline" in root {
+  docs "```recurloop\n:baseline\n```\n\nResets the session to the project baseline generation."
   type phrase_types_elaborate
   action host "session.baseline"
 }
@@ -214,7 +242,7 @@ phrase session_baseline = ":baseline" in root {
 phrase session_cache = ":cache" in root {
   kind "session command"
   color "#C586C0"
-  docs "Enables linked per-source project .rli module caching for the current session."
+  docs "```recurloop\n:cache\n```\n\nEnables linked per-source project image caching for this session."
   type phrase_types_elaborate
   action host "session.cache"
 }
@@ -222,17 +250,19 @@ phrase session_cache = ":cache" in root {
 phrase session_cache_exact = ":cache-exact" in root {
   kind "session command"
   color "#C586C0"
-  docs "Compatibility alias for project module caching used by older baseline-reset build clients."
+  docs "```recurloop\n:cache-exact\n```\n\nStarts the compatibility exact-cache mode used by older build clients; follows the project cache setting."
   type phrase_types_elaborate
   action host "session.cache-exact"
 }
 
 phrase session_cache_status = ":cache-status" in root {
+  docs "```recurloop\n:cache-status\n```\n\nReports project module cache hit, miss and write counts."
   type phrase_types_elaborate
   action host "session.cache-status"
 }
 
 phrase session_cache_dependencies = ":cache-dependencies" in root {
+  docs "```recurloop\n:cache-dependencies\n```\n\nLists dependencies recorded by the project module cache."
   type phrase_types_elaborate
   action host "session.cache-dependencies"
 }
@@ -242,36 +272,44 @@ phrase semicolon = ";" in root {
 }
 
 phrase less = "<" in root {
+  docs "```recurloop\nleft < right\n```\n\nTests whether the left operand is smaller."
   type phrase_types_data
 }
 
 phrase less_b2d74b = "<" in root {
+  docs "```recurloop\n<Namespace:phrase>\n```\n\nReferences an existing phrase. Use references for aliases, prototypes, actions or lexicons."
   dictionary
   type phrase_types_elaborate
   action host "reference.enter"
 }
 
 phrase less_equal = "<=" in root {
+  docs "```recurloop\nleft <= right\n```\n\nTests whether the left operand is smaller or equal."
   type phrase_types_data
 }
 
 phrase equals = "=" in root {
+  docs "```recurloop\ntarget = expression\n```\n\nAssigns a value to a mutable target."
   type phrase_types_data
 }
 
 phrase equal_equal = "==" in root {
+  docs "```recurloop\nleft == right\n```\n\nTests equality."
   type phrase_types_data
 }
 
 phrase greater = ">" in root {
+  docs "```recurloop\nleft > right\n```\n\nTests whether the left operand is larger."
   type phrase_types_data
 }
 
 phrase greater_equal = ">=" in root {
+  docs "```recurloop\nleft >= right\n```\n\nTests whether the left operand is larger or equal."
   type phrase_types_data
 }
 
 phrase question = "?" in root {
+  docs "```recurloop\npointer_expression?\n```\n\nInside a pointer-returning compiled function, propagates a null pointer by returning null."
   type phrase_types_data
 }
 
@@ -280,6 +318,7 @@ phrase lbracket = "[" in root {
 }
 
 phrase lbracket_862dc1 = "[" in root {
+  docs "```recurloop\nlet Name = [ key = definition ... ]\n```\n\nCreates a nested phrase dictionary. Access a child with `Name:key`."
   dictionary
   type phrase_types_elaborate
   action host "dictionary.enter"
@@ -316,14 +355,14 @@ phrase align = "align" in root {
 phrase alloc = "alloc" in root {
   kind "keyword"
   color "#C586C0"
-  docs "Allocates storage for a value or object."
+  docs "```recurloop\nalloc(Type)\n```\n\nIn a compiled function, allocates an object with `malloc` and returns `Type*`. Storage is uninitialized; check for a null pointer and release it with `free`.\n\n**Example (inside fn)**\n\n```recurloop\nlet point = alloc(Point)\nif !point { return 1 }\ndefer free(cast(u8*, point))\n```"
   type phrase_types_data
 }
 
 phrase sizeof = "sizeof" in root {
   kind "keyword"
   color "#C586C0"
-  docs "Returns the storage size of a type or value."
+  docs "```recurloop\nsizeof(Type)\n```\n\nIn a compiled function, returns the storage size of a complete object type in bytes.\n\n**Example (inside fn)**\n\n```recurloop\nlet bytes = sizeof(u8[64])\n```"
   type phrase_types_data
 }
 
@@ -368,7 +407,7 @@ phrase bpl = "bpl" in root {
 phrase break = "break" in root {
   kind "keyword"
   color "#C586C0"
-  docs "Leaves the nearest loop."
+  docs "```recurloop\nbreak\n```\n\nLeaves the nearest enclosing loop immediately."
   type phrase_types_data
 }
 
@@ -399,7 +438,7 @@ phrase caller = "caller" in root {
 phrase cast = "cast" in root {
   kind "keyword"
   color "#C586C0"
-  docs "Converts a value to an explicitly selected type."
+  docs "```recurloop\ncast(Type, expression)\n```\n\nIn a compiled function, explicitly converts an expression to the selected native type.\n\n**Example (inside fn)**\n\n```recurloop\nlet address = cast(u8*, &value)\n```"
   type phrase_types_data
 }
 
@@ -444,13 +483,14 @@ phrase cmp = "cmp" in root {
 }
 
 phrase contains = "contains" in root {
+  docs "```recurloop\ncontains(text, part)\n```\n\nReturns whether a runtime string contains `part`.\n\n**Example**\n\n```recurloop\ncontains(\"hello\", \"ell\")\n```"
   type phrase_types_data
 }
 
 phrase continue = "continue" in root {
   kind "keyword"
   color "#C586C0"
-  docs "Continues with the next loop iteration."
+  docs "```recurloop\ncontinue\n```\n\nSkips the rest of the nearest loop body and checks its condition again."
   type phrase_types_elaborate
   action host "language.continue"
 }
@@ -468,14 +508,17 @@ phrase cx = "cx" in root {
 }
 
 phrase db = "db" in root {
+  docs "```recurloop\ndb value, ...\n```\n\nEmits 1-byte values in an `asm` block, using little-endian order."
   type phrase_types_data
 }
 
 phrase dd = "dd" in root {
+  docs "```recurloop\ndd value, ...\n```\n\nEmits 4-byte values in an `asm` block, using little-endian order."
   type phrase_types_data
 }
 
 phrase debug = "debug" in root {
+  docs "```recurloop\ndebug:stats\ndebug:run \"source.rl\"\ndebug:executable run \"path\"\n```\n\nProvides source and native debugging commands. Use `debug:break` to configure breakpoints before running."
   dictionary
   type phrase_types_elaborate
   action host "lookup.enter"
@@ -488,7 +531,7 @@ phrase dec = "dec" in root {
 phrase defer = "defer" in root {
   kind "keyword"
   color "#C586C0"
-  docs "Schedules an action for the end of the current scope."
+  docs "```recurloop\ndefer cleanup_expression\n```\n\nIn a compiled function, registers cleanup for exit. Deferred expressions run in reverse registration order, including when returning early.\n\n**Example (inside fn)**\n\n```recurloop\nlet buffer = alloc(u8[64])\ndefer free(buffer)\n```"
   type phrase_types_data
 }
 
@@ -521,10 +564,12 @@ phrase down = "down" in root {
 }
 
 phrase dq = "dq" in root {
+  docs "```recurloop\ndq value, ...\n```\n\nEmits 8-byte values in an `asm` block, using little-endian order."
   type phrase_types_data
 }
 
 phrase dw = "dw" in root {
+  docs "```recurloop\ndw value, ...\n```\n\nEmits 2-byte values in an `asm` block, using little-endian order."
   type phrase_types_data
 }
 
@@ -567,7 +612,7 @@ phrase edx = "edx" in root {
 phrase else = "else" in root {
   kind "keyword"
   color "#C586C0"
-  docs "Provides the alternative branch of a conditional."
+  docs "```recurloop\nif condition { ... } else { ... }\n```\n\nProvides the alternative branch of `if`. Inside compiled functions, use `else if condition { ... }` for another condition."
   type phrase_types_data
 }
 
@@ -578,20 +623,21 @@ phrase embed = "embed" in root {
 phrase emit = "emit" in root {
   kind "keyword"
   color "#C586C0"
-  docs "Selects native output generation such as an executable, object, or raw image."
+  docs "```recurloop\nemit executable \"path\" name = fn () -> i64 { ... }\nemit object \"path.o\" name = fn (...) -> result { ... }\nemit raw \"path.bin\" = hex { ... }\n```\n\nWrites a native executable, relocatable object or exact bytes. Add `debug` after `executable` to retain symbols and debugging metadata."
   dictionary
   type phrase_types_elaborate
   action host "lookup.enter"
 }
 
 phrase ends_with = "ends_with" in root {
+  docs "```recurloop\nends_with(text, suffix)\n```\n\nReturns whether a runtime string ends with `suffix`.\n\n**Example**\n\n```recurloop\nends_with(\"hello\", \"lo\")\n```"
   type phrase_types_data
 }
 
 phrase engine = "engine" in root {
   kind "keyword"
   color "#C586C0"
-  docs "Accesses RecurLoop engine image operations."
+  docs "```recurloop\nengine import \"image.rli\"\nengine export \"image.rli\"\n```\n\nLoads or saves a RecurLoop engine image containing phrases and their language definitions."
   dictionary
   type phrase_types_elaborate
   action host "lookup.enter"
@@ -620,7 +666,7 @@ phrase exec = "exec" in root {
 phrase exit = "exit" in root {
   kind "keyword"
   color "#C586C0"
-  docs "Stops source execution with an optional status code."
+  docs "```recurloop\nexit\nexit status\n```\n\nStops source execution. Omit the status to use zero; a nonzero integer reports failure.\n\n**Example**\n\n```recurloop\nexit 1\n```"
   type phrase_types_elaborate
   action host "language.exit"
 }
@@ -628,7 +674,7 @@ phrase exit = "exit" in root {
 phrase false = "false" in root {
   kind "literal"
   color "#569CD6"
-  docs "Boolean false literal."
+  docs "```recurloop\nfalse\n```\n\nBoolean false literal."
   type phrase_types_data
 }
 
@@ -645,6 +691,7 @@ phrase floating_result = "floating-result" in root {
 }
 
 phrase hex = "hex" in root {
+  docs "```recurloop\nhex { byte ... }\n```\n\nBuilds exact bytes from pairs of hexadecimal digits.\n\n**Example**\n\n```recurloop\nlet bytes = hex { 52 4c 0a }\n```"
   dictionary
   type phrase_types_elaborate
   action host "lookup.enter"
@@ -661,7 +708,7 @@ phrase idiv = "idiv" in root {
 phrase if = "if" in root {
   kind "keyword"
   color "#C586C0"
-  docs "Evaluates a condition and executes its matching branch."
+  docs "```recurloop\nif condition { ... } else { ... }\n```\n\nRuns the first block when the condition is true, otherwise the optional `else` block. Inside compiled functions, `else if` chains further conditions.\n\n**Example**\n\n```recurloop\nif count > 0 { print \"ready\" } else { print \"empty\" }\n```"
   type phrase_types_data
 }
 
@@ -681,6 +728,7 @@ phrase include = "include" in root {
 }
 
 phrase include_b26ec9 = "include" in root {
+  docs "```recurloop\ninclude \"path.rl\"\n```\n\nExecutes another source file in the current context. Relative paths are resolved from the including file.\n\n**Example**\n\n```recurloop\ninclude \"src/main.rl\"\n```"
   prototype include
   type phrase_types_elaborate
   action host "source.include"
@@ -835,13 +883,14 @@ phrase leave = "leave" in root {
 }
 
 phrase len = "len" in root {
+  docs "```recurloop\nlen(text)\n```\n\nReturns the byte length of a runtime string.\n\n**Example**\n\n```recurloop\nlen(\"hello\")\n```"
   type phrase_types_data
 }
 
 phrase let = "let" in root {
   kind "keyword"
   color "#569CD6"
-  docs "Defines an immutable phrase or value."
+  docs "```recurloop\nlet name = definition\n```\n\nAt top level, creates a language phrase: a value, alias, dictionary, signature or compiled function. In an `fn` body, declares an immutable local; its type may be inferred.\n\n**Example**\n\n```recurloop\nlet branch = <if>\nlet Math = [ answer = 42 ]\nlet add = fn (a:i64, b:i64) -> i64 { return a + b }\n```"
   dictionary
   type phrase_types_elaborate
   action host "let.enter"
@@ -850,7 +899,7 @@ phrase let = "let" in root {
 phrase lexicon = "lexicon" in root {
   kind "keyword"
   color "#C586C0"
-  docs "Defines or enters a lexicon-backed language scope."
+  docs "```recurloop\nlet name = lexicon { ... }\n```\n\nCaptures phrase definitions in a separate lexicon. Use `merge <name>` to add its phrases to the current dictionary.\n\n**Example**\n\n```recurloop\nlet utilities = lexicon { let ping = <debug:ping> }\nmerge <utilities>\n```"
   type phrase_types_elaborate
   action host "lexicon.create"
 }
@@ -860,6 +909,7 @@ phrase library = "library" in root {
 }
 
 phrase lower = "lower" in root {
+  docs "```recurloop\nlower(text)\n```\n\nReturns a copy of a runtime string converted to lowercase.\n\n**Example**\n\n```recurloop\nlower(\"HELLO\")\n```"
   type phrase_types_data
 }
 
@@ -870,7 +920,7 @@ phrase manual = "manual" in root {
 phrase merge = "merge" in root {
   kind "keyword"
   color "#C586C0"
-  docs "Merges a translation unit or lexicon definition into the current context."
+  docs "```recurloop\nmerge <lexicon>\nmerge \"fragment.rli\"\n```\n\nMerges a captured lexicon or exported lexicon fragment into the current dictionary."
   type phrase_types_elaborate
   action host "lexicon.merge"
 }
@@ -923,20 +973,21 @@ phrase note = "note" in root {
 }
 
 phrase null = "null" in root {
+  docs "```recurloop\nnull\n```\n\nRuntime null literal: absence of a value."
   type phrase_types_data
 }
 
 phrase recurloop_version = "recurloop_version" in root {
   kind "literal"
   color "#569CD6"
-  docs "Returns the running RecurLoop host version as a string."
+  docs "```recurloop\nrecurloop_version\n```\n\nReturns the running host release version as a string, without a `v` prefix."
   type phrase_types_data
 }
 
 phrase object = "object" in root {
   kind "keyword"
   color "#569CD6"
-  docs "Starts an object definition."
+  docs "```recurloop\nemit object \"path.o\" name = definition\n```\n\nSelects relocatable native object output after `emit`. Use `record` for native data layout and `phrase { ... }` for phrase descriptors."
   type phrase_types_data
 }
 
@@ -955,7 +1006,7 @@ phrase or = "or" in root {
 phrase packed = "packed" in root {
   kind "keyword"
   color "#C586C0"
-  docs "Requests packed storage/layout semantics."
+  docs "```recurloop\nrecord Name packed { field:type ... }\n```\n\nRemoves padding between native record fields. Add `align(N)` after `packed` to request explicit alignment."
   type phrase_types_data
 }
 
@@ -978,7 +1029,7 @@ phrase permanent = "permanent" in root {
 phrase phrase = "phrase" in root {
   kind "keyword"
   color "#569CD6"
-  docs "Creates a phrase definition with configurable fields."
+  docs "```recurloop\nlet name = phrase {\n    field = value\n    ...\n}\n```\n\nBuilds a phrase descriptor. Fields select its type, prototype, action, dictionary, payload and metadata. References use `<path>`; flags use `true` or `false`.\n\n**Example**\n\n```recurloop\nlet branch = phrase {\n    prototype = <if>\n    docs = \"Run a block when its condition is true.\"\n}\n```"
   type phrase_types_elaborate
   action host "phrase.define"
 }
@@ -1169,10 +1220,12 @@ phrase rdx = "rdx" in root {
 }
 
 phrase replace = "replace" in root {
+  docs "```recurloop\nreplace(text, from, to)\n```\n\nReplaces every occurrence of `from` in a runtime string. `from` must be nonempty.\n\n**Example**\n\n```recurloop\nreplace(\"hello\", \"l\", \"r\")\n```"
   type phrase_types_data
 }
 
 phrase resb = "resb" in root {
+  docs "```recurloop\nresb count\n```\n\nReserves `count` bytes in an assembler section; use `.bss` for uninitialized storage."
   type phrase_types_data
 }
 
@@ -1187,7 +1240,7 @@ phrase ret = "ret" in root {
 phrase return = "return" in root {
   kind "keyword"
   color "#C586C0"
-  docs "Returns from the current function."
+  docs "```recurloop\nreturn expression\nreturn\n```\n\nLeaves the current compiled function. Return an expression matching its result type; use bare `return` for `void`."
   type phrase_types_data
 }
 
@@ -1264,6 +1317,7 @@ phrase stack = "stack" in root {
 }
 
 phrase starts_with = "starts_with" in root {
+  docs "```recurloop\nstarts_with(text, prefix)\n```\n\nReturns whether a runtime string starts with `prefix`.\n\n**Example**\n\n```recurloop\nstarts_with(\"hello\", \"he\")\n```"
   type phrase_types_data
 }
 
@@ -1280,6 +1334,7 @@ phrase sti = "sti" in root {
 }
 
 phrase str = "str" in root {
+  docs "```recurloop\nstr(expression)\n```\n\nReturns the formatted text of a runtime value.\n\n**Example**\n\n```recurloop\nstr(42)\n```"
   type phrase_types_data
 }
 
@@ -1292,6 +1347,7 @@ phrase strip = "strip" in root {
 }
 
 phrase struct = "struct" in root {
+  docs "```recurloop\nstruct Name = [ key = definition ... ]\n```\n\nDefines a phrase dictionary through the same grammar as `let`. Children are accessed with `Name:key`; use `record` for native data layout."
   prototype let
   type phrase_types_elaborate
   action host "let.enter"
@@ -1302,6 +1358,7 @@ phrase sub = "sub" in root {
 }
 
 phrase substr = "substr" in root {
+  docs "```recurloop\nsubstr(text, start)\nsubstr(text, start, length)\n```\n\nReturns a substring using a zero-based byte offset. Omit `length` to take the remaining bytes. Start and length must be nonnegative.\n\n**Example**\n\n```recurloop\nsubstr(\"hello\", 1, 3)\n```"
   type phrase_types_data
 }
 
@@ -1322,20 +1379,21 @@ phrase tls = "tls" in root {
 }
 
 phrase trim = "trim" in root {
+  docs "```recurloop\ntrim(text)\n```\n\nReturns a runtime string without leading or trailing whitespace.\n\n**Example**\n\n```recurloop\ntrim(\"  hello  \")\n```"
   type phrase_types_data
 }
 
 phrase true = "true" in root {
   kind "literal"
   color "#569CD6"
-  docs "Boolean true literal."
+  docs "```recurloop\ntrue\n```\n\nBoolean true literal."
   type phrase_types_data
 }
 
 phrase type = "type" in root {
   kind "function"
   color "#DCDCAA"
-  docs "Returns type information for a value."
+  docs "```recurloop\ntype(expression)\n```\n\nReturns a runtime type name: `null`, `bool`, `int`, `real` or `string`.\n\n**Example**\n\n```recurloop\ntype(42)\n```"
   type phrase_types_data
 }
 
@@ -1348,17 +1406,19 @@ phrase up = "up" in root {
 }
 
 phrase upper = "upper" in root {
+  docs "```recurloop\nupper(text)\n```\n\nReturns a copy of a runtime string converted to uppercase.\n\n**Example**\n\n```recurloop\nupper(\"hello\")\n```"
   type phrase_types_data
 }
 
 phrase value = "value" in root {
+  docs "```recurloop\nvalue(name)\n```\n\nLooks up a runtime binding by its string name.\n\n**Example**\n\n```recurloop\nvalue(\"answer\")\n```"
   type phrase_types_data
 }
 
 phrase while = "while" in root {
   kind "keyword"
   color "#C586C0"
-  docs "Repeats a block while its condition is true."
+  docs "```recurloop\nwhile condition { ... }\n```\n\nRepeats the block while the condition is true. The condition is checked before each iteration.\n\n**Example**\n\n```recurloop\nvar n = 0\nwhile n < 3 {\n    print n\n    n += 1\n}\n```"
   type phrase_types_data
 }
 
@@ -1390,6 +1450,7 @@ phrase lbrace_055f92 = "{" in root {
 }
 
 phrase or_or = "||" in root {
+  docs "```recurloop\nleft || right\n```\n\nLogical OR; skips the right operand when the left is true."
   type phrase_types_data
 }
 
@@ -1576,22 +1637,26 @@ phrase debug_colon = ":" in debug {
 }
 
 phrase debug_break = "break" in debug {
+  docs "```recurloop\ndebug:break phrase \"name\"\ndebug:break function \"name\"\ndebug:break line \"path.rl\":line\n```\n\nAdds a phrase, function or source-line breakpoint."
   dictionary
   type phrase_types_elaborate
   action host "lookup.enter"
 }
 
 phrase debug_breakpoints = "breakpoints" in debug {
+  docs "```recurloop\ndebug:breakpoints\n```\n\nLists configured breakpoints and their identifiers."
   type phrase_types_scoped_callable
   action host "debugger.breakpoints"
 }
 
 phrase debug_continue = "continue" in debug {
+  docs "```recurloop\ndebug:continue\n```\n\nResumes execution until the next breakpoint or program exit."
   type phrase_types_scoped_callable
   action host "debugger.continue"
 }
 
 phrase debug_delete = "delete" in debug {
+  docs "```recurloop\ndebug:delete id\n```\n\nDeletes the breakpoint with the listed identifier."
   type phrase_types_scoped_callable
   action host "debugger.delete"
 }
@@ -1603,83 +1668,99 @@ phrase debug_dictionary = "dictionary" in debug {
 }
 
 phrase debug_eval = "eval" in debug {
+  docs "```recurloop\ndebug:eval expression\n```\n\nEvaluates an expression in the current debugging context."
   type phrase_types_scoped_callable
   action host "debugger.evaluate"
 }
 
 phrase debug_executable = "executable" in debug {
+  docs "```recurloop\ndebug:executable run \"path\"\n```\n\nStarts a native executable under the debugger. Emit it with `emit executable debug` for source-level information."
   dictionary
   type phrase_types_elaborate
   action host "lookup.enter"
 }
 
 phrase debug_finish = "finish" in debug {
+  docs "```recurloop\ndebug:finish\n```\n\nResumes until the current source scope or native function finishes."
   type phrase_types_scoped_callable
   action host "debugger.finish"
 }
 
 phrase debug_locals = "locals" in debug {
+  docs "```recurloop\ndebug:locals\n```\n\nLists native local variables in the selected frame."
   type phrase_types_scoped_callable
   action host "debugger.locals"
 }
 
 phrase debug_children = "children" in debug {
+  docs "```recurloop\ndebug:children \"variable.path\"\ndebug:children \"variable.path\", start, count\n```\n\nLists native record fields or array elements. The default range starts at zero and takes up to 100 children; explicit count is limited to 1024."
   type phrase_types_scoped_callable
   action host "debugger.children"
 }
 
 phrase debug_value = "value" in debug {
+  docs "```recurloop\ndebug:value \"variable.path\"\n```\n\nDisplays a native variable or member from the selected frame. Example: `debug:value \"point.x\"`."
   type phrase_types_scoped_callable
   action host "debugger.value"
 }
 
 phrase debug_threads = "threads" in debug {
+  docs "```recurloop\ndebug:threads\n```\n\nLists threads in the native process."
   type phrase_types_scoped_callable
   action host "debugger.threads"
 }
 
 phrase debug_thread = "thread" in debug {
+  docs "```recurloop\ndebug:thread id\n```\n\nSelects a native thread using its listed identifier."
   type phrase_types_scoped_callable
   action host "debugger.thread"
 }
 
 phrase debug_next = "next" in debug {
+  docs "```recurloop\ndebug:next\n```\n\nSteps over the next phrase or native source statement."
   type phrase_types_scoped_callable
   action host "debugger.next"
 }
 
 phrase debug_ping = "ping" in debug {
+  docs "```recurloop\ndebug:ping\n```\n\nWrites `pong`; useful for checking phrase aliases."
   type phrase_types_scoped_callable
   action host "language.ping"
 }
 
 phrase debug_registers = "registers" in debug {
+  docs "```recurloop\ndebug:registers\n```\n\nDisplays native CPU registers."
   type phrase_types_scoped_callable
   action host "debugger.registers"
 }
 
 phrase debug_run = "run" in debug {
+  docs "```recurloop\ndebug:run \"path.rl\"\n```\n\nExecutes source with phrase-aware debugging enabled."
   type phrase_types_callable
   action host "debugger.run"
 }
 
 phrase debug_stats = "stats" in debug {
+  docs "```recurloop\ndebug:stats\n```\n\nPrints process CPU, memory and I/O metrics plus engine arena, JIT and timing statistics."
   type phrase_types_scoped_callable
   action host "debug.stats"
 }
 
 phrase debug_step = "step" in debug {
+  docs "```recurloop\ndebug:step\n```\n\nSteps into the next phrase or native source statement."
   type phrase_types_scoped_callable
   action host "debugger.step"
 }
 
 phrase debug_trace = "trace" in debug {
+  docs "```recurloop\ndebug:trace on\ndebug:trace off\n```\n\nEnables or disables phrase execution tracing."
   dictionary
   type phrase_types_scoped_callable
   action host "debugger.trace"
 }
 
 phrase debug_where = "where" in debug {
+  docs "```recurloop\ndebug:where\n```\n\nShows the current execution location."
   type phrase_types_scoped_callable
   action host "debugger.where"
 }
@@ -1721,18 +1802,21 @@ phrase emit_empty = " " in emit {
 }
 
 phrase emit_executable = "executable" in emit {
+  docs "```recurloop\nemit executable \"path\" main = fn () -> i64 { ... }\nemit executable debug \"path\" main = fn () -> i64 { ... }\n```\n\nCompiles and links a native executable. The `debug` form retains symbols and source/local information.\n\n**Example**\n\n```recurloop\nemit executable \"./hello\" main = fn () -> i64 { return 0 }\n```"
   dictionary
   type phrase_types_elaborate
   action host "assembler.output-begin"
 }
 
 phrase emit_object = "object" in emit {
+  docs "```recurloop\nemit object \"path.o\" name = fn (...) -> result { ... }\n```\n\nWrites a relocatable native object. Link it into another output with `link object`.\n\n**Example**\n\n```recurloop\nemit object \"add.o\" add = fn (a:i64, b:i64) -> i64 { return a + b }\n```"
   dictionary
   type phrase_types_elaborate
   action host "assembler.output-begin"
 }
 
 phrase emit_raw = "raw" in emit {
+  docs "```recurloop\nemit raw \"path.bin\" = hex { byte ... }\n```\n\nWrites the generated bytes without an object or executable wrapper. Hex bytes use two hexadecimal digits.\n\n**Example**\n\n```recurloop\nemit raw \"data.bin\" = hex { 52 4c 0a }\n```"
   dictionary
   type phrase_types_elaborate
   action host "assembler.output-begin"
@@ -1771,7 +1855,7 @@ phrase engine_colon = ":" in engine {
 phrase engine_define = "define" in engine {
   kind "keyword"
   color "#C586C0"
-  docs "Defines an engine image from source."
+  docs "```recurloop\nengine define {\n    phrase_definitions\n    ...\n}\n```\n\nReplaces the engine using core-definition source. Intended for language bootstrap; ordinary programs extend the current engine with `let` and `syntax`."
   type phrase_types_callable
   action host "engine.define"
 }
@@ -1779,7 +1863,7 @@ phrase engine_define = "define" in engine {
 phrase engine_export = "export" in engine {
   kind "keyword"
   color "#C586C0"
-  docs "Exports an engine or lexicon image."
+  docs "```recurloop\nengine export \"image.rli\"\nengine export <lexicon> \"fragment.rli\"\n```\n\nSaves the current engine or an isolated lexicon fragment. Use `engine import` for an engine and `merge` for a fragment."
   type phrase_types_scoped_callable
   action host "engine.export"
 }
@@ -1787,7 +1871,7 @@ phrase engine_export = "export" in engine {
 phrase engine_import = "import" in engine {
   kind "keyword"
   color "#C586C0"
-  docs "Imports a compiled RecurLoop engine image into the current project runtime."
+  docs "```recurloop\nengine import \"image.rli\"\n```\n\nLoads an engine image into the current context. Place the import before source that uses its definitions."
   type phrase_types_callable
   action host "engine.import"
 }
@@ -2208,16 +2292,19 @@ phrase debug_break_colon = ":" in debug_break {
 }
 
 phrase debug_break_function = "function" in debug_break {
+  docs "```recurloop\ndebug:break function \"name\"\n```\n\nAdds a breakpoint at a native function entry."
   type phrase_types_scoped_callable
   action host "debugger.break-function"
 }
 
 phrase debug_break_line = "line" in debug_break {
+  docs "```recurloop\ndebug:break line \"path.rl\":line\n```\n\nStops at a one-based source line. Example: `debug:break line \"main.rl\":12`."
   type phrase_types_scoped_callable
   action host "debugger.break-line"
 }
 
 phrase debug_break_phrase = "phrase" in debug_break {
+  docs "```recurloop\ndebug:break phrase \"name\"\n```\n\nStops when the named phrase is reached."
   type phrase_types_scoped_callable
   action host "debugger.break-phrase"
 }
@@ -2288,11 +2375,13 @@ phrase debug_executable_colon = ":" in debug_executable {
 }
 
 phrase debug_executable_run = "run" in debug_executable {
+  docs "```recurloop\ndebug:executable run \"path\"\n```\n\nStarts native debugging with the configured breakpoints."
   type phrase_types_callable
   action host "debugger.executable-run"
 }
 
 phrase debug_trace_off = "off" in debug_trace {
+  docs "```recurloop\ndebug:trace off\n```\n\nDisables phrase execution tracing."
   prototype off
   type phrase_types_data
   action host ""
@@ -2300,6 +2389,7 @@ phrase debug_trace_off = "off" in debug_trace {
 }
 
 phrase debug_trace_on = "on" in debug_trace {
+  docs "```recurloop\ndebug:trace on\n```\n\nEnables phrase execution tracing."
   prototype on
   type phrase_types_data
   action host ""
@@ -2373,6 +2463,7 @@ phrase emit_executable_quote = "\"" in emit_executable {
 }
 
 phrase emit_executable_debug = "debug" in emit_executable {
+  docs "```recurloop\nemit executable debug \"path\" main = fn () -> i64 { ... }\n```\n\nEmits a native executable with symbols and source/local information for debugging."
   dictionary
   type phrase_types_elaborate
   action host "lookup.enter"
@@ -2734,66 +2825,80 @@ phrase empty_equals_empty_empty = "" in lbracket_empty_equals_empty {
 
 // Bitwise punctuation is matched through the ordinary phrase dictionary.
 phrase bit_pipe = "|" in root {
+  docs "```recurloop\nleft | right\n```\n\nCombines integer bits with OR."
   type phrase_types_data
 }
 
 phrase bit_caret = "^" in root {
+  docs "```recurloop\nleft ^ right\n```\n\nCombines integer bits with XOR."
   type phrase_types_data
 }
 
 phrase bit_tilde = "~" in root {
+  docs "```recurloop\n~expression\n```\n\nInverts all integer bits."
   type phrase_types_data
 }
 
 phrase bit_shift_left = "<<" in root {
+  docs "```recurloop\nleft << right\n```\n\nShifts integer bits left, discarding bits past the width."
   type phrase_types_data
 }
 
 phrase bit_shift_right = ">>" in root {
+  docs "```recurloop\nleft >> right\n```\n\nShifts right arithmetically for signed types and logically for unsigned types."
   type phrase_types_data
 }
 
 phrase bit_and_equals = "&=" in root {
+  docs "```recurloop\ntarget &= expression\n```\n\nApplies `&` to the target and expression, then stores the result in the target."
   prototype expressions_infix_bit_and
   type phrase_types_data
 }
 
 phrase bit_or_equals = "|=" in root {
+  docs "```recurloop\ntarget |= expression\n```\n\nApplies `|` to the target and expression, then stores the result in the target."
   prototype expressions_infix_bit_or
   type phrase_types_data
 }
 
 phrase bit_xor_equals = "^=" in root {
+  docs "```recurloop\ntarget ^= expression\n```\n\nApplies `^` to the target and expression, then stores the result in the target."
   prototype expressions_infix_bit_xor
   type phrase_types_data
 }
 
 phrase bit_shift_left_equals = "<<=" in root {
+  docs "```recurloop\ntarget <<= expression\n```\n\nApplies `<<` to the target and expression, then stores the result in the target."
   prototype expressions_infix_shift_left
   type phrase_types_data
 }
 
 phrase bit_shift_right_equals = ">>=" in root {
+  docs "```recurloop\ntarget >>= expression\n```\n\nApplies `>>` to the target and expression, then stores the result in the target."
   prototype expressions_infix_shift_right
   type phrase_types_data
 }
 
 phrase debug_terminal = "terminal" in debug {
+  docs "```recurloop\ndebug:terminal \"device_path\"\n```\n\nSelects the terminal device for native application input and output."
   type phrase_types_scoped_callable
   action host "debugger.terminal"
 }
 
 phrase debug_stack = "stack" in debug {
+  docs "```recurloop\ndebug:stack\n```\n\nLists native call frames and their identifiers."
   type phrase_types_scoped_callable
   action host "debugger.stack"
 }
 
 phrase debug_frame = "frame" in debug {
+  docs "```recurloop\ndebug:frame id\n```\n\nSelects a native call frame for variable inspection; frame identifiers start at zero."
   type phrase_types_scoped_callable
   action host "debugger.frame"
 }
 
 phrase debug_set = "set" in debug {
+  docs "```recurloop\ndebug:set name = expression\n```\n\nWrites a native scalar variable in the selected frame."
   type phrase_types_scoped_callable
   action host "debugger.set"
 }

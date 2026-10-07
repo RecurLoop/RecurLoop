@@ -1,12 +1,14 @@
 // Assembler vocabulary. Registers, instructions, sections and widths are named declarations.
 
 phrase asm = "asm" in root {
+  docs "```recurloop\nasm {\n    instruction operands\n    ...\n}\n```\n\nAssembles native instructions and labels. Use it as a `let` definition or after an `emit` directive.\n\n**Example**\n\n```recurloop\nlet answer = asm {\n    mov rax, 42\n    ret\n}\n```"
   dictionary
   type phrase_types_elaborate
   action host "lookup.enter"
 }
 
 phrase invoke = "invoke" in root {
+  docs "```recurloop\ninvoke <phrase>\n```\n\nAt top level, invokes the referenced phrase action. In an `asm` block, emits a native call to that action; typed functions may take arguments after the reference."
   type phrase_types_elaborate
   action host "assembler.invoke"
   language compiler

@@ -1053,6 +1053,7 @@ let Inferred:execute_source = fn (state:Context*, source:u8*) -> void {
 }
 
 let Inferred:top_form = phrase {
+    docs = "```recurloop\npoly fn name(parameter, ...) { ... }\npoly specializations name\n```\n\nDefines a type-light function and lazily compiles a specialization for each argument-type combination. `poly specializations` lists compiled variants.\n\n**Example**\n\n```recurloop\npoly fn add(a, b) { return a + b }\nprint add(20, 22)\n```"
     type = <phrase-types:elaborate>
     permanent = true
     action = fn (state:Context*, called:Phrase*) -> void {
@@ -1082,6 +1083,7 @@ let LanguageKit:Forms:Inferred = phrase {
 }
 
 let Inferred:assert_phrase = phrase {
+    docs = "```recurloop\ninferred_assert category name\n```\n\nChecks that a phrase-backed Inferred symbol exists. Categories: `function`, `variable`, `grammar` and `symbol`.\n\n**Example**\n\n```recurloop\ninferred_assert function add\n```"
     type = <phrase-types:elaborate>
     permanent = true
     action = fn (state:Context*, called:Phrase*) -> void {
@@ -1107,6 +1109,7 @@ let Inferred:assert_phrase = phrase {
 let inferred_assert = <Inferred:assert_phrase>
 
 let Inferred:explicit_form = phrase {
+    docs = "```recurloop\ninfer fn name(parameter, ...) { ... }\ninfer { ... }\n```\n\nSelects Inferred syntax explicitly. Parameters and result types may be inferred; the block form applies this selection to its contents.\n\n**Example**\n\n```recurloop\ninfer fn twice(x) { return x + x }\n```"
     type = <phrase-types:elaborate>
     permanent = true
     action = fn (state:Context*, called:Phrase*) -> void {

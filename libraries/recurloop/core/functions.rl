@@ -8,7 +8,7 @@ phrase fn_grammar = "\0fn-grammar" in root {
 phrase fn = "fn" in root {
   kind "keyword"
   color "#569CD6"
-  docs "Defines a typed function."
+  docs "```recurloop\nfn name(parameter:type, ...) -> result { ... }\nlet name = fn (parameter:type, ...) -> result { ... }\n```\n\nCompiles a typed function. Call it with `name(arguments)`. Parameters may be empty; use `void` when no value is returned.\n\nWithout a body, `let Signature = fn (...) -> result` defines a reusable signature. Here `...` stands for more parameters or body statements.\n\n**Example**\n\n```recurloop\nlet add = fn (a:i64, b:i64) -> i64 {\n    return a + b\n}\nprint add(20, 22)\n```"
   type phrase_types_data
 }
 
@@ -22,7 +22,7 @@ phrase fn_cc83a0 = "fn" in root {
 phrase forward = "forward" in root {
   kind "keyword"
   color "#569CD6"
-  docs "Declares a function before its implementation."
+  docs "```recurloop\nforward name(parameter:type, ...) -> result\n```\n\nDeclares a function before its definition. The later `fn` must match the signature.\n\n**Example**\n\n```recurloop\nforward odd(n:i64) -> i64\n```"
   type phrase_types_elaborate
   action host "fn.forward"
   language compiler
@@ -31,7 +31,7 @@ phrase forward = "forward" in root {
 phrase function = "function" in root {
   kind "keyword"
   color "#569CD6"
-  docs "Declares a typed function value."
+  docs "```recurloop\nfunction name(parameter:type, ...) -> result abi convention\n```\n\nAttaches a typed call signature to an existing invokable phrase with a native module, such as one defined by `asm`. Use `fn` to write a new function."
   type phrase_types_elaborate
   action host "typed.function"
   language compiler
@@ -40,7 +40,7 @@ phrase function = "function" in root {
 phrase method = "method" in root {
   kind "keyword"
   color "#569CD6"
-  docs "Declares a method associated with a record type."
+  docs "```recurloop\nmethod Record name(self:Record*, ...) -> result abi convention\n```\n\nDeclares a typed method contract on a record. The first parameter is the receiver; invoke it as `instance.name(arguments)`."
   type phrase_types_elaborate
   action host "typed.method"
   language compiler
@@ -72,6 +72,7 @@ phrase fn_grammar_symbols = "symbols" in fn_grammar {
 }
 
 phrase fn_grammar_intrinsics_ampersand = "&" in fn_grammar_intrinsics {
+  docs "```recurloop\n&target\n```\n\nReturns the address of an addressable native value."
   dictionary
   prototype ampersand
   type phrase_types_data
@@ -79,6 +80,7 @@ phrase fn_grammar_intrinsics_ampersand = "&" in fn_grammar_intrinsics {
 }
 
 phrase fn_grammar_intrinsics_star = "*" in fn_grammar_intrinsics {
+  docs "```recurloop\n*pointer\n```\n\nReads the pointed-to native value; use `*pointer = value` to write it."
   dictionary
   prototype star
   type phrase_types_data
@@ -107,18 +109,21 @@ phrase fn_grammar_intrinsics_sizeof = "sizeof" in fn_grammar_intrinsics {
 }
 
 phrase fn_grammar_postfix_lparen = "(" in fn_grammar_postfix {
+  docs "```recurloop\nfunction(arguments)\n```\n\nCalls a native function or function value with matching typed arguments."
   prototype lparen
   type phrase_types_callable
   action host "fn.postfix.call"
 }
 
 phrase fn_grammar_postfix_dot = "." in fn_grammar_postfix {
+  docs "```recurloop\ninstance.field\ninstance.method(arguments)\n```\n\nAccesses a record field or invokes its method."
   prototype dot
   type phrase_types_callable
   action host "fn.postfix.member"
 }
 
 phrase fn_grammar_postfix_question = "?" in fn_grammar_postfix {
+  docs "```recurloop\npointer_expression?\n```\n\nPropagates a null pointer by returning null from the current pointer-returning function."
   prototype question
   type phrase_types_callable
   action host "fn.postfix.propagate"
@@ -131,6 +136,7 @@ phrase fn_grammar_postfix_colon = ":" in fn_grammar_postfix {
 }
 
 phrase fn_grammar_postfix_lbracket = "[" in fn_grammar_postfix {
+  docs "```recurloop\narray_or_pointer[index]\n```\n\nAccesses a native element by zero-based index."
   prototype lbracket_862dc1
   type phrase_types_callable
   action host "fn.postfix.index"
