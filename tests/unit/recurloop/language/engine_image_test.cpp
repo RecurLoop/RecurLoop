@@ -7,6 +7,8 @@
 #include <recurloop/TranslationUnits.hpp>
 
 #include <filesystem>
+#include <fstream>
+#include <iterator>
 #include <sstream>
 
 #include <unistd.h>
@@ -19,6 +21,12 @@ namespace {
     phrase.update(0, std::uintptr_t{0}).save();
   }
 
+  int languageKitDrops = 0;
+
+  void languageKitDrop(context::Context &, lexicon::Phrase &) {
+    ++languageKitDrops;
+  }
+
   class EngineImageTesting : public recurloop::Recurloop, public testing::Test {
   protected:
     void initializeWith(std::string source) {
@@ -28,6 +36,17 @@ namespace {
       context.io.out = &output;
       context.io.err = &errors;
       ASSERT_EQ(execute(), 0) << errors.str();
+    }
+
+    void loadLanguageKit() {
+      const auto path = std::filesystem::path(RECURLOOP_TEST_SOURCE_DIR) / "libraries/language-kit/library.rl";
+      std::ifstream file(path);
+      ASSERT_TRUE(file.is_open());
+      std::string source{std::istreambuf_iterator<char>(file), std::istreambuf_iterator<char>()};
+      const auto exportStart = source.find("include \"../build/export.rl\"");
+      ASSERT_NE(exportStart, std::string::npos);
+      source.resize(exportStart);
+      ASSERT_NO_THROW(recurloop::executeSource(context, source, path.string(), 1));
     }
 
     lexicon::Phrase rootPhrase(std::string_view name) {
@@ -74,6 +93,71 @@ TEST_F(EngineImageTesting, ReleasesOwnedNativePayloadsBeforeEngineMemory) {
 
   recurloop::EngineImage::releaseNativeState(context);
   EXPECT_EQ(nativeCleanupCalls, 1);
+}
+
+TEST_F(EngineImageTesting, ReleasesLanguageKitBindingsAndOutstandingLifetimeScopes) {
+  initializeWith("");
+  ASSERT_NO_FATAL_FAILURE(loadLanguageKit());
+  auto root = context.lexicon.phrase();
+  root.append("observe-languagekit-drop")
+      .make()
+      .setType(lexicon::phrase::type::getElaborate(root))
+      .setAction(languageKitDrop)
+      .save();
+  languageKitDrops = 0;
+  const std::string setup = R"rl(
+let teardown_drop = fn (state:Context*, pointer:u8*, userdata:i64) -> void {
+    free(pointer)
+    context:phrase:dispatch(state, context:phrase:find(state, "observe-languagekit-drop"))
+}
+let setup_teardown = fn (state:Context*, called:Phrase*) -> void {
+    LanguageKit:publish_integer(state, "published_number", 42)
+    LanguageKit:publish_text(state, "published_text", "owned text")
+    let local = LanguageKit:Lifetime:enter(state)
+    let list = LanguageKit:Value:new(state, 4)
+    list.arity = 1
+    list.items = cast(LanguageKit:Value**, malloc(sizeof(LanguageKit:Value*)))
+    list.items[0] = cast(LanguageKit:Value*, 0)
+    LanguageKit:Value:set_item(state, list, 0, LanguageKit:Value:integer(state, 7))
+    LanguageKit:publish(state, "published_list", list)
+    LanguageKit:Lifetime:leave(state, local)
+    LanguageKit:Lifetime:alloc(state, 8, teardown_drop, 0)
+    LanguageKit:Lifetime:enter(state)
+    LanguageKit:Lifetime:alloc(state, 8, teardown_drop, 0)
+    LanguageKit:Lifetime:enter(state)
+    LanguageKit:Lifetime:alloc(state, 8, teardown_drop, 0)
+}
+setup_teardown
+)rl";
+  ASSERT_NO_THROW(recurloop::executeSource(context, setup, "<teardown-setup>", 1));
+
+  recurloop::EngineImage::releaseNativeState(context);
+  EXPECT_EQ(languageKitDrops, 3);
+  EXPECT_EQ(context.values().get("__languagekit_lifetime_live_objects").asInteger(), 0);
+  EXPECT_EQ(context.values().get("__languagekit_lifetime_live_bytes").asInteger(), 0);
+  EXPECT_EQ(context.values().get("__languagekit_lifetime_live_refs").asInteger(), 0);
+  const std::string check = R"rl(
+let check_teardown = fn (state:Context*, called:Phrase*) -> void {
+    if LanguageKit:state_get(state, "__languagekit_lifetime_root") ||
+       LanguageKit:state_get(state, "__languagekit_lifetime_current") ||
+       LanguageKit:state_get(state, "__languagekit_lifetime_controls") ||
+       LanguageKit:state_get(state, "__languagekit_binding_head") {
+        context:diagnostic:error(state, "LanguageKit teardown left native state")
+    }
+}
+check_teardown
+)rl";
+  ASSERT_NO_THROW(recurloop::executeSource(context, check, "<teardown-check>", 1));
+  EXPECT_EQ(errors.str(), "");
+  recurloop::EngineImage::releaseNativeState(context);
+  EXPECT_EQ(languageKitDrops, 3);
+
+  // The cleared slots can own fresh state; real engine destruction runs the
+  // same finalizers before unmapping the source-defined actions.
+  ASSERT_NO_THROW(recurloop::executeSource(context, "setup_teardown\n", "<teardown-reuse>", 1));
+  cleanupMemory();
+  EXPECT_EQ(languageKitDrops, 6);
+  EXPECT_NO_THROW(cleanupMemory());
 }
 
 TEST_F(EngineImageTesting, CompilesSourceBackedLexiconsOnDemandWithoutAResultCache) {

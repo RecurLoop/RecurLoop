@@ -32,6 +32,7 @@ let owned_native_cleanup = phrase {
 }
 let setup_native_state = fn (state:Context*, called:Phrase*) -> void {
     LanguageKit:state_set(state, "portable_counter", 42)
+    LanguageKit:publish_text(state, "published_text", "owned text")
     if !LanguageKit:state_pointer_set(state, "native_state", 1234) {
         context:diagnostic:error(state, "could not store native pointer")
     }
@@ -63,6 +64,14 @@ let clear_native_state = fn (state:Context*, called:Phrase*) -> void {
     if LanguageKit:state_get(state, "owned_native_state") != 0 {
         context:diagnostic:error(state, "owned native cleanup did not clear its slot")
     }
+    context:phrase:dispatch(state, LanguageKit:state_pointer_find(state, "__languagekit_lifetime_root"))
+    context:phrase:dispatch(state, LanguageKit:state_pointer_find(state, "__languagekit_binding_head"))
+    if LanguageKit:state_get(state, "__languagekit_lifetime_root") ||
+       LanguageKit:state_get(state, "__languagekit_lifetime_current") ||
+       LanguageKit:state_get(state, "__languagekit_lifetime_controls") ||
+       LanguageKit:state_get(state, "__languagekit_binding_head") {
+        context:diagnostic:error(state, "LanguageKit cleanup left live native pointers")
+    }
 }
 clear_native_state
 ]=])
@@ -74,6 +83,14 @@ let check_native_state = fn (state:Context*, called:Phrase*) -> void {
     }
     if LanguageKit:state_get(state, "portable_counter") != 42 {
         context:diagnostic:error(state, "portable counter did not survive import")
+    }
+    // Cleared ownership slots and their finalizers survive export/import.
+    LanguageKit:publish_integer(state, "fresh_value", 7)
+    context:phrase:dispatch(state, LanguageKit:state_pointer_find(state, "__languagekit_binding_head"))
+    context:phrase:dispatch(state, LanguageKit:state_pointer_find(state, "__languagekit_lifetime_root"))
+    if LanguageKit:state_get(state, "__languagekit_lifetime_live_objects") != 0 ||
+       LanguageKit:state_get(state, "__languagekit_lifetime_live_refs") != 0 {
+        context:diagnostic:error(state, "Imported LanguageKit finalizers did not release fresh state")
     }
 }
 check_native_state

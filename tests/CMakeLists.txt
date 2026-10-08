@@ -101,6 +101,13 @@ if(ENABLE_TESTS_UNIT)
     recurloop_add_unit_tests(radix RadixLib)
     recurloop_add_unit_tests(recurloop RecurloopLib)
 
+    # Engine-image lifecycle regressions also execute the source-defined kit.
+    target_compile_definitions(unit_test_recurloop_language_engine_image PRIVATE
+        RECURLOOP_TEST_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+    add_custom_command(
+        OUTPUT "${RECURLOOP_CHECK_DIR}/unit/recurloop_language_engine_image.stamp"
+        APPEND DEPENDS ${RECURLOOP_CHECK_LANGUAGE_KIT_FILES})
+
     add_custom_target(RecurloopCompletionTestLibraries DEPENDS "${RECURLOOP_SHELL_IMAGE}")
     target_compile_definitions(unit_test_recurloop_generation PRIVATE
         RECURLOOP_TEST_LANGUAGE_KIT_IMAGE="${RECURLOOP_LANGUAGE_KIT_IMAGE}"

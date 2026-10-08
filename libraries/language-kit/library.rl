@@ -359,8 +359,20 @@ let LanguageKit:Lifetime:root = fn (state:Context*) -> LanguageKit:LifetimeScope
     scope.parent = cast(LanguageKit:LifetimeScope*, 0)
     scope.refs = cast(LanguageKit:LifetimeRef*, 0)
     scope.depth = 0
-    LanguageKit:state_pointer_set(state, "__languagekit_lifetime_root", cast(i64, scope))
-    LanguageKit:state_pointer_set(state, "__languagekit_lifetime_current", cast(i64, scope))
+    let kit = context:phrase:find(state, "LanguageKit")
+    let lifetime = context:phrase:find:exact(state, kit, "Lifetime")
+    let cleanup = context:phrase:find:exact(state, lifetime, "cleanup")
+    if !LanguageKit:state_pointer_set_owned(state, "__languagekit_lifetime_root", cast(i64, scope), cleanup) {
+        free(cast(u8*, scope))
+        context:diagnostic:error(state, "LanguageKit: could not register lifetime root cleanup")
+        return cast(LanguageKit:LifetimeScope*, 0)
+    }
+    if !LanguageKit:state_pointer_set(state, "__languagekit_lifetime_current", cast(i64, scope)) {
+        LanguageKit:state_pointer_set(state, "__languagekit_lifetime_root", 0)
+        free(cast(u8*, scope))
+        context:diagnostic:error(state, "LanguageKit: could not register current lifetime scope")
+        return cast(LanguageKit:LifetimeScope*, 0)
+    }
     return scope
 }
 
@@ -744,6 +756,29 @@ let LanguageKit:Lifetime:weak_destroy = fn (state:Context*, weak:LanguageKit:Wea
 
 let LanguageKit:Lifetime:managed = fn (state:Context*, pointer:u8*) -> i64 {
     return LanguageKit:Lifetime:control(state, pointer) != cast(LanguageKit:LifetimeControl*, 0)
+}
+
+// Close outstanding scopes before the engine releases its lexicon/JIT memory.
+// Detached strong references and weak handles remain owned by their callers;
+// their finalizers may run before or after this one.
+let LanguageKit:Lifetime:cleanup = phrase {
+    type = <phrase-types:elaborate>
+    permanent = true
+    action = fn (state:Context*, called:Phrase*) -> void {
+        let slot = context:phrase:address(state, called)
+        var raw:i64 = 0
+        if !context:phrase:read(state, slot, 0, cast(u8*, &raw), 8) || !raw { return }
+        let root = cast(LanguageKit:LifetimeScope*, raw)
+        var scope = LanguageKit:Lifetime:current(state)
+        while scope && scope != root {
+            let parent = scope.parent
+            LanguageKit:Lifetime:leave(state, scope)
+            scope = parent
+        }
+        LanguageKit:Lifetime:leave(state, root)
+        raw = 0
+        context:phrase:write(state, slot, 0, cast(u8*, &raw), 8)
+    }
 }
 
 let LanguageKit:Lifetime:test_drop = fn (state:Context*, pointer:u8*, userdata:i64) -> void {
@@ -2010,8 +2045,33 @@ let LanguageKit:binding_head = fn (state:Context*) -> LanguageKit:Binding* {
     return cast(LanguageKit:Binding*, LanguageKit:state_get(state, "__languagekit_binding_head"))
 }
 
+// Values belong to Lifetime scopes, so this finalizer only owns the binding
+// nodes and their names. It is independent of the lifetime finalizer's order.
+let LanguageKit:Bindings:cleanup = phrase {
+    type = <phrase-types:elaborate>
+    permanent = true
+    action = fn (state:Context*, called:Phrase*) -> void {
+        let slot = context:phrase:address(state, called)
+        var raw:i64 = 0
+        if !context:phrase:read(state, slot, 0, cast(u8*, &raw), 8) || !raw { return }
+        let head = cast(LanguageKit:Binding*, raw)
+        raw = 0
+        context:phrase:write(state, slot, 0, cast(u8*, &raw), 8)
+        var binding = head
+        while binding {
+            let next = binding.next
+            if binding.name { free(binding.name) }
+            free(cast(u8*, binding))
+            binding = next
+        }
+    }
+}
+
 let LanguageKit:set_binding_head = fn (state:Context*, head:LanguageKit:Binding*) -> i64 {
-    return LanguageKit:state_pointer_set(state, "__languagekit_binding_head", cast(i64, head))
+    let kit = context:phrase:find(state, "LanguageKit")
+    let bindings = context:phrase:find:exact(state, kit, "Bindings")
+    let cleanup = context:phrase:find:exact(state, bindings, "cleanup")
+    return LanguageKit:state_pointer_set_owned(state, "__languagekit_binding_head", cast(i64, head), cleanup)
 }
 
 let LanguageKit:binding = fn (state:Context*, symbol:i64) -> LanguageKit:Binding* {
@@ -2035,13 +2095,18 @@ let LanguageKit:ensure_binding = fn (state:Context*, name:u8*) -> LanguageKit:Bi
     if !self { return cast(LanguageKit:Binding*, 0) }
     self.symbol = symbol
     self.name = LanguageKit:copy_text(name)
+    if !self.name { free(cast(u8*, self)); return cast(LanguageKit:Binding*, 0) }
     self.kind = 0
     self.value = cast(LanguageKit:Value*, 0)
     self.call = cast(LanguageKit:Call, 0)
     self.arity = -1
     self.userdata = 0
     self.next = LanguageKit:binding_head(state)
-    LanguageKit:set_binding_head(state, self)
+    if !LanguageKit:set_binding_head(state, self) {
+        free(self.name)
+        free(cast(u8*, self))
+        return cast(LanguageKit:Binding*, 0)
+    }
     return self
 }
 
