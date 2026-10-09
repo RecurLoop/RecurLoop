@@ -259,17 +259,7 @@ namespace recurloop {
       Assembler::finalize(context, invoked, module);
     }
 
-    void commit_let(context::Context &context, lexicon::Phrase &invoked, Size lookupLevels) {
-      DEBUG_PROFILE_SCOPE(LetCommit);
-
-      finalize_staged_code(context, invoked);
-
-      if (!context.staging.phrase.containsType() && !context.staging.phrase.containsPrototype())
-        context.staging.phrase.setType(lexicon::phrase::type::getData(invoked));
-
-      lexicon::Phrase &saved = context.staging.phrase.save();
-      Assembler::commitNative(context, saved);
-      Functions::commitVariant(context, saved);
+    void applyPhraseOptions(context::Context &context, lexicon::Phrase &saved) {
       if (!context.exec.pendingPhrasePayload.empty()) {
         Byte output = saved.allocate(context.exec.pendingPhrasePayload.size());
         std::memcpy(output.toPtr(), context.exec.pendingPhrasePayload.data(), context.exec.pendingPhrasePayload.size());
@@ -288,6 +278,20 @@ namespace recurloop {
         context.exec.hasPendingPhrasePermanent = false;
       }
       Semantic::applyPending(context, saved);
+    }
+
+    void commit_let(context::Context &context, lexicon::Phrase &invoked, Size lookupLevels) {
+      DEBUG_PROFILE_SCOPE(LetCommit);
+
+      finalize_staged_code(context, invoked);
+
+      if (!context.staging.phrase.containsType() && !context.staging.phrase.containsPrototype())
+        context.staging.phrase.setType(lexicon::phrase::type::getData(invoked));
+
+      lexicon::Phrase &saved = context.staging.phrase.save();
+      Assembler::commitNative(context, saved);
+      Functions::commitVariant(context, saved);
+      applyPhraseOptions(context, saved);
 
       context::Staging::pop(context, 1);
 
@@ -532,7 +536,7 @@ namespace recurloop {
 
       lexicon::Phrase &saved = context.staging.phrase.save();
       Assembler::commitNative(context, saved);
-      Semantic::applyPending(context, saved);
+      applyPhraseOptions(context, saved);
 
       context::Staging::pop(context, 0);
 

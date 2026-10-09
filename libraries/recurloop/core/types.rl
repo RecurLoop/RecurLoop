@@ -15,6 +15,10 @@ phrase color = "color" in root {
   type phrase_types_data
 }
 
+phrase help = "help" in root {
+  type phrase_types_data
+}
+
 phrase phrase_fields = "\0phrase-fields" in root {
   dictionary
   type phrase_types_data
@@ -117,6 +121,15 @@ phrase phrase_fields_docs = "docs" in phrase_fields {
   docs "```recurloop\ndocs = \"Markdown text\"\n```\n\nSets hover and completion documentation. Use a fenced `recurloop` code block for syntax highlighting and `\\n` for line breaks."
   type phrase_types_callable
   action host "phrase.field.docs"
+}
+
+phrase phrase_fields_help = "help" in phrase_fields {
+  prototype help
+  kind "phrase field"
+  color "#9CDCFE"
+  docs "```recurloop\nhelp = <usage_dictionary>\n```\n\nAttaches editor help: `pattern`, `snippet`, `example`, `tags` and named `arguments`. Values live in ordinary phrases. Aliases inherit help; `none` clears it."
+  type phrase_types_callable
+  action host "phrase.field.help"
 }
 
 phrase phrase_fields_kind = "kind" in phrase_fields {

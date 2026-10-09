@@ -198,6 +198,7 @@ phrase.field.action
 phrase.field.dictionary
 phrase.field.color
 phrase.field.docs
+phrase.field.help
 phrase.field.kind
 phrase.field.parent
 phrase.field.payload

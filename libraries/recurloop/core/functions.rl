@@ -8,7 +8,7 @@ phrase fn_grammar = "\0fn-grammar" in root {
 phrase fn = "fn" in root {
   kind "keyword"
   color "#569CD6"
-  docs "```recurloop\nfn name(parameter:type, ...) -> result { ... }\nlet name = fn (parameter:type, ...) -> result { ... }\n```\n\nCompiles a typed function. Call it with `name(arguments)`. Parameters may be empty; use `void` when no value is returned.\n\nWithout a body, `let Signature = fn (...) -> result` defines a reusable signature. Here `...` stands for more parameters or body statements.\n\n**Example**\n\n```recurloop\nlet add = fn (a:i64, b:i64) -> i64 {\n    return a + b\n}\nprint add(20, 22)\n```"
+  docs "Compiles a typed function. Parameters use name:type; void returns no value. Omit the body to define a reusable signature. Call with name(arguments)."
   type phrase_types_data
 }
 

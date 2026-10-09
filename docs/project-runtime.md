@@ -127,6 +127,12 @@ returns language facts, without implementing any client-specific queries:
 
 - `R<TAB>start<TAB>end<TAB>line<TAB>version<TAB>hex(name)` is an actual phrase match.
 - `P<TAB>version<TAB>hex(name)<TAB>hex(kind)<TAB>hex(docs)<TAB>hex(prototype)<TAB>hex(type)<TAB>hex(signatures)` is a visible dictionary entry. Overload signatures are separated by newlines inside the hex payload.
+- `H<TAB>version<TAB>hex(name)<TAB>hex(pattern)<TAB>hex(snippet)<TAB>hex(example)<TAB>hex(summary)<TAB>hex(tags)` is its inherited help contract. Declarative syntax supplies the pattern when the contract omits it.
+- `J<TAB>version<TAB>hex(owner)<TAB>hex(argument)<TAB>hex(docs)<TAB>hex(dictionary)<TAB>hex(kind)<TAB>hex(prototype)` describes a named capture and its intersecting selectors.
+- `X<TAB>version<TAB>hex(owner)<TAB>start<TAB>hex(argument)<TAB>hex(matcher)<TAB>hex(literal)<TAB>hex(insertion)` is a viable continuation at the end of the supplied buffer. Literal rows leave argument/matcher empty; insertion includes any separator admitted by the matcher.
+  A row with all three text fields empty means the pattern can finish here, so the next phrase may also begin.
+- `D<TAB>hex(dictionary)<TAB>start` names the active lookup dictionary and the phrase boundary supplied by source processing; an empty name denotes the root.
+- `V<TAB>version<TAB>hex(owner)<TAB>hex(argument)<TAB>hex(name)<TAB>hex(spelling)` is a value admitted by the capture matcher and the argument's selectors.
 
 `:inspect-file` and `:trace-file` accept the same payload and return the same
 records for an independent source target. They create a separate context from

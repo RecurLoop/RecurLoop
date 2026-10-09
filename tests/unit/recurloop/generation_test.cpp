@@ -108,6 +108,61 @@ TEST(RecurloopGeneration, ExpressionInspectionValidatesDeclaredAndUndefinedNames
   EXPECT_NE(invalid.output.find("E\t"), std::string::npos);
 }
 
+TEST(RecurloopGeneration, HelpContractsUseMatchedSyntaxAndSurviveImageRelocation) {
+  auto state = project();
+  auto session = state->openSession();
+  const auto root = std::filesystem::temp_directory_path() / "recurloop-help-contract-test";
+  std::filesystem::create_directories(root);
+  const auto image = root / "help.rli";
+  const auto definitions = R"rl(
+syntax choose (fast | safe) <value:number> => print ${value}
+let Usage = [
+  summary = phrase { payload = "Choose a mode." }
+  snippet = phrase { payload = "${phrase} ${1|fast,safe|} ${2:42}" }
+  arguments = [ value = phrase { docs = "Number to print." } ]
+]
+set choose.help = <Usage>
+let alternate = <choose>
+)rl";
+  const auto defined = session->evaluate(definitions);
+  ASSERT_EQ(defined.status, 0) << defined.error;
+  ASSERT_EQ(session->evaluate("engine export \"" + image.string() + "\"").status, 0);
+  auto restored = project()->openSession();
+  const auto imported = restored->evaluate("engine import \"" + image.string() + "\"");
+  ASSERT_EQ(imported.status, 0) << imported.error;
+  const auto inspect = [&](std::string source) { return restored->inspect("engine import \"" + image.string() + "\"\n" + source, (root / "edited.rl").string(), true, true).output; };
+  const auto response = inspect("// 😀\nalternate sa");
+  EXPECT_NE(response.find("H\t"), std::string::npos);
+  EXPECT_NE(response.find("\t616c7465726e617465\t"), std::string::npos); // alternate
+  EXPECT_NE(response.find("\t73616665\t73616665\n"), std::string::npos); // safe
+  EXPECT_NE(response.find("43686f6f73652061206d6f64652e"), std::string::npos); // serialized summary
+  EXPECT_NE(response.find("4e756d62657220746f207072696e742e"), std::string::npos);
+  EXPECT_NE(inspect("choose fast ").find("\t76616c7565\t6e756d626572\t\t\n"), std::string::npos);
+  // Replacing imported help must update the relocated attachment and survive
+  // another export/import, including the contract inherited by an alias.
+  const auto updatedImage = root / "updated.rli";
+  const auto updated = restored->evaluate(R"rl(
+let UpdatedUsage = [
+  summary = phrase { payload = "Updated mode." }
+  arguments = <Usage:arguments>
+]
+set choose.help = <UpdatedUsage>
+)rl" + std::string("engine export \"") + updatedImage.string() + "\"");
+  ASSERT_EQ(updated.status, 0) << updated.error;
+  const auto updatedResponse = restored->inspect("engine import \"" + updatedImage.string() + "\"\nalternate sa",
+                                                 (root / "updated.rl").string(), true, true);
+  EXPECT_NE(updatedResponse.output.find("55706461746564206d6f64652e"), std::string::npos); // Updated mode.
+  EXPECT_EQ(updatedResponse.output.find("43686f6f73652061206d6f64652e"), std::string::npos);
+  EXPECT_NE(updatedResponse.output.find("4e756d62657220746f207072696e742e"), std::string::npos);
+  ASSERT_EQ(restored->evaluate("set alternate.help = none").status, 0);
+  const auto cleared = inspect("set alternate.help = none\nalternate sa");
+  const auto start = cleared.find("H\t0\t616c7465726e617465\t");
+  ASSERT_NE(start, std::string::npos);
+  EXPECT_EQ(cleared.substr(start, cleared.find('\n', start) - start).find("43686f6f73652061206d6f64652e"), std::string::npos);
+  EXPECT_NE(restored->evaluate("let Bad = [ pattern = phrase { payload = \"<x:unknown>\" } ]\nset choose.help = <Bad>").status, 0);
+  std::filesystem::remove_all(root);
+}
+
 TEST(RecurloopGeneration, LiteralPhrasesKeepPriorityOverNativeCallStatements) {
   auto session = project()->openSession();
   ASSERT_EQ(session->evaluate(R"rl(

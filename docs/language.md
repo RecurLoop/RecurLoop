@@ -5,6 +5,10 @@ phrase has a key and may carry behavior, data, a prototype, a type, a
 successor, and a nested dictionary. The normal lookup rule selects the longest
 matching key in the current dictionary.
 
+Phrases can carry short `docs` and a `help` dictionary with snippets, examples
+and named argument guidance. The same contracts work for user-defined syntax
+and aliases; see [editor help](editor-help.md).
+
 ## Process diagnostics
 
 `debug:stats` prints a process-monitor snapshot: PID, process age, threads,

@@ -55,12 +55,6 @@
         "path": "./syntaxes/recurloop.tmLanguage.json"
       }
     ],
-    "snippets": [
-      {
-        "language": "recurloop",
-        "path": "./snippets/recurloop.json"
-      }
-    ],
     "commands": [
       {
         "command": "recurloop.initializeProject",
@@ -97,6 +91,10 @@
       {
         "command": "recurloop.openConsole",
         "title": "RecurLoop: Open Project Console"
+      },
+      {
+        "command": "recurloop.help",
+        "title": "RecurLoop: Help"
       }
     ],
     "configuration": {
@@ -246,7 +244,7 @@
     "package": "vsce package --no-dependencies",
     "publish": "vsce publish --no-dependencies",
     "test": "npm run compile && npm run test:compiled",
-    "test:compiled": "node tests/default-terminal.cjs && node tests/setup.cjs && node tests/startup.cjs && node tests/project.cjs && node tests/runtime.cjs && node tests/navigation.cjs && node tests/editor.cjs",
+    "test:compiled": "node tests/default-terminal.cjs && node tests/setup.cjs && node tests/startup.cjs && node tests/project.cjs && node tests/runtime.cjs && node tests/navigation.cjs && node tests/editor.cjs && node tests/assistance.cjs",
     "test:project": "tsc -p ./ && node tests/project.cjs",
     "test:setup": "npm run compile && node tests/setup.cjs"
   },

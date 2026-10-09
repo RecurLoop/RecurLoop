@@ -40,7 +40,7 @@ phrase phrase_types_scoped_callable = "scoped-callable" in phrase_types {
 phrase syntax_definition = "syntax" in root {
   kind "keyword"
   color "#569CD6"
-  docs "```recurloop\nsyntax name <capture:matcher> ... => replacement\n```\n\nDefines source syntax and rewrites it to ordinary RecurLoop. Refer to a capture as `${capture}`. Available matchers include `expr`, `block`, `id`, `token`, `string` and `raw`.\n\n`[ ... ]` makes a part optional; `(a | b)` selects a choice. `syntax extend` keeps the previous definition as fallback; `syntax replace` shadows it. End with `as <phrase>` to reuse semantics, or `action fn (state:Context*, called:Phrase*) -> void { ... }` for a custom parser action.\n\n**Example**\n\n```recurloop\nsyntax unless <condition:expr> <body:block> => if !(${condition}) ${body}\n```"
+  docs "Defines a phrase pattern. Captures <name:matcher>, [optional] and (a | b) describe accepted source. Finish with => replacement, as <phrase> or action fn. Attach help = <dictionary> to document arguments and provide a snippet."
   type phrase_types_elaborate
   action host "syntax.define"
 }

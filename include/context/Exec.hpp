@@ -78,5 +78,7 @@ namespace context {
     bool hasPendingPhraseKind = false;
     bool hasPendingPhraseColor = false;
     bool hasPendingPhraseDocs = false;
+    Size pendingPhraseHelp = 0;
+    bool hasPendingPhraseHelp = false;
   };
 } // namespace context

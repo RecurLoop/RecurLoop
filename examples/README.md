@@ -46,6 +46,7 @@ their documented result. Generated ELF files and engine images are written to
 | Example | What it demonstrates |
 |---|---|
 | `phrase-aliases` | Renaming keywords and operators through prototypes |
+| `editor-help` | Author-defined snippets, argument selectors and inherited help |
 | `lexicon-composition` | Merging and flattening dictionaries |
 | `friendly-context-api` | High-level phrase lookup and definition APIs |
 | `context-api` | Overloads, bit-string keys, and low-level Context operations |

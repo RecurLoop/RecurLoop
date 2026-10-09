@@ -153,7 +153,8 @@ explains the full target syntax and CLI workflow.
 | Feature | How to use it |
 | --- | --- |
 | Semantic highlighting and diagnostics | Open an included `.rl` file; colors and Problems come from runtime inspection. |
-| Completion and signature help | Trigger completion while entering a phrase or function call; inspect parameter hints. |
+| Completion and signature help | Complete phrases from the current dictionary, follow syntax choices and inspect documented arguments. |
+| RecurLoop: Help | Search phrase summaries and tags, then insert an author-provided snippet. |
 | Hover documentation | Hover core phrases or custom phrases with `docs` metadata. |
 | Navigation | Use Go to Definition, Find All References, Go to Type Definition or Go to Implementation; use **Ctrl+T** to search project symbols. |
 | Rename and symbols | Rename a symbol through VS Code; browse definitions in the Outline view. |
@@ -161,6 +162,9 @@ explains the full target syntax and CLI workflow.
 | Project tasks | Use **Terminal → Run Task**; targets are discovered from the project runtime. |
 | Native debugging | Set breakpoints, inspect Variables and Watches, evaluate expressions and step through compiled functions. |
 | Project console | Use **RecurLoop: Open Project Console** to call functions and run targets interactively. |
+
+Snippets and argument guidance live in the language, including user libraries.
+See [authoring editor help](../../docs/editor-help.md) for the small contract.
 
 Analysis follows the project's `include` and import graph and includes unsaved
 editor buffers. A source outside that graph cannot receive project analysis;

@@ -19,6 +19,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <tuple>
 #include <unordered_map>
 #include <unordered_set>
 #include <utility>
@@ -248,6 +249,27 @@ namespace recurloop {
       std::vector<std::vector<Node>> alternatives;
     };
 
+    struct Observation {
+      std::size_t bytes = 0;
+      std::size_t steps = 0;
+      std::vector<SyntaxPattern::Expectation> expected;
+      std::size_t requiredStart = std::numeric_limits<std::size_t>::max();
+      std::string_view requiredLiteral;
+      bool reached = false;
+      void add(const Node &node, std::size_t start) {
+        if (requiredStart != std::numeric_limits<std::size_t>::max()) return;
+        expected.push_back({start, node.kind == Node::Kind::Capture ? node.text : "",
+                            node.captureType, node.kind == Node::Kind::Literal ? node.text : ""});
+      }
+    };
+    thread_local Observation *observation = nullptr;
+    struct ObservationLimit {};
+    struct ObservationScope {
+      Observation *previous = observation;
+      explicit ObservationScope(Observation &state) { observation = &state; }
+      ~ObservationScope() { observation = previous; }
+    };
+
     class PatternParser {
     public:
       explicit PatternParser(std::string_view source) : source(source) {}
@@ -275,6 +297,13 @@ namespace recurloop {
       }
 
       Node node() {
+        if (++items > 512) fail("pattern exceeds 512 items");
+        struct Depth {
+          std::size_t &value;
+          explicit Depth(std::size_t &value) : value(value) { ++value; }
+          ~Depth() { --value; }
+        } depthScope(depth);
+        if (depth > 64) fail("pattern exceeds 64 nested groups");
         skip();
         if (cursor >= source.size()) fail("expected a pattern item");
         if (source[cursor] == '<') return capture();
@@ -387,6 +416,8 @@ namespace recurloop {
 
       std::string_view source;
       std::size_t cursor = 0;
+      std::size_t depth = 0;
+      std::size_t items = 0;
     };
 
     void collectCaptureNames(const std::vector<Node> &nodes, std::unordered_set<std::string> &names) {
@@ -542,6 +573,7 @@ namespace recurloop {
           ++end;
         }
         std::string value = captureSlice(reader, start, end, node.captureType == "code");
+        if (observation && end == observation->bytes) observation->add(node, start);
         if (node.captureType == "expr" && value.empty()) return std::nullopt;
         captures[node.text] = std::move(value);
         return end;
@@ -621,15 +653,21 @@ namespace recurloop {
         }
         ++cursor;
       }
+      if (observation && cursor == observation->bytes) observation->add(node, start);
       return std::nullopt;
     }
 
     std::optional<std::size_t> matchSequence(const std::vector<Node> &nodes, std::size_t index, Reader &reader,
                                              std::size_t position, Captures &captures) {
+      if (observation && ++observation->steps > 65536) throw ObservationLimit{};
       if (index == nodes.size()) return position;
       const Node &node = nodes[index];
 
       if (node.kind == Node::Kind::Optional) {
+        if (observation) {
+          Captures skipped = captures;
+          matchSequence(nodes, index + 1, reader, position, skipped);
+        }
         Captures trial = captures;
         if (const auto inside = matchSequence(node.children, 0, reader, position, trial)) {
           if (const auto finish = matchSequence(nodes, index + 1, reader, *inside, trial)) {
@@ -640,16 +678,18 @@ namespace recurloop {
         return matchSequence(nodes, index + 1, reader, position, captures);
       }
       if (node.kind == Node::Kind::Choice) {
+        std::optional<std::size_t> result;
         for (const auto &alternative : node.alternatives) {
           Captures trial = captures;
           if (const auto inside = matchSequence(alternative, 0, reader, position, trial)) {
             if (const auto finish = matchSequence(nodes, index + 1, reader, *inside, trial)) {
               captures = std::move(trial);
-              return finish;
+              if (!observation) return finish;
+              result = finish;
             }
           }
         }
-        return std::nullopt;
+        return result;
       }
 
       if (node.kind == Node::Kind::Capture && node.captureType == "none") {
@@ -678,11 +718,19 @@ namespace recurloop {
       position = skipLayout(reader, position);
 
       if (node.kind == Node::Kind::Literal) {
+        if (observation && position <= observation->bytes) {
+          const auto remaining = reader.slice(position, observation->bytes);
+          if (remaining.size() < node.text.size() && node.text.starts_with(remaining)) observation->add(node, position);
+        }
         if (!startsWith(reader, position, node.text) || !literalBoundary(reader, position, node.text)) return std::nullopt;
+        if (observation && position == observation->requiredStart && node.text == observation->requiredLiteral)
+          observation->reached = true;
         return matchSequence(nodes, index + 1, reader, position + node.text.size(), captures);
       }
 
       if (node.captureType == "ignore") return matchSequence(nodes, index + 1, reader, position, captures);
+
+      if (observation && position == observation->bytes) observation->add(node, position);
 
       if (node.captureType == "block") {
         const auto end = blockEnd(reader, position);
@@ -702,6 +750,7 @@ namespace recurloop {
             break;
         }
         captures[node.text] = reader.slice(position, cursor);
+        if (observation && cursor == observation->bytes) observation->add(node, position);
         return matchSequence(nodes, index + 1, reader, cursor, captures);
       }
 
@@ -757,6 +806,7 @@ namespace recurloop {
         std::size_t cursor = position;
         while (reader.available(cursor) && reader.at(cursor) != '\n' && reader.at(cursor) != '\r') ++cursor;
         captures[node.text] = captureSlice(reader, position, cursor);
+        if (observation && cursor == observation->bytes) observation->add(node, position);
         return matchSequence(nodes, index + 1, reader, cursor, captures);
       }
 
@@ -1353,6 +1403,62 @@ namespace recurloop {
       currentMatch = previous;
     }
   } // namespace
+
+  void SyntaxPattern::validate(std::string_view pattern) {
+    PatternParser(pattern).parse();
+  }
+
+  std::string SyntaxPattern::pattern(lexicon::Phrase phrase) {
+    auto owner = patternOwner(phrase);
+    return owner.isNull() ? std::string{} : loadPayload(owner).pattern;
+  }
+
+  bool SyntaxPattern::accepts(std::string_view matcher, std::string_view value) {
+    const auto nodes = PatternParser("<value:" + std::string(matcher) + ">").parse();
+    StringReader reader(value);
+    const auto matched = matchPattern(nodes, reader);
+    return matched && matched->bytes == value.size();
+  }
+
+  std::string SyntaxPattern::insertion(std::string_view pattern, std::string_view prefix, const Expectation &item) {
+    if (item.literal.empty()) return {};
+    const auto nodes = PatternParser(pattern).parse();
+    const auto before = std::string(prefix.substr(0, item.start));
+    const auto reaches = [&](bool space) {
+      const auto candidate = before + (space ? " " : "") + item.literal;
+      Observation state{candidate.size(), 0, {}};
+      state.requiredStart = before.size() + (space ? 1 : 0);
+      state.requiredLiteral = item.literal;
+      ObservationScope scope(state);
+      StringReader reader(candidate);
+      Captures captures;
+      try { matchSequence(nodes, 0, reader, 0, captures); }
+      catch (const ObservationLimit &) { return false; }
+      return state.reached;
+    };
+    return !reaches(false) && reaches(true) ? ' ' + item.literal : item.literal;
+  }
+
+  std::vector<SyntaxPattern::Expectation> SyntaxPattern::expect(std::string_view pattern, std::string_view prefix) {
+    auto nodes = PatternParser(pattern).parse();
+    if (prefix.size() > MaximumPatternScan) return {};
+    Observation state{prefix.size(), 0, {}};
+    ObservationScope scope(state);
+    StringReader reader(prefix);
+    Captures captures;
+    try {
+      const auto end = matchSequence(nodes, 0, reader, 0, captures);
+      if (end && skipLayout(reader, *end) == prefix.size()) state.expected.push_back({prefix.size(), {}, {}, {}});
+    }
+    catch (const ObservationLimit &) { return {}; }
+    std::sort(state.expected.begin(), state.expected.end(), [](const auto &a, const auto &b) {
+      return std::tie(a.start, a.name, a.matcher, a.literal) < std::tie(b.start, b.name, b.matcher, b.literal);
+    });
+    state.expected.erase(std::unique(state.expected.begin(), state.expected.end(), [](const auto &a, const auto &b) {
+      return a.start == b.start && a.name == b.name && a.matcher == b.matcher && a.literal == b.literal;
+    }), state.expected.end());
+    return state.expected;
+  }
 
   void SyntaxPattern::registerActions(context::Context &context) {
     context.actions().define("syntax.define", define);

@@ -6,6 +6,8 @@
 #include <lexicon/Lexicon.hpp>
 #include <recurloop/EngineImage.hpp>
 #include <recurloop/LanguageGrammar.hpp>
+#include <recurloop/Assistance.hpp>
+#include <recurloop/SyntaxPattern.hpp>
 #include <utilities/Byte.hpp>
 #include <utilities/Exception.hpp>
 
@@ -83,6 +85,7 @@ namespace recurloop {
       std::vector<Span> spans;
       std::vector<std::size_t> lineStarts;
       std::vector<std::size_t> characterOffsets;
+      std::size_t completionStart = 0;
       Size activeOwner = 0;
       std::uint64_t activeGroup = 0;
       Size continuationOwner = 0;
@@ -93,6 +96,8 @@ namespace recurloop {
       std::size_t sourceSteps = 0;
       std::size_t sourceStepBudget = 0;
       std::vector<std::string> matches;
+      struct Anchor { Size phrase; std::size_t end; };
+      std::vector<Anchor> anchors;
       std::unordered_map<Size, std::string> names;
       bool namesDirty = false;
     };
@@ -636,6 +641,8 @@ namespace recurloop {
     if (context.exec.hasPendingPhraseKind) setKind(context, phrase, context.exec.pendingPhraseKind);
     if (context.exec.hasPendingPhraseColor) setColor(context, phrase, context.exec.pendingPhraseColor);
     if (context.exec.hasPendingPhraseDocs) setDocs(context, phrase, context.exec.pendingPhraseDocs);
+    if (context.exec.hasPendingPhraseHelp)
+      Assistance::attach(context, phrase, lexicon::Phrase(&context.lexicon, context.exec.pendingPhraseHelp).load());
     clearPending(context);
   }
 
@@ -646,6 +653,8 @@ namespace recurloop {
     context.exec.hasPendingPhraseKind = false;
     context.exec.hasPendingPhraseColor = false;
     context.exec.hasPendingPhraseDocs = false;
+    context.exec.pendingPhraseHelp = 0;
+    context.exec.hasPendingPhraseHelp = false;
   }
 
   Semantic::InspectionScope::InspectionScope(context::Context &context, std::string_view source, std::string_view path) {
@@ -758,6 +767,10 @@ namespace recurloop {
     }
     const auto metadata = catalog(context);
     const auto names = phrasePaths(context);
+    const Assistance assistance(context);
+    std::unordered_map<Size, std::string> patterns;
+    struct Candidate { lexicon::Phrase phrase; std::string name; std::string kind; };
+    std::vector<Candidate> candidates;
     std::unordered_set<Size> visited;
     const auto visit = [&](lexicon::Phrase owner, const auto &self) -> void {
       if (owner.isNull() || !owner.containsSubdictionary() ||
@@ -780,10 +793,89 @@ namespace recurloop {
         if (phrase.containsType()) type = phrasePath(names, phrase.getType());
         output << "P\t" << phraseVersion(phrase) << '\t' << hex(name) << '\t' << hex(kind) << '\t' << hex(style.docs)
                << '\t' << hex(prototype) << '\t' << hex(type) << '\t' << hex(signatures[name]) << '\n';
+        candidates.push_back({phrase, name, kind});
+        auto descriptor = assistance.descriptor(phrase);
+        auto pattern = Assistance::child(descriptor, "pattern").isNull()
+                         ? SyntaxPattern::pattern(phrase) : Assistance::text(descriptor, "pattern");
+        if (!descriptor.isNull() || !pattern.empty()) {
+          output << "H\t" << phraseVersion(phrase) << '\t' << hex(name) << '\t' << hex(pattern);
+          for (auto field : {"snippet", "example", "summary", "tags"})
+            output << '\t' << hex(Assistance::text(descriptor, field));
+          output << '\n';
+          patterns[phrase.getAddress()] = pattern;
+          auto arguments = Assistance::child(descriptor, "arguments");
+          if (!arguments.isNull()) {
+            for (auto argument : Assistance::children(arguments)) {
+              auto dictionary = Assistance::child(argument, "dictionary");
+              auto prototype = Assistance::child(argument, "prototype");
+              if (!dictionary.isNull() && dictionary.containsPrototype()) dictionary = dictionary.getPrototype();
+              if (!prototype.isNull() && prototype.containsPrototype()) prototype = prototype.getPrototype();
+              output << "J\t" << phraseVersion(phrase) << '\t' << hex(name) << '\t' << hex(argument.getKey())
+                     << '\t' << hex(resolved(metadata, argument).docs)
+                     << '\t' << hex(dictionary.isNull() ? "" : phrasePath(names, dictionary))
+                     << '\t' << hex(Assistance::text(argument, "kind"))
+                     << '\t' << hex(prototype.isNull() ? "" : phrasePath(names, prototype)) << '\n';
+            }
+          }
+        }
         self(phrase, self);
       }
     };
     visit(context.lexicon.phrase(), visit);
+    visit(context.lookup.dictionary, visit);
+    // Anchors come from actual phrase matches. Only the innermost matching
+    // usage that reaches the cursor supplies argument expectations.
+    std::size_t closest = 0;
+    std::string expectations;
+    for (const auto &anchor : state.anchors) {
+      if (anchor.end < closest || anchor.end > state.source.size() || !patterns.contains(anchor.phrase)) continue;
+      std::vector<SyntaxPattern::Expectation> expected;
+      try { expected = SyntaxPattern::expect(patterns[anchor.phrase], std::string_view(state.source).substr(anchor.end)); }
+      catch (...) { continue; } // Incomplete comments and edited contracts are ordinary inspection input.
+      if (expected.empty()) continue;
+      if (anchor.end > closest) { expectations.clear(); closest = anchor.end; }
+      auto phrase = phraseAt(state, anchor.phrase);
+      std::ostringstream rows;
+      for (const auto &item : expected) {
+        const auto insertion = SyntaxPattern::insertion(patterns[anchor.phrase], std::string_view(state.source).substr(anchor.end), item);
+        rows << "X\t" << phraseVersion(phrase) << '\t' << hex(phrasePath(names, phrase)) << '\t'
+             << characterOffset(state, anchor.end + item.start) << '\t' << hex(item.name) << '\t'
+             << hex(item.matcher) << '\t' << hex(item.literal) << '\t' << hex(insertion) << '\n';
+        if (item.name.empty()) continue;
+        auto argument = Assistance::child(Assistance::child(assistance.descriptor(phrase), "arguments"), item.name);
+        auto dictionary = Assistance::child(argument, "dictionary");
+        auto prototype = Assistance::child(argument, "prototype");
+        if (!dictionary.isNull() && dictionary.containsPrototype()) dictionary = dictionary.getPrototype();
+        if (!prototype.isNull() && prototype.containsPrototype()) prototype = prototype.getPrototype();
+        const auto kind = Assistance::text(argument, "kind");
+        if (dictionary.isNull() && prototype.isNull() && kind.empty()) continue;
+        const auto dictionaryName = dictionary.isNull() ? "" : phrasePath(names, dictionary);
+        const auto prefix = dictionaryName.empty() ? "" : dictionaryName + ':';
+        for (const auto &candidate : candidates) {
+          if (!candidate.name.starts_with(prefix)) continue;
+          const auto spelling = candidate.name.substr(prefix.size());
+          if (!dictionary.isNull() && spelling.find(':') != std::string::npos) continue;
+          if (!kind.empty() && candidate.kind != kind) continue;
+          if (!prototype.isNull()) {
+            auto ancestor = candidate.phrase;
+            std::unordered_set<Size> seen;
+            while (!ancestor.isNull() && seen.insert(ancestor.getAddress()).second &&
+                   ancestor.getAddress() != prototype.getAddress()) {
+              if (!ancestor.containsPrototype()) { ancestor = lexicon::Phrase(&context.lexicon); break; }
+              ancestor = ancestor.getPrototype();
+            }
+            if (ancestor.isNull() || ancestor.getAddress() != prototype.getAddress()) continue;
+          }
+          if (!SyntaxPattern::accepts(item.matcher, spelling)) continue;
+          rows << "V\t" << phraseVersion(phrase) << '\t' << hex(phrasePath(names, phrase)) << '\t' << hex(item.name)
+               << '\t' << hex(candidate.name) << '\t' << hex(spelling) << '\n';
+        }
+      }
+      expectations += rows.str();
+    }
+    output << expectations;
+    output << "D\t" << hex(phrasePath(names, context.lookup.dictionary)) << '\t'
+           << characterOffset(state, state.completionStart) << '\n';
     return output.str();
   }
 
@@ -831,6 +923,8 @@ namespace recurloop {
   void Semantic::sourceStep(context::Context &context) {
     if (!active(context)) return;
     TraceState &trace = *currentTrace;
+    const SourceLocation location{context.source.path, context.source.line, context.source.position};
+    if (auto offset = sourceOffset(trace, location)) trace.completionStart = *offset;
     ++trace.sourceSteps;
     if (trace.sourceSteps > trace.sourceStepBudget)
       THROW(, "semantic inspection exceeded the deterministic source-step budget")
@@ -857,6 +951,10 @@ namespace recurloop {
     match << "R\t" << characterOffset(trace, *startByte) << '\t' << characterOffset(trace, *endByte) << '\t'
           << start.line << '\t' << phraseVersion(phrase) << '\t' << hex(phrasePath(trace.names, phrase)) << '\n';
     trace.matches.push_back(match.str());
+    trace.anchors.push_back({phrase.getAddress(), *endByte});
+    const auto key = phrase.getKey();
+    if (!key.empty() && std::ranges::all_of(key, [](unsigned char byte) { return std::isspace(byte); }))
+      trace.completionStart = *endByte;
 
     Size fallback = fallbackOwner;
     std::uint64_t fallbackGroup = ownerGroup != nullptr ? *ownerGroup : 0;

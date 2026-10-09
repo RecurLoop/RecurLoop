@@ -23,6 +23,7 @@ include "core/collections.rl"
 // image after the fresh source-defined language exists.
 include "core/actions.rl"
 include "core/completion.rl"
+include "core/help.rl"
 
 // Bind after every source module has created its dictionaries and parser helpers.
 // Later definitions can otherwise reintroduce migrated bootstrap host actions.

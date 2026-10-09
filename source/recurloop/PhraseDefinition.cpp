@@ -6,6 +6,7 @@
 #include <recurloop/Functions.hpp>
 #include <recurloop/LanguageGrammar.hpp>
 #include <recurloop/Semantic.hpp>
+#include <recurloop/Assistance.hpp>
 #include <recurloop/SyntaxCursor.hpp>
 #include <utilities/Exception.hpp>
 
@@ -184,6 +185,16 @@ namespace recurloop {
         }
         context.exec.pendingPhraseDocs = std::move(value);
         context.exec.hasPendingPhraseDocs = true;
+      }
+
+      void applyHelp(lexicon::Phrase *target) {
+        auto descriptor = referenceValue();
+        if (target != nullptr) {
+          Assistance::attach(context, *target, descriptor);
+        } else {
+          context.exec.pendingPhraseHelp = descriptor.getAddress();
+          context.exec.hasPendingPhraseHelp = true;
+        }
       }
 
       lexicon::Phrase referenceValue() {
@@ -431,6 +442,11 @@ namespace recurloop {
       frame.parser->applyDocs(frame.target);
     }
 
+    void fieldHelp(context::Context &, lexicon::Phrase &) {
+      FieldFrame &frame = fieldFrame();
+      frame.parser->applyHelp(frame.target);
+    }
+
     void fieldType(context::Context &, lexicon::Phrase &) {
       FieldFrame &frame = fieldFrame();
       frame.parser->applyType(frame.target);
@@ -466,6 +482,7 @@ namespace recurloop {
     context.actions().define("phrase.field.kind", fieldKind);
     context.actions().define("phrase.field.color", fieldColor);
     context.actions().define("phrase.field.docs", fieldDocs);
+    context.actions().define("phrase.field.help", fieldHelp);
     context.actions().define("phrase.field.type", fieldType);
     context.actions().define("phrase.field.prototype", fieldPrototype);
     context.actions().define("phrase.field.successor", fieldSuccessor);
@@ -497,6 +514,7 @@ namespace recurloop {
     define("kind", fieldKind);
     define("color", fieldColor);
     define("docs", fieldDocs);
+    define("help", fieldHelp);
     define("type", fieldType);
     define("prototype", fieldPrototype);
     define("successor", fieldSuccessor);

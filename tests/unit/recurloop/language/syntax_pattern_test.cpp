@@ -1,5 +1,32 @@
 #include <gtest/gtest.h>
 #include <recurloop/Recurloop.hpp>
+#include <recurloop/SyntaxPattern.hpp>
+#include <algorithm>
+
+TEST(SyntaxExpectations, ChoicesAndOptionalPartsKeepEveryViableContinuation) {
+  const auto expected = recurloop::SyntaxPattern::expect("[quiet] (fast | safe) <value:number>", "");
+  std::vector<std::string> literals;
+  for (const auto &item : expected) literals.push_back(item.literal);
+  EXPECT_EQ(literals, (std::vector<std::string>{"fast", "quiet", "safe"}));
+  const auto partial = recurloop::SyntaxPattern::expect("(fast | safe) <value:number>", "sa");
+  ASSERT_EQ(partial.size(), 1);
+  EXPECT_EQ(partial.front().literal, "safe");
+  EXPECT_TRUE(recurloop::SyntaxPattern::expect("(fast | safe) <value:number>", "slow").empty());
+}
+
+TEST(SyntaxExpectations, CapturesRespectBalancedExpressionsAndCompletedLines) {
+  const auto expected = recurloop::SyntaxPattern::expect("<condition:expr> then <body:block>", "(a + b) th");
+  EXPECT_TRUE(std::ranges::any_of(expected, [](const auto &item) { return item.literal == "then" && item.start == 8; }));
+  const auto slot = recurloop::SyntaxPattern::expect("<value:qualified-id>", "Tools:va");
+  ASSERT_EQ(slot.size(), 2);
+  EXPECT_EQ(slot.front().name, "value");
+  EXPECT_EQ(slot.front().start, 0);
+  EXPECT_TRUE(recurloop::SyntaxPattern::expect("<value:expr>", "42\nother").empty());
+  EXPECT_ANY_THROW(recurloop::SyntaxPattern::validate("<value:unknown>"));
+  const auto finished = recurloop::SyntaxPattern::expect("<body:block> [else <other:block>]", "{}\n");
+  EXPECT_TRUE(std::ranges::any_of(finished, [](const auto &item) { return item.matcher.empty() && item.literal.empty(); }));
+  EXPECT_TRUE(std::ranges::any_of(finished, [](const auto &item) { return item.literal == "else"; }));
+}
 
 class SyntaxPatternTesting : public recurloop::Recurloop, public testing::Test {
 public:

@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
 import { RecurLoopRuntime } from './runtime';
 import { NavigationController } from './navigation';
+import { assistanceItems, helpMarkdown, HelpFact, ArgumentFact, ExpectedFact, ValueFact } from './assistance';
 import {
   codePointToUtf16Map,
   hexDecode,
@@ -45,6 +46,12 @@ export interface AnalysisResult {
   spans: SemanticSpan[];
   symbols: SymbolFact[];
   occurrences: Occurrence[];
+  help: HelpFact[];
+  arguments: ArgumentFact[];
+  expected: ExpectedFact[];
+  values: ValueFact[];
+  dictionary: string;
+  completionStart?: number;
   diagnostic?: string;
 }
 
@@ -57,12 +64,39 @@ export function parseInspection(document: Pick<vscode.TextDocument, 'getText' | 
   const spans: SemanticSpan[] = [];
   const symbols: SymbolFact[] = [];
   const occurrences: Occurrence[] = [];
+  const help: HelpFact[] = [];
+  const arguments_: ArgumentFact[] = [];
+  const expected: ExpectedFact[] = [];
+  const values: ValueFact[] = [];
+  let dictionary = '';
+  let completionStart: number | undefined;
   let diagnostic: string | undefined;
 
   for (const rawLine of response.split(/\r?\n/)) {
     if (!rawLine) continue;
     const fields = rawLine.split('\t');
     switch (fields[0]) {
+      case 'H':
+        if (fields.length >= 8) help.push({ version: number(fields[1]), name: hexDecode(fields[2]),
+          pattern: hexDecode(fields[3]), snippet: hexDecode(fields[4]), example: hexDecode(fields[5]),
+          summary: hexDecode(fields[6]), tags: hexDecode(fields[7]) });
+        break;
+      case 'J':
+        if (fields.length >= 8) arguments_.push({ version: number(fields[1]), owner: hexDecode(fields[2]), name: hexDecode(fields[3]),
+          docs: hexDecode(fields[4]), dictionary: hexDecode(fields[5]), kind: hexDecode(fields[6]), prototype: hexDecode(fields[7]) });
+        break;
+      case 'X':
+        if (fields.length >= 7) expected.push({ version: number(fields[1]), owner: hexDecode(fields[2]), start: number(fields[3]),
+          name: hexDecode(fields[4]), matcher: hexDecode(fields[5]), literal: hexDecode(fields[6]), insertion: hexDecode(fields[7] ?? fields[6]) });
+        break;
+      case 'D':
+        dictionary = hexDecode(fields[1] ?? '');
+        if (fields.length >= 3) completionStart = number(fields[2]);
+        break;
+      case 'V':
+        if (fields.length >= 6) values.push({ version: number(fields[1]), owner: hexDecode(fields[2]), argument: hexDecode(fields[3]),
+          name: hexDecode(fields[4]), spelling: hexDecode(fields[5]) });
+        break;
       case 'S':
         if (fields.length >= 8) {
           spans.push({
@@ -114,6 +148,7 @@ export function parseInspection(document: Pick<vscode.TextDocument, 'getText' | 
     spans,
     symbols,
     occurrences,
+    help, arguments: arguments_, expected, values, dictionary, completionStart,
     diagnostic
   };
 }
@@ -152,8 +187,9 @@ export class AnalysisController implements vscode.Disposable {
       navigation,
       vscode.languages.registerWorkspaceSymbolProvider({ provideWorkspaceSymbols: (query, token) => navigation.workspaceSymbols(query, token) }),
       vscode.languages.registerHoverProvider(selector, { provideHover: (document, position, token) => this.hover(document, position, token) }),
-      vscode.languages.registerCompletionItemProvider(selector, { provideCompletionItems: (document, _position, token) => this.completions(document, token) }, ':', '.'),
-      vscode.languages.registerSignatureHelpProvider(selector, { provideSignatureHelp: (document, position, token) => this.signatureHelp(document, position, token) }, '(', ','),
+      vscode.languages.registerCompletionItemProvider(selector, { provideCompletionItems: (document, position, token) => this.completions(document, position, token) }, ':', '.', ' '),
+      vscode.languages.registerSignatureHelpProvider(selector, { provideSignatureHelp: (document, position, token) => this.signatureHelp(document, position, token) }, '(', ',', ' '),
+      vscode.commands.registerCommand('recurloop.help', () => this.showHelp()),
       vscode.languages.registerDefinitionProvider(selector, { provideDefinition: (document, position, token) => navigation.locations(document, position, 'definition', true, token) }),
       vscode.languages.registerReferenceProvider(selector, { provideReferences: (document, position, context, token) => navigation.locations(document, position, 'references', context.includeDeclaration, token) }),
       vscode.languages.registerTypeDefinitionProvider(selector, { provideTypeDefinition: (document, position, token) => navigation.locations(document, position, 'type-definition', true, token) }),
@@ -193,7 +229,7 @@ export class AnalysisController implements vscode.Disposable {
     const source = document.getText();
     const version = document.version;
     if (!enabled || !hasProject(document.uri)) {
-      return { version, source, mapping: codePointToUtf16Map(source), spans: [], symbols: [], occurrences: [] };
+      return parseInspection({ version, getText: () => source }, '');
     }
     const revision = this.runtime.revision(document.uri);
     const epoch = this.runtime.epoch(document.uri);
@@ -308,14 +344,19 @@ export class AnalysisController implements vscode.Disposable {
       : undefined;
     if (!fact && !span) return undefined;
 
-    const markdown = new vscode.MarkdownString(undefined, true);
+    let markdown = new vscode.MarkdownString(undefined, true);
     markdown.isTrusted = false;
     if (fact) {
-      markdown.appendCodeblock(fact.signature || fact.name, 'recurloop');
-      const metadata = [fact.kind, fact.type ? `type: ${fact.type}` : '', fact.prototype ? `prototype: ${fact.prototype}` : ''].filter(Boolean);
-      if (metadata.length) markdown.appendMarkdown(`*${metadata.join(' · ')}*\n\n`);
-      const docs = fact.docs || span?.docs;
-      if (docs) markdown.appendMarkdown(docs);
+      const contract = result.help.find(item => item.version === fact.version && item.name === fact.name);
+      if (contract) {
+        markdown = helpMarkdown(contract, fact.docs || span?.docs);
+      } else {
+        markdown.appendCodeblock(fact.signature || fact.name, 'recurloop');
+        const metadata = [fact.kind, fact.type ? `type: ${fact.type}` : '', fact.prototype ? `prototype: ${fact.prototype}` : ''].filter(Boolean);
+        if (metadata.length) markdown.appendMarkdown(`*${metadata.join(' · ')}*\n\n`);
+        const docs = fact.docs || span?.docs;
+        if (docs) markdown.appendMarkdown(docs);
+      }
     } else if (span) {
       if (span.kind) markdown.appendMarkdown(`*${span.kind}*\n\n`);
       markdown.appendMarkdown(span.docs);
@@ -326,35 +367,73 @@ export class AnalysisController implements vscode.Disposable {
     return new vscode.Hover(markdown, range);
   }
 
-  private async completions(document: vscode.TextDocument, token?: vscode.CancellationToken): Promise<vscode.CompletionItem[]> {
-    const result = await this.get(document, token);
-    const latest = new Map<string, SymbolFact>();
-    for (const symbol of result.symbols) latest.set(symbol.name, symbol);
-    const items: vscode.CompletionItem[] = [];
-    for (const symbol of latest.values()) {
-      if (!symbol.name || symbol.name.startsWith('\0')) continue;
-      const item = new vscode.CompletionItem(symbol.name, completionKind(symbol.kind));
-      item.detail = symbol.signature || [symbol.kind, symbol.type].filter(Boolean).join(' · ');
-      if (symbol.docs) item.documentation = new vscode.MarkdownString(symbol.docs);
-      item.sortText = `${symbol.name.includes(':') ? '1' : '0'}-${symbol.name}`;
-      if (symbol.kind === 'function' && symbol.signature) {
-        const leaf = symbol.name.split(':').pop() ?? symbol.name;
-        const open = symbol.signature.indexOf('(');
-        if (open >= 0) item.insertText = leaf;
-      }
-      items.push(item);
+  private async atCursor(document: vscode.TextDocument, position: vscode.Position, token?: vscode.CancellationToken): Promise<AnalysisResult> {
+    if (token?.isCancellationRequested) throw new vscode.CancellationError();
+    const version = document.version;
+    const source = document.getText().slice(0, document.offsetAt(position));
+    if (!hasProject(document.uri) || !vscode.workspace.getConfiguration('recurloop', document.uri).get('analysis.enabled', true))
+      return parseInspection({ version, getText: () => source }, '');
+    const controller = new AbortController();
+    const cancellation = token?.onCancellationRequested(() => controller.abort(new vscode.CancellationError()));
+    try {
+      const snapshot = { uri: document.uri, version, getText: () => source } as vscode.TextDocument;
+      const response = await this.runtime.inspect(snapshot, true, controller.signal);
+      if (document.version !== version) throw new vscode.CancellationError();
+      return parseInspection(snapshot, response);
+    } finally { cancellation?.dispose(); }
+  }
+
+  private async completions(document: vscode.TextDocument, position: vscode.Position, token?: vscode.CancellationToken): Promise<vscode.CompletionItem[]> {
+    return assistanceItems(document, await this.atCursor(document, position, token), completionKind);
+  }
+
+  private async showHelp(): Promise<void> {
+    const editor = vscode.window.activeTextEditor;
+    if (!editor || editor.document.languageId !== 'recurloop') return;
+    const result = await this.atCursor(editor.document, editor.selection.active);
+    const entries = result.help.filter(item => item.summary || item.example || item.snippet)
+      .sort((a, b) => a.name < b.name ? -1 : a.name > b.name ? 1 : 0)
+      .map(contract => ({ label: contract.name, description: contract.summary, detail: contract.tags, contract }));
+    const selected = await vscode.window.showQuickPick(entries, { placeHolder: 'Find a phrase by name, purpose or tags', matchOnDescription: true, matchOnDetail: true });
+    if (!selected || editor.document.version !== result.version) return;
+    const snippet = selected.contract.snippet;
+    if (snippet) await editor.insertSnippet(new vscode.SnippetString(snippet.replaceAll('${phrase}', selected.contract.name)));
+    else {
+      const panel = vscode.window.createWebviewPanel('recurloop.help', selected.label, vscode.ViewColumn.Beside, {});
+      const escape = (text: string) => text.replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char]!));
+      panel.webview.html = `<meta http-equiv="Content-Security-Policy" content="default-src 'none';"><h2>${escape(selected.label)}</h2><p>${escape(selected.description)}</p><pre>${escape(selected.contract.example || selected.contract.pattern)}</pre>`;
     }
-    return items;
   }
 
   private async signatureHelp(document: vscode.TextDocument, position: vscode.Position, token?: vscode.CancellationToken): Promise<vscode.SignatureHelp | undefined> {
+    const result = await this.atCursor(document, position, token);
+    if (result.expected.length) {
+      const signatures = new Map<string, vscode.SignatureInformation>();
+      for (const expected of result.expected) {
+        if (!expected.literal && !expected.matcher) continue;
+        const contract = result.help.find(item => item.version === expected.version && item.name === expected.owner);
+        if (!contract) continue;
+        const label = `${expected.owner} ${contract.pattern}`;
+        const info = new vscode.SignatureInformation(label, helpMarkdown(contract));
+        const argument = result.arguments.find(item => item.owner === expected.owner && item.version === expected.version && item.name === expected.name);
+        const capture = `<${expected.name}:${expected.matcher}>`;
+        const start = label.indexOf(capture);
+        if (start >= 0) info.parameters = [new vscode.ParameterInformation([start, start + capture.length], argument?.docs)];
+        signatures.set(label, info);
+      }
+      if (signatures.size) {
+        const help = new vscode.SignatureHelp();
+        help.activeParameter = 0; help.activeSignature = 0; help.signatures = [...signatures.values()];
+        return help;
+      }
+    }
     const linePrefix = document.lineAt(position.line).text.slice(0, position.character);
     const match = linePrefix.match(/([A-Za-z_][A-Za-z0-9_:]*)\s*\(([^()]*)$/);
     if (!match) return undefined;
     const name = match[1];
     const activeParameter = match[2].trim() ? match[2].split(',').length - 1 : 0;
-    const result = await this.get(document, token);
-    const symbol = result.symbols.find(item => item.name === name || item.name.endsWith(`:${name}`));
+    const qualified = result.dictionary ? `${result.dictionary}:${name}` : name;
+    const symbol = result.symbols.find(item => item.name === qualified) ?? result.symbols.find(item => item.name === name);
     if (!symbol?.signature) return undefined;
     const help = new vscode.SignatureHelp();
     help.activeParameter = activeParameter;
