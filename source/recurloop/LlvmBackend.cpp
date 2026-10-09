@@ -492,7 +492,7 @@ namespace recurloop::function_internal {
       }
 
       void assignment(const Statement &statement) {
-        if (statement.docsAssignment) return;
+        if (statement.metadataAssignment) return;
         auto [address, targetType] = lvalue(*statement.target, true);
         Emitted right = coerce(expression(*statement.expression, targetType), targetType, statement.offset);
         const std::string action = behaviorAction(statement.operationSyntax, AssignmentEmitName);

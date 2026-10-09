@@ -15,6 +15,8 @@
 #include <filesystem>
 #include <fstream>
 #include <future>
+#include <map>
+#include <set>
 #include <sstream>
 
 namespace {
@@ -24,6 +26,24 @@ namespace {
     auto runtime = std::make_unique<recurloop::Recurloop>();
     runtime->initialize(1, argv);
     return recurloop::Project::create(runtime->getContext(), {program});
+  }
+
+  std::map<std::pair<std::size_t, std::size_t>, std::string> inspectionColors(const std::string &output) {
+    std::map<std::pair<std::size_t, std::size_t>, std::string> colors;
+    std::istringstream rows(output);
+    for (std::string row; std::getline(rows, row);) {
+      std::istringstream fields(row);
+      std::string tag, value;
+      std::size_t start = 0, end = 0;
+      std::uint64_t group = 0;
+      if (!(fields >> tag >> start >> end >> group) || tag != "S") continue;
+      fields.get();
+      std::getline(fields, value, '\t');
+      if (value.empty()) continue;
+      const auto [entry, inserted] = colors.emplace(std::pair{start, end}, value);
+      EXPECT_TRUE(inserted || entry->second == value) << "Competing colors at " << start;
+    }
+    return colors;
   }
 } // namespace
 
@@ -437,6 +457,158 @@ print tick
                                            assignment + "\nreturn tick\n}");
     EXPECT_NE(invalid.status, 0);
     EXPECT_NE(invalid.error.find("local docs require"), std::string::npos) << invalid.error;
+  }
+}
+
+TEST(RecurloopGeneration, LocalFunctionMetadataColorsResolvedOccurrencesWithoutMutatingConstValues) {
+  auto session = project()->openSession();
+  const std::string source = R"(var exampleFn = 99
+set exampleFn.color = "#0000FF"
+let main = fn () -> i64 {
+    let exampleFn = fn () -> i64 { return 1 }
+    set exampleFn.color = "#FF8800"
+    set exampleFn.docs = "aaa"
+    if 1 {
+        let exampleFn = fn () -> i64 { return 5 }
+        set exampleFn.color = "#00FF00"
+        exampleFn()
+    }
+    return exampleFn()
+}
+print main()
+print exampleFn
+)";
+  const auto inspected = session->inspect(source, "/tmp/local-function-metadata.rl", true, true);
+  ASSERT_EQ(inspected.output.find("E\t"), std::string::npos) << inspected.output;
+  EXPECT_NE(inspected.output.find("\t616161\t\t\t\n"), std::string::npos);
+  auto colors = inspectionColors(inspected.output);
+  std::vector<std::pair<std::size_t, std::size_t>> outer, inner;
+  std::istringstream rows(inspected.output);
+  for (std::string row; std::getline(rows, row);) {
+    std::istringstream fields(row);
+    std::string tag, value;
+    std::size_t start = 0, end = 0;
+    std::uint64_t owner = 0, version = 0;
+    if (!(fields >> tag >> start >> end >> owner)) continue;
+    if (tag == "R" && fields >> version >> value && value == "6578616d706c65466e") {
+      if (version == 4294967296) outer.emplace_back(start, end);
+      if (version == 4294967297) inner.emplace_back(start, end);
+    }
+  }
+  ASSERT_EQ(outer.size(), 4);
+  ASSERT_EQ(inner.size(), 3);
+  for (const auto &range : outer) EXPECT_EQ(colors[range], "23464638383030");
+  for (const auto &range : inner) EXPECT_EQ(colors[range], "23303046463030");
+  const auto executed = session->evaluate(source);
+  ASSERT_EQ(executed.status, 0) << executed.error;
+  EXPECT_EQ(executed.output, "1\n99\n");
+  const std::string cleared = "let clear_color = fn () -> i64 {\n"
+                              "let exampleFn = fn () -> i64 { return 2 }\n"
+                              "set exampleFn.color = \"#FF8800\"\n"
+                              "set exampleFn.color = \"\"\n"
+                              "return exampleFn()\n}\n";
+  const auto clearInspection = session->inspect(cleared, "/tmp/clear-local-color.rl", true, true);
+  ASSERT_EQ(clearInspection.output.find("E\t"), std::string::npos) << clearInspection.output;
+  EXPECT_EQ(clearInspection.output.find("23464638383030"), std::string::npos);
+  EXPECT_EQ(clearInspection.output.find("23303030304646"), std::string::npos);
+}
+
+TEST(RecurloopGeneration, FunctionCallsRecordPhraseMetadataForDirectNestedAndQualifiedCalls) {
+  auto session = project()->openSession();
+  const std::string source = R"(let Example = phrase { dictionary = true }
+let Example:answer = fn () -> i64 { return 1 }
+Example:answer()
+set Example:answer.color = "#FF8800"
+set Example:answer.docs = "Global function documentation."
+Example:answer()
+print Example:answer() + Example:answer()
+print "Example:answer() is text" // Example:answer() is a comment
+)";
+  const auto inspected = session->inspect(source, "/tmp/global-function-metadata.rl", true, true);
+  ASSERT_EQ(inspected.output.find("E\t"), std::string::npos) << inspected.output;
+  const std::string name = "4578616d706c653a616e73776572";
+  std::istringstream rows(inspected.output);
+  std::set<std::pair<std::size_t, std::size_t>> matches;
+  const auto colors = inspectionColors(inspected.output);
+  for (std::string row; std::getline(rows, row);) {
+    std::istringstream fields(row);
+    std::string tag, value;
+    std::size_t start = 0, end = 0, group = 0, version = 0;
+    if (!(fields >> tag >> start >> end >> group)) continue;
+    if (tag == "R" && fields >> version >> value && value == name) matches.emplace(start, end);
+  }
+  for (const auto offset : {source.find("let Example:answer") + 4, source.find("\nExample:answer()") + 1,
+                            source.rfind("\nExample:answer()") + 1, source.find("print Example:answer()") + 6,
+                            source.find("+ Example:answer()") + 2}) {
+    const auto range = std::pair{offset, offset + std::string_view("Example:answer").size()};
+    EXPECT_TRUE(matches.contains(range)) << offset;
+    ASSERT_TRUE(colors.contains(range)) << offset;
+    EXPECT_EQ(colors.at(range), "23464638383030");
+  }
+  EXPECT_FALSE(
+      matches.contains({source.find("Example:answer() is text"), source.find("Example:answer() is text") + 14}));
+  const auto executed = session->evaluate(source);
+  ASSERT_EQ(executed.status, 0) << executed.error;
+  EXPECT_EQ(executed.output, "2\nExample:answer() is text\n");
+}
+
+TEST(RecurloopGeneration, FinalMetadataFollowsPrototypesAndPreservesDeclarationVersions) {
+  auto session = project()->openSession();
+  const std::string source = R"(// Żółw 😀
+let style = phrase { color = "#0000FF" docs = "before" }
+let metadata_entry = <style>
+let "two words" = <style>
+let Space = phrase { dictionary = true }
+let Space:metadata_entry = <style>
+set style.color = "#FF8800"
+set style.docs = "after"
+let metadata_entry = phrase { color = "#008800" docs = "new" }
+)";
+  for (const bool crlf : {false, true}) {
+    std::string buffer = source;
+    if (crlf) {
+      for (std::size_t index = 0; (index = buffer.find('\n', index)) != std::string::npos; index += 2)
+        buffer.insert(index, 1, '\r');
+    }
+    const auto range = [&](std::string_view spelling, bool last = false) {
+      const auto byte = last ? buffer.rfind(spelling) : buffer.find(spelling);
+      // The protocol uses Unicode codepoints, including on CRLF input.
+      std::size_t start = 0;
+      for (std::size_t index = 0; index < byte; ++index)
+        if ((static_cast<unsigned char>(buffer[index]) & 0xc0) != 0x80) ++start;
+      return std::pair{start, start + spelling.size()};
+    };
+    const auto inspect = [&](bool clear) {
+      return session->inspect(buffer + (clear ? "set style.color = \"\"\nset style.docs = \"\"\n" : ""),
+                              "/tmp/inherited-metadata.rl", true, true);
+    };
+    const auto inspected = inspect(false);
+    ASSERT_EQ(inspected.output.find("E\t"), std::string::npos) << inspected.output;
+    const auto colors = inspectionColors(inspected.output);
+    std::map<std::size_t, std::string> descriptions;
+    std::istringstream rows(inspected.output);
+    for (std::string row; std::getline(rows, row);) {
+      std::istringstream fields(row);
+      std::string tag, name, kind, docs;
+      std::size_t version = 0;
+      if (fields >> tag >> version >> name >> kind >> docs && tag == "P" && name == "6d657461646174615f656e747279")
+        descriptions.emplace(version, docs);
+    }
+    EXPECT_EQ(descriptions[0], "6166746572");
+    EXPECT_EQ(descriptions[1], "6e6577");
+    const auto cleared = inspect(true);
+    ASSERT_EQ(cleared.output.find("E\t"), std::string::npos) << cleared.output;
+    const auto clearedColors = inspectionColors(cleared.output);
+    for (const auto name : {"style", "metadata_entry", "\"two words\"", "Space:metadata_entry"}) {
+      const auto expected = range(name);
+      ASSERT_TRUE(colors.contains(expected)) << name << "\n" << inspected.output;
+      EXPECT_EQ(colors.at(expected), "23464638383030") << name;
+      EXPECT_FALSE(clearedColors.contains(expected)) << name;
+    }
+    const auto redefined = range("metadata_entry", true);
+    ASSERT_TRUE(colors.contains(redefined));
+    EXPECT_EQ(colors.at(redefined), "23303038383030");
+    EXPECT_EQ(clearedColors.at(redefined), "23303038383030");
   }
 }
 

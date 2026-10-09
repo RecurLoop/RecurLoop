@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- Resolve colors and documentation from the final elaborated binding for both
+  local and dictionary symbols. Link `let` declarations to their saved phrases,
+  preserve shadowed versions and inherited styles, and honor explicit clearing.
+
+- Link top-level function calls, including qualified and nested calls, to their
+  phrase metadata so runtime colors and documentation appear at the call site.
+
+- Support `set name.color = "#RRGGBB"` for local variables and function values,
+  including immutable `let` bindings, through the shared local metadata handler.
+
 - Show top-level runtime variable documentation on declarations and expression
   reads, including metadata attached with `set name.docs = "..."`.
 - Support documentation for local variables in `fn`, with lexical scope and

@@ -197,6 +197,12 @@ chain. The source-defined IDE uses the same metadata for highlighting and hover
 documentation, so custom syntax can describe itself without adding an AST or a
 separate IntelliSense grammar.
 
+Inspection resolves metadata after elaboration and applies it to all occurrences
+of the resolved binding, including declarations and uses before the assignment.
+The final assignment wins for that binding. Local scopes and successive phrase
+definitions keep separate identities; prototype metadata is inherited normally.
+Setting a color to `""` suppresses both inherited and fallback coloring.
+
 For a top-level runtime binding, attach documentation after its declaration:
 
 ```rl
@@ -215,16 +221,19 @@ Inside `fn`, documentation belongs to the local binding in its lexical scope:
 let example = fn () -> i64 {
     var tick:i64 = 1
     set tick.docs = "Current iteration number."
+    set tick.color = "#FF8800"
     tick += 1
     return tick
 }
 ```
 
-Local `set name.docs = "..."` assignments require a string literal and are
-processed during elaboration, without generating a runtime store. Inspection links declarations,
-reads and writes to the same local binding, including uses before the docs
-assignment. A shadowing declaration has its own documentation; local metadata
-does not modify an equally named global binding.
+Local `set name.docs = "..."` and `set name.color = "#RRGGBB"` assignments
+require a string literal and are processed during elaboration, without generating
+a runtime store. They also work for immutable `let`/`const` bindings, including
+local function values. Inspection links declarations, reads and writes to the
+same local binding, including uses before the metadata assignment. An empty
+color clears explicit coloring. A shadowing declaration has its own metadata,
+which does not modify an equally named global binding.
 
 The fields accepted inside `phrase { ... }` are phrases too. Their standard
 definitions carry semantic metadata, which means hovering `type`, `prototype`,

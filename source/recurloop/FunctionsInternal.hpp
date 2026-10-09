@@ -109,7 +109,7 @@ namespace recurloop {
       std::vector<Statement> rejected;
       std::size_t offset = 0;
       bool mutableValue = true;
-      bool docsAssignment = false;
+      bool metadataAssignment = false;
     };
 
     struct ExpressionBody {

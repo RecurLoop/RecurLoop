@@ -712,7 +712,7 @@ namespace recurloop {
       }
 
       void generateAssignment(const Statement &statement) {
-        if (statement.docsAssignment) return;
+        if (statement.metadataAssignment) return;
         const compiler::TypeId targetType = lvalue(*statement.target, true);
         emit("push", "rax");
         ++temporaryDepth;

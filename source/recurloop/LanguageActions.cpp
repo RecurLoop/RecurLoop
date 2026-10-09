@@ -233,6 +233,7 @@ namespace recurloop {
       lexicon::Phrase equals = let_equals(invoked);
       if (equals.isNull()) THROW(, "let phrase has no '=' continuation")
       action_let_equals(context, equals);
+      Semantic::stageDefinition(context, parsed.start, parsed.end);
     }
 
     void action_let_equals(context::Context &context, lexicon::Phrase &invoked) {
@@ -292,6 +293,8 @@ namespace recurloop {
       Assembler::commitNative(context, saved);
       Functions::commitVariant(context, saved);
       applyPhraseOptions(context, saved);
+
+      Semantic::recordDefinition(context, saved);
 
       context::Staging::pop(context, 1);
 

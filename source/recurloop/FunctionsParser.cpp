@@ -297,7 +297,7 @@ namespace recurloop {
       void assignmentMetadata(Statement &statement) {
         // Only explicit `set` uses metadata; bare member assignments still write struct fields.
         const Expression &target = *statement.target;
-        if (target.kind != Expression::Kind::Member || target.text != "docs" ||
+        if (target.kind != Expression::Kind::Member || (target.text != "docs" && target.text != "color") ||
             target.children.front()->kind != Expression::Kind::Variable)
           return;
         const auto *local = findLocal(target.children.front()->text);
@@ -305,11 +305,11 @@ namespace recurloop {
         auto assignment = LanguageGrammar::behavior(statement.operationSyntax, AssignmentEmitName);
         if (assignment.isNull() || !assignment.containsAction() ||
             context.actions().name(assignment.getAction()) != "fn.assignment.emit-move")
-          fail({}, statement.offset, "local docs require '='");
+          fail({}, statement.offset, "local " + target.text + " require '='");
         if (statement.expression->kind != Expression::Kind::String)
-          fail({}, statement.expression->offset, "local docs require a string literal");
-        Semantic::localDocs(context, *local, statement.expression->text);
-        statement.docsAssignment = true;
+          fail({}, statement.expression->offset, "local " + target.text + " require a string literal");
+        Semantic::localMetadata(context, *local, target.text, statement.expression->text);
+        statement.metadataAssignment = true;
       }
 
       void parseConditional(Statement &result, const Token &start, lexicon::Phrase syntax) {

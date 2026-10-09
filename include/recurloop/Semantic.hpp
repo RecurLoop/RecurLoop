@@ -40,6 +40,10 @@ namespace recurloop {
     static void applyPending(context::Context &context, lexicon::Phrase phrase);
     static void clearPending(context::Context &context);
 
+    // Bind a parsed declaration range once its staged phrase has been saved.
+    static void stageDefinition(context::Context &context, const SourceLocation &start, const SourceLocation &end);
+    static void recordDefinition(context::Context &context, lexicon::Phrase phrase);
+
     // Reusable console palette: resolve language metadata once, then scan only
     // the edited text. Recreate after the owning session's language changes.
     class ConsoleHighlighter {
@@ -91,7 +95,8 @@ namespace recurloop {
     // Compiler locals have lexical identities, not persistent phrase addresses.
     // Keep their facts in the current inspection and export the same P/R records.
     static std::uint64_t local(context::Context &context, std::string name);
-    static void localDocs(context::Context &context, std::uint64_t local, std::string docs);
+    static void localMetadata(context::Context &context, std::uint64_t local, std::string_view field,
+                              std::string value);
     static void recordLocal(context::Context &context, std::uint64_t local, const SourceLocation &origin,
                             std::string_view source, std::size_t start, std::size_t end);
 

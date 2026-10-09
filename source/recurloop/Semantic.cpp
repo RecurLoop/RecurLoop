@@ -68,6 +68,7 @@ namespace recurloop {
     };
 
     struct Span {
+      enum class Source { Lexical, Phrase, Local };
       std::size_t start = 0;
       std::size_t end = 0;
       std::string color;
@@ -75,7 +76,10 @@ namespace recurloop {
       std::string docs;
       std::uint64_t group = 0;
       std::string ownerKey;
-      bool fallback = false;
+      Source source = Source::Lexical;
+      Size symbol = 0;
+      Size docsOwner = 0;
+      bool hasColor = false;
     };
 
     struct TraceState {
@@ -100,10 +104,11 @@ namespace recurloop {
       std::vector<std::string> matches;
       struct LocalFact {
         std::string name;
-        std::string docs;
+        SemanticMetadata metadata;
       };
       std::vector<LocalFact> locals;
       std::vector<std::string> localMatches;
+      std::unordered_map<std::size_t, std::pair<SourceLocation, SourceLocation>> definitions;
       struct Anchor { Size phrase; std::size_t end; };
       std::vector<Anchor> anchors;
       std::unordered_map<Size, std::string> names;
@@ -408,7 +413,7 @@ namespace recurloop {
       span.docs = std::string(docs);
       span.ownerKey = std::string(ownerKey);
       span.group = group;
-      span.fallback = true;
+      span.hasColor = !color.empty();
       trace.spans.push_back(std::move(span));
     }
 
@@ -675,6 +680,20 @@ namespace recurloop {
     context.exec.hasPendingPhraseHelp = false;
   }
 
+  void Semantic::stageDefinition(context::Context &context, const SourceLocation &start, const SourceLocation &end) {
+    if (!active(context) || start.path.empty()) return;
+    currentTrace->definitions[context.staging.stack.size()] = {start, end};
+  }
+
+  void Semantic::recordDefinition(context::Context &context, lexicon::Phrase phrase) {
+    if (!active(context)) return;
+    auto &definitions = currentTrace->definitions;
+    const auto found = definitions.find(context.staging.stack.size());
+    if (found == definitions.end()) return;
+    record(context, phrase, found->second.first, found->second.second);
+    definitions.erase(found);
+  }
+
   Semantic::InspectionScope::InspectionScope(context::Context &context, std::string_view source, std::string_view path) {
     auto *state = new TraceState;
     state->context = &context;
@@ -712,17 +731,55 @@ namespace recurloop {
   std::string Semantic::InspectionScope::encode(std::string_view diagnostic) const {
     auto &state = *static_cast<TraceState *>(state_);
     std::vector<Span> spans = state.spans;
+    // Record identities while parsing, then resolve all metadata from the final
+    // elaborated state. Declarations and earlier reads follow the same rule as
+    // later uses; shadowed bindings retain their own identities.
+    if (state.metadataDirty) refreshTraceCatalog(state);
+    std::unordered_map<Size, SemanticMetadata> phraseMetadata;
+    const auto metadataFor = [&](Size address) -> const SemanticMetadata & {
+      auto [entry, inserted] = phraseMetadata.try_emplace(address);
+      if (inserted) entry->second = resolvedTrace(state, phraseAt(state, address));
+      return entry->second;
+    };
+    std::uint64_t nextGroup = state.nextGroup;
+    std::set<std::pair<std::size_t, std::size_t>> localRanges;
+    for (Span &span : spans) {
+      if (span.source == Span::Source::Lexical) continue;
+      SemanticMetadata style;
+      SemanticMetadata hover;
+      if (span.source == Span::Source::Local) {
+        const auto &local = state.locals.at(static_cast<std::size_t>(span.symbol - LocalVersionBase));
+        style = hover = local.metadata;
+        span.kind = "local";
+        span.ownerKey = local.name;
+        localRanges.emplace(span.start, span.end);
+      } else {
+        style = metadataFor(span.symbol);
+        const DocsAnchor anchor = docsAnchor(state, phraseAt(state, span.symbol));
+        const Size owner = anchor.specified ? anchor.owner : span.docsOwner;
+        if (owner != span.docsOwner) span.group = owner == 0 ? 0 : nextGroup++;
+        if (owner != 0) {
+          hover = metadataFor(owner);
+          span.ownerKey = phraseAt(state, owner).getKey();
+        }
+        if (hover.hasKind) span.kind = hover.kind;
+      }
+      span.hasColor = style.hasColor;
+      span.color = style.color;
+      span.docs = hover.docs;
+    }
 
-    // Lexical coloring is only a fallback. Once elaboration recorded a real
-    // semantic phrase with a color for exactly the same range, discard the
-    // fallback span so consumers never receive two competing colors whose final
-    // appearance depends on sort order.
+    // Lexical scopes take precedence over dictionary matches. Explicit empty
+    // colors also override the fallback, rather than restoring a stale color.
+    std::erase_if(spans, [&](const Span &span) {
+      return span.source == Span::Source::Phrase && localRanges.contains({span.start, span.end});
+    });
     std::set<std::pair<std::size_t, std::size_t>> semanticColors;
     for (const Span &span : spans)
-      if (!span.fallback && !span.color.empty()) semanticColors.emplace(span.start, span.end);
-    spans.erase(std::remove_if(spans.begin(), spans.end(), [&](const Span &span) {
-                  return span.fallback && semanticColors.contains({span.start, span.end});
-                }), spans.end());
+      if (span.source != Span::Source::Lexical && span.hasColor) semanticColors.emplace(span.start, span.end);
+    std::erase_if(spans, [&](const Span &span) {
+      return span.source == Span::Source::Lexical && semanticColors.contains({span.start, span.end});
+    });
 
     std::sort(spans.begin(), spans.end(), [](const Span &left, const Span &right) {
       if (left.start != right.start) return left.start < right.start;
@@ -758,7 +815,7 @@ namespace recurloop {
     for (std::size_t index = 0; index < state.locals.size(); ++index) {
       const auto &local = state.locals[index];
       output << "P\t" << LocalVersionBase + index << '\t' << hex(local.name) << '\t' << hex("local") << '\t'
-             << hex(local.docs) << "\t\t\t\n";
+             << hex(local.metadata.docs) << "\t\t\t\n";
     }
     for (const std::string &match : state.matches) output << match;
 
@@ -797,6 +854,21 @@ namespace recurloop {
     struct Candidate { lexicon::Phrase phrase; std::string name; std::string kind; };
     std::vector<Candidate> candidates;
     std::unordered_set<Size> visited;
+    std::unordered_set<Size> exported;
+    const auto exportFact = [&](lexicon::Phrase phrase) {
+      const std::string name = phrasePath(names, phrase);
+      const SemanticMetadata style = resolved(metadata, phrase);
+      std::string kind = style.hasKind ? style.kind : "phrase";
+      if (types.contains(name)) kind = "type";
+      if (signatures.contains(name)) kind = "function";
+      if (exported.insert(phrase.getAddress()).second) {
+        const std::string prototype = phrase.containsPrototype() ? phrasePath(names, phrase.getPrototype()) : "";
+        const std::string type = phrase.containsType() ? phrasePath(names, phrase.getType()) : "";
+        output << "P\t" << phraseVersion(phrase) << '\t' << hex(name) << '\t' << hex(kind) << '\t' << hex(style.docs)
+               << '\t' << hex(prototype) << '\t' << hex(type) << '\t' << hex(signatures[name]) << '\n';
+      }
+      return kind;
+    };
     const auto visit = [&](lexicon::Phrase owner, const auto &self) -> void {
       if (owner.isNull() || !owner.containsSubdictionary() ||
           !visited.insert(owner.getSubdictionary().getAddress()).second)
@@ -808,16 +880,7 @@ namespace recurloop {
         const std::string key = phrase.getKey();
         if (key.empty() || static_cast<unsigned char>(key.front()) < 32) continue;
         const std::string name = phrasePath(names, phrase);
-        const SemanticMetadata style = resolved(metadata, phrase);
-        std::string kind = style.hasKind ? style.kind : "phrase";
-        if (types.contains(name)) kind = "type";
-        if (signatures.contains(name)) kind = "function";
-        std::string prototype;
-        std::string type;
-        if (phrase.containsPrototype()) prototype = phrasePath(names, phrase.getPrototype());
-        if (phrase.containsType()) type = phrasePath(names, phrase.getType());
-        output << "P\t" << phraseVersion(phrase) << '\t' << hex(name) << '\t' << hex(kind) << '\t' << hex(style.docs)
-               << '\t' << hex(prototype) << '\t' << hex(type) << '\t' << hex(signatures[name]) << '\n';
+        const std::string kind = exportFact(phrase);
         candidates.push_back({phrase, name, kind});
         auto descriptor = assistance.descriptor(phrase);
         auto pattern = Assistance::child(descriptor, "pattern").isNull()
@@ -848,6 +911,11 @@ namespace recurloop {
     };
     visit(context.lexicon.phrase(), visit);
     visit(context.lookup.dictionary, visit);
+    // Earlier occurrences can refer to a version hidden by a later declaration.
+    // Export those exact facts as well, without adding obsolete completions.
+    for (const Span &span : state.spans)
+      if (span.source == Span::Source::Phrase && !exported.contains(span.symbol))
+        exportFact(phraseAt(state, span.symbol));
     // Anchors come from actual phrase matches. Only the innermost matching
     // usage that reaches the cursor supplies argument expectations.
     std::size_t closest = 0;
@@ -961,9 +1029,17 @@ namespace recurloop {
     return LocalVersionBase + currentTrace->locals.size() - 1;
   }
 
-  void Semantic::localDocs(context::Context &context, std::uint64_t local, std::string docs) {
-    if (active(context) && local >= LocalVersionBase)
-      currentTrace->locals.at(static_cast<std::size_t>(local - LocalVersionBase)).docs = std::move(docs);
+  void Semantic::localMetadata(context::Context &context, std::uint64_t local, std::string_view field,
+                               std::string value) {
+    if (!active(context) || local < LocalVersionBase) return;
+    auto &metadata = currentTrace->locals.at(static_cast<std::size_t>(local - LocalVersionBase)).metadata;
+    if (field == "docs") {
+      metadata.hasDocs = true;
+      metadata.docs = std::move(value);
+    } else if (field == "color") {
+      metadata.hasColor = true;
+      metadata.color = std::move(value);
+    }
   }
 
   void Semantic::recordLocal(context::Context &context, std::uint64_t local, const SourceLocation &origin,
@@ -974,8 +1050,14 @@ namespace recurloop {
     const auto first = sourceOffset(trace, from);
     const auto last = sourceOffset(trace, sourceLocationAt(origin, source, end));
     if (!first || !last || *last <= *first) return;
-    trace.localMatches.push_back(matchRecord(trace, *first, *last, from.line, local,
-                                             trace.locals.at(static_cast<std::size_t>(local - LocalVersionBase)).name));
+    auto &fact = trace.locals.at(static_cast<std::size_t>(local - LocalVersionBase));
+    Span span;
+    span.start = characterOffset(trace, *first);
+    span.end = characterOffset(trace, *last);
+    span.source = Span::Source::Local;
+    span.symbol = local;
+    trace.spans.push_back(std::move(span));
+    trace.localMatches.push_back(matchRecord(trace, *first, *last, from.line, local, fact.name));
   }
 
   std::uint64_t Semantic::record(context::Context &context, lexicon::Phrase phrase,
@@ -1014,10 +1096,8 @@ namespace recurloop {
       fallbackGroup = trace.activeGroup;
     }
 
-    // Resolve style first: if an image was restored since the last source
-    // phrase and this is the first newly introduced phrase, resolvedTrace()
-    // refreshes metadata once so docsAnchor() below sees the same state.
-    const SemanticMetadata style = resolvedTrace(trace, phrase);
+    // Restored images can introduce metadata needed to track construct ownership.
+    if (trace.metadataDirty) refreshTraceCatalog(trace);
     const DocsAnchor anchor = docsAnchor(trace, phrase);
     Size selectedOwner = fallback;
     std::uint64_t selectedGroup = fallbackGroup;
@@ -1034,24 +1114,13 @@ namespace recurloop {
     trace.lastOwner = selectedOwner;
     trace.lastGroup = selectedGroup;
 
-    SemanticMetadata hover;
-    std::string ownerKey;
-    if (selectedOwner != 0) {
-      lexicon::Phrase ownerPhrase = phraseAt(trace, selectedOwner);
-      if (!ownerPhrase.isNull()) {
-        hover = resolvedTrace(trace, ownerPhrase);
-        ownerKey = ownerPhrase.getKey();
-      }
-    }
-
     Span span;
     span.start = characterOffset(trace, *startByte);
     span.end = characterOffset(trace, *endByte);
     span.group = selectedGroup;
-    if (style.hasColor) span.color = style.color;
-    if (hover.hasKind) span.kind = hover.kind;
-    if (hover.hasDocs) span.docs = hover.docs;
-    span.ownerKey = std::move(ownerKey);
+    span.source = Span::Source::Phrase;
+    span.symbol = phrase.getAddress();
+    span.docsOwner = selectedOwner;
     trace.spans.push_back(std::move(span));
     return selectedOwner;
   }

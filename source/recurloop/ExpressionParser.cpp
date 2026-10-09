@@ -29,6 +29,18 @@ namespace recurloop {
       return LanguageGrammar::find(dictionary, key);
     }
 
+    lexicon::Phrase findNamedPhrase(lexicon::Phrase dictionary, std::string_view name) {
+      auto direct = findPhrase(dictionary, name);
+      if (!direct.isNull()) return direct;
+      while (!name.empty()) {
+        const auto separator = name.find(':');
+        dictionary = findPhrase(dictionary, name.substr(0, separator));
+        if (dictionary.isNull() || separator == std::string_view::npos) break;
+        name.remove_prefix(separator + 1);
+      }
+      return dictionary;
+    }
+
     [[noreturn]] void expressionFail(const context::Context &context, std::size_t offset, const std::string &message) {
       const SourceLocation origin = currentExpressionDiagnostic == nullptr
                                         ? SourceLocation{context.source.path, context.source.line, context.source.position}
@@ -269,6 +281,14 @@ namespace recurloop {
         return std::move(frame.result);
       }
 
+      void recordName(const ParsedExpression &parsed) {
+        if (probing || !Semantic::active(context) || currentExpressionDiagnostic == nullptr) return;
+        auto phrase = findNamedPhrase(context.lexicon.phrase(), parsed.token.text);
+        if (phrase.isNull()) return;
+        const auto &diagnostic = *currentExpressionDiagnostic;
+        Semantic::recordMapped(context, phrase, diagnostic.origin, diagnostic.source, parsed.token.offset, parsed.end);
+      }
+
       context::Value resolve(ParsedExpression &parsed, bool active) {
         if (parsed.resolved) return parsed.value;
         if (!parsed.named)
@@ -277,9 +297,9 @@ namespace recurloop {
         if (!literal.isNull()) {
           parsed.value = active ? invokeBuiltin(context, literal, parsed.token) : context::Value();
         } else if (probing || (!active && Semantic::active(context))) {
-          const bool known = context.values().contains(parsed.token.text) ||
-                             (Semantic::active(context) &&
-                              !findPhrase(context.lexicon.phrase(), parsed.token.text).isNull());
+          const bool known =
+              context.values().contains(parsed.token.text) ||
+              (Semantic::active(context) && !findNamedPhrase(context.lexicon.phrase(), parsed.token.text).isNull());
           if (probing)
             recognized = recognized && known;
           else if (!known)
@@ -292,14 +312,7 @@ namespace recurloop {
             expressionFail(context, parsed.token.offset, error.description());
           }
         }
-        if (!probing && Semantic::active(context) && literal.isNull() && currentExpressionDiagnostic != nullptr) {
-          lexicon::Phrase phrase = findPhrase(context.lexicon.phrase(), parsed.token.text);
-          if (!phrase.isNull()) {
-            const auto &diagnostic = *currentExpressionDiagnostic;
-            Semantic::recordMapped(context, phrase, diagnostic.origin, diagnostic.source, parsed.token.offset,
-                                   parsed.end);
-          }
-        }
+        if (literal.isNull()) recordName(parsed);
         parsed.resolved = true;
         return parsed.value;
       }
@@ -355,14 +368,7 @@ namespace recurloop {
               expressionFail(context, name.offset, "cannot resolve imported function '" + std::string(name.text) + "'");
             }
           } else {
-            lexicon::Phrase phrase = context.lexicon.phrase();
-            std::string_view qualified = name.text;
-            while (!qualified.empty()) {
-              const std::size_t separator = qualified.find(':');
-              phrase = findPhrase(phrase, qualified.substr(0, separator));
-              if (phrase.isNull() || separator == std::string_view::npos) break;
-              qualified.remove_prefix(separator + 1);
-            }
+            lexicon::Phrase phrase = findNamedPhrase(context.lexicon.phrase(), name.text);
             if (phrase.isNull()) expressionFail(context, name.offset, "unknown function '" + name.text + "'");
             const std::string key =
                 context.language().functionKey(function->parameterTypes, function->signature.variadic);
@@ -480,6 +486,7 @@ namespace recurloop {
         if (!base.named || base.resolved)
           expressionFail(context, operation.offset, "a direct call requires a named function");
         std::vector<context::Value> values = arguments(active);
+        recordName(base);
         base.value = active ? builtin(base.token, std::move(values)) : context::Value();
         base.resolved = true;
         return base;

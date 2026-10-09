@@ -26,6 +26,7 @@ class Hover { constructor(contents, range) { Object.assign(this, { contents, ran
 class CancellationError extends Error {}
 const disposable = () => ({ dispose() {} });
 const providers = {}, commands = {};
+const colorRanges = new Map();
 const uri = fsPath => ({ fsPath, toString: () => `file://${fsPath}` });
 const folder = { uri: uri(root), name: 'help', index: 0 };
 const vscode = { Position, Range, MarkdownString, SnippetString, CompletionItem, SignatureInformation, ParameterInformation, Hover,
@@ -34,7 +35,8 @@ const vscode = { Position, Range, MarkdownString, SnippetString, CompletionItem,
   workspace: { workspaceFolders: [folder], textDocuments: [], getWorkspaceFolder: () => folder,
     getConfiguration: () => ({ get: (key, fallback) => key === 'executablePath' ? executable : key === 'terminal.libraries' ? [] : fallback }),
     onDidChangeTextDocument: disposable, onDidOpenTextDocument: disposable, onDidCloseTextDocument: disposable },
-  window: { visibleTextEditors: [], onDidChangeVisibleTextEditors: disposable },
+  window: { visibleTextEditors: [], onDidChangeVisibleTextEditors: disposable,
+    createTextEditorDecorationType: ({ color }) => ({ color, dispose() { colorRanges.delete(color); } }) },
   languages: new Proxy({ createDiagnosticCollection: () => ({ ...disposable(), set() {}, delete() {} }) }, {
     get(target, key) {
       return target[key] || ((_selector, provider) => { providers[key] = provider || _selector; return disposable(); });
@@ -257,6 +259,96 @@ print tick
     editedDoc.positionAt(editedLocal.indexOf('while tick') + 7));
   assert.match(editedHover.contents.value, /Zmieniony opis lokalny/);
   assert.ok(!editedHover.contents.value.includes('Przykładowa treść'));
+  const functionSource = localSource.replace('    var distance:i64 = 0', `    var distance:i64 = 0
+    let exampleFn = fn() -> i64 {
+        return 1
+    }
+    set exampleFn.color = "#008800"
+    set exampleFn.docs = "aaa"
+    exampleFn()`) + `
+let exampleFn = fn() -> i64 {
+    return 1
+}
+exampleFn()
+set exampleFn.color = "#FF8800"
+set exampleFn.docs = "bbb"
+exampleFn()
+print exampleFn()
+`;
+  fs.writeFileSync(path.join(root, 'main.rl'), functionSource);
+  await runtime.reload(folder.uri);
+  analysis.invalidate();
+  const functionDoc = document(functionSource);
+  vscode.window.visibleTextEditors = [{ document: functionDoc,
+    setDecorations: (decoration, ranges) => colorRanges.set(decoration.color, ranges) }];
+  const localFunctionEnd = functionSource.indexOf('\nlet exampleFn');
+  const expectedFunctionRanges = [];
+  const expectedGlobalRanges = [];
+  for (const match of functionSource.matchAll(/\bexampleFn\b/g)) {
+    const hover = await providers.registerHoverProvider.provideHover(functionDoc,
+      functionDoc.positionAt(match.index + 1));
+    if (match.index < localFunctionEnd) {
+      assert.match(hover.contents.value, /aaa/);
+      assert.ok(!hover.contents.value.includes('bbb'));
+      expectedFunctionRanges.push([match.index, match.index + 'exampleFn'.length]);
+    } else {
+      assert.match(hover.contents.value, /bbb/);
+      assert.ok(!hover.contents.value.includes('aaa'));
+      expectedGlobalRanges.push([match.index, match.index + 'exampleFn'.length]);
+    }
+  }
+  const checkFunctionColor = async () => {
+    await analysis.refresh(functionDoc);
+    assert.deepEqual(colorRanges.get('#008800').map(range => [functionDoc.offsetAt(range.start),
+      functionDoc.offsetAt(range.end)]).sort((a, b) => a[0] - b[0]), expectedFunctionRanges);
+    assert.deepEqual(colorRanges.get('#FF8800').map(range => [functionDoc.offsetAt(range.start),
+      functionDoc.offsetAt(range.end)]).sort((a, b) => a[0] - b[0]), expectedGlobalRanges);
+    for (const [color, ranges] of colorRanges) {
+      for (const range of ranges) {
+        const offsets = [functionDoc.offsetAt(range.start), functionDoc.offsetAt(range.end)];
+        const local = expectedFunctionRanges.some(item => item[0] === offsets[0] && item[1] === offsets[1]);
+        const global = expectedGlobalRanges.some(item => item[0] === offsets[0] && item[1] === offsets[1]);
+        if (local) assert.equal(color, '#008800');
+        if (global) assert.equal(color, '#FF8800');
+      }
+    }
+  };
+  await checkFunctionColor();
+  await runtime.restart(folder.uri);
+  analysis.invalidate();
+  await checkFunctionColor();
+
+  // Unsaved changes retain earlier versions and replace only the edited binding.
+  const redefinedSource = functionSource + `
+let exampleFn = fn() -> i64 { return 2 }
+set exampleFn.color = "#123456"
+set exampleFn.docs = "ccc"
+exampleFn()
+`;
+  const redefinedDoc = { ...document(redefinedSource), version: 2 };
+  vscode.window.visibleTextEditors[0].document = redefinedDoc;
+  const newRanges = [];
+  for (const match of redefinedSource.matchAll(/\bexampleFn\b/g)) {
+    const hover = await providers.registerHoverProvider.provideHover(redefinedDoc,
+      redefinedDoc.positionAt(match.index + 1));
+    const expected = match.index < localFunctionEnd ? 'aaa' : match.index < functionSource.length ? 'bbb' : 'ccc';
+    assert.match(hover.contents.value, new RegExp(expected));
+    for (const other of ['aaa', 'bbb', 'ccc'].filter(item => item !== expected))
+      assert.ok(!hover.contents.value.includes(other));
+    if (match.index >= functionSource.length) newRanges.push([match.index, match.index + 'exampleFn'.length]);
+  }
+  await analysis.refresh(redefinedDoc);
+  const rendered = color => (colorRanges.get(color) || []).map(range =>
+    [redefinedDoc.offsetAt(range.start), redefinedDoc.offsetAt(range.end)]).sort((a, b) => a[0] - b[0]);
+  assert.deepEqual(rendered('#123456'), newRanges);
+  assert.deepEqual(rendered('#FF8800'), expectedGlobalRanges);
+  assert.deepEqual(rendered('#008800'), expectedFunctionRanges);
+  const clearedDoc = { ...document(redefinedSource.replace('#123456', '')), version: 3 };
+  vscode.window.visibleTextEditors[0].document = clearedDoc;
+  await analysis.refresh(clearedDoc);
+  assert.deepEqual(rendered('#123456'), []);
+  assert.deepEqual(rendered('#FF8800'), expectedGlobalRanges);
+  assert.deepEqual(rendered('#008800'), expectedFunctionRanges);
   console.log('Assistance passed: source-owned help, selectors, aliases, choices, cursor visibility, Unicode, signature, discovery and variable documentation hovers.');
 })().catch(error => { console.error(error); process.exitCode = 1; })
   .finally(() => { analysis.dispose(); runtime.dispose(); fs.rmSync(root, { recursive: true, force: true }); });
