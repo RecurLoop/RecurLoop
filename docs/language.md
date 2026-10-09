@@ -197,6 +197,35 @@ chain. The source-defined IDE uses the same metadata for highlighting and hover
 documentation, so custom syntax can describe itself without adding an AST or a
 separate IntelliSense grammar.
 
+For a top-level runtime binding, attach documentation after its declaration:
+
+```rl
+var pi = 3.14
+set pi.docs = "Approximation of π: the ratio of a circle's circumference to its diameter."
+print pi
+```
+
+Runtime inspection links the declaration and expression reads to that binding's
+metadata. VS Code shows the description when hovering `pi` at either location.
+The same assignment works for a top-level `const` binding.
+
+Inside `fn`, documentation belongs to the local binding in its lexical scope:
+
+```rl
+let example = fn () -> i64 {
+    var tick:i64 = 1
+    set tick.docs = "Current iteration number."
+    tick += 1
+    return tick
+}
+```
+
+Local `set name.docs = "..."` assignments require a string literal and are
+processed during elaboration, without generating a runtime store. Inspection links declarations,
+reads and writes to the same local binding, including uses before the docs
+assignment. A shadowing declaration has its own documentation; local metadata
+does not modify an equally named global binding.
+
 The fields accepted inside `phrase { ... }` are phrases too. Their standard
 definitions carry semantic metadata, which means hovering `type`, `prototype`,
 `successor`, `action`, `serializable`, and the other descriptor fields explains

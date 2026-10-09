@@ -39,6 +39,7 @@ let Probe:advance = fn (distance:i64, speed:i64) -> i64 { return distance + spee
 let Probe:main = fn () -> i64 {
     var distance:i64 = 0
     var tick:i64 = 1
+    set tick.docs = "Example iteration number."
     while tick <= 3 {
         distance = Probe:advance(distance, 10)
         printf("Tick %lld: %lld km\n", tick, distance)
@@ -347,6 +348,96 @@ TEST(RecurloopGeneration, TraceDistinguishesChronologicalDefinitions) {
   EXPECT_EQ(response.output.find("E\t"), std::string::npos) << response.output;
   EXPECT_NE(response.output.find("R\t26\t32\t2\t0\t747261636564\n"), std::string::npos);
   EXPECT_NE(response.output.find("R\t59\t65\t4\t1\t747261636564\n"), std::string::npos);
+}
+
+TEST(RecurloopGeneration, RuntimeVariableDocsHaveDeclarationAndExpressionOccurrences) {
+  auto session = project()->openSession();
+  const std::string source = "var pi = 3.14\n"
+                             "set pi.docs = \"Circle ratio.\"\n"
+                             "const tau = pi * 2\n"
+                             "set pi = pi + 1\n"
+                             "print str(pi)\n"
+                             "print \"pi is text\" // pi is a comment\n";
+  const auto response = session->inspect(source, "/tmp/runtime-variable-docs.rl", true, true);
+  ASSERT_EQ(response.output.find("E\t"), std::string::npos) << response.output;
+  std::vector<std::pair<std::size_t, std::size_t>> occurrences;
+  std::istringstream rows(response.output);
+  for (std::string row; std::getline(rows, row);) {
+    std::istringstream fields(row);
+    std::string tag, name;
+    std::size_t start = 0, end = 0, line = 0, version = 0;
+    if (fields >> tag >> start >> end >> line >> version >> name && tag == "R" && name == "7069")
+      occurrences.emplace_back(start, end);
+  }
+  const std::vector<std::pair<std::size_t, std::size_t>> expected{
+      {4, 6},
+      {source.find("pi.docs"), source.find("pi.docs") + 2},
+      {source.find("pi *"), source.find("pi *") + 2},
+      {source.find("set pi =") + 4, source.find("set pi =") + 6},
+      {source.find("pi +"), source.find("pi +") + 2},
+      {source.find("str(pi)") + 4, source.find("str(pi)") + 6}};
+  EXPECT_EQ(occurrences, expected);
+  EXPECT_NE(response.output.find("P\t0\t7069\t706872617365\t436972636c6520726174696f2e\t"), std::string::npos);
+  // Inspection neither evaluates the print nor publishes the binding.
+  EXPECT_NE(session->evaluate("print pi").status, 0);
+}
+
+TEST(RecurloopGeneration, FunctionLocalDocsFollowLexicalBindingsWithoutChangingValues) {
+  auto session = project()->openSession();
+  const std::string source = R"(var tick = 99
+set tick.docs = "Global tick."
+let local_docs = fn () -> i64 {
+    var tick:i64 = 1
+    set tick.docs = "Outer tick."
+    while tick < 2 {
+        var tick:i64 = 10
+        set tick.docs = "Inner tick."
+        tick += 1
+        break
+    }
+    tick += 1
+    return tick
+}
+print local_docs()
+print tick
+)";
+  const auto response = session->inspect(source, "/tmp/function-local-docs.rl", true, true);
+  ASSERT_EQ(response.output.find("E\t"), std::string::npos) << response.output;
+  std::vector<std::pair<std::size_t, std::uint64_t>> locals;
+  std::istringstream rows(response.output);
+  for (std::string row; std::getline(rows, row);) {
+    std::istringstream fields(row);
+    std::string tag, name;
+    std::size_t start = 0, end = 0, line = 0;
+    std::uint64_t version = 0;
+    if (fields >> tag >> start >> end >> line >> version >> name && tag == "R" && version >= (std::uint64_t{1} << 32)) {
+      EXPECT_EQ(name, "7469636b");
+      EXPECT_EQ(end - start, 4);
+      locals.emplace_back(start, version);
+    }
+  }
+  const std::vector<std::pair<std::size_t, std::uint64_t>> expected{
+      {source.find("var tick:i64") + 4, 4294967296},
+      {source.find("set tick.docs", source.find("let local_docs")) + 4, 4294967296},
+      {source.find("while tick") + 6, 4294967296},
+      {source.find("var tick:i64 = 10") + 4, 4294967297},
+      {source.find("set tick.docs", source.find("var tick:i64 = 10")) + 4, 4294967297},
+      {source.find("tick += 1"), 4294967297},
+      {source.rfind("tick += 1"), 4294967296},
+      {source.find("return tick") + 7, 4294967296}};
+  EXPECT_EQ(locals, expected);
+  EXPECT_NE(response.output.find("P\t4294967296\t7469636b\t6c6f63616c\t4f75746572207469636b2e\t"), std::string::npos);
+  EXPECT_NE(response.output.find("P\t4294967297\t7469636b\t6c6f63616c\t496e6e6572207469636b2e\t"), std::string::npos);
+  EXPECT_NE(session->evaluate("print tick").status, 0);
+  const auto executed = session->evaluate(source);
+  ASSERT_EQ(executed.status, 0) << executed.error;
+  EXPECT_EQ(executed.output, "2\n99\n");
+  for (const auto *assignment : {"set tick.docs += \"invalid\"", "set tick.docs = tick"}) {
+    const auto invalid = session->evaluate(std::string("let invalid_docs = fn () -> i64 {\nvar tick:i64 = 1\n") +
+                                           assignment + "\nreturn tick\n}");
+    EXPECT_NE(invalid.status, 0);
+    EXPECT_NE(invalid.error.find("local docs require"), std::string::npos) << invalid.error;
+  }
 }
 
 TEST(RecurloopGeneration, ProjectInspectionReplaysSourceEntryAndKeepsTheSessionState) {

@@ -117,6 +117,8 @@ namespace recurloop {
       lexicon::Phrase operation;
       std::string expression;
       SourceLocation expressionOrigin;
+      SourceLocation nameStart;
+      SourceLocation nameEnd;
     };
 
     Assignment assignment(context::Context &context, bool declaration);

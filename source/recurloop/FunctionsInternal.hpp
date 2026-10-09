@@ -109,6 +109,7 @@ namespace recurloop {
       std::vector<Statement> rejected;
       std::size_t offset = 0;
       bool mutableValue = true;
+      bool docsAssignment = false;
     };
 
     struct ExpressionBody {
@@ -133,6 +134,14 @@ namespace recurloop {
       std::size_t offset = 0;
       bool mutableValue = true;
     };
+
+    template <class Scopes> auto findScopedLocal(Scopes &scopes, const std::string &name) {
+      for (auto scope = scopes.rbegin(); scope != scopes.rend(); ++scope) {
+        const auto found = scope->find(name);
+        if (found != scope->end()) return &found->second;
+      }
+      return decltype(&scopes.back().begin()->second){};
+    }
 
     FunctionDefinition parseSignature(context::Context &context, std::string_view source, const std::string &symbol,
                                       bool parameterNamesOptional = false, std::string sourcePath = {},

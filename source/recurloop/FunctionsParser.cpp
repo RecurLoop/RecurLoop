@@ -2,6 +2,7 @@
 
 #include <recurloop/Functions.hpp>
 #include <recurloop/LanguageGrammar.hpp>
+#include <recurloop/Semantic.hpp>
 #include <recurloop/TypeSyntax.hpp>
 
 #include <charconv>
@@ -200,6 +201,7 @@ namespace recurloop {
 
       std::vector<Statement> blockContents(std::size_t *closingOffset = nullptr,
                                            std::size_t *closingExpandedOffset = nullptr) {
+        locals.emplace_back();
         lexer.skipNewlines();
         std::vector<Statement> result;
         while (!LanguageGrammar::matches(context, lexer.current().text, "}")) {
@@ -210,6 +212,7 @@ namespace recurloop {
         if (closingOffset != nullptr) *closingOffset = lexer.current().offset;
         if (closingExpandedOffset != nullptr) *closingExpandedOffset = lexer.current().expandedOffset;
         lexer.take();
+        locals.pop_back();
         return result;
       }
 
@@ -258,11 +261,17 @@ namespace recurloop {
         definition.fetch(0, mutableValue);
         result.syntax = syntax;
         result.offset = start.offset;
-        result.name = identifier("a local variable name").text;
+        const Token name = identifier("a local variable name");
+        result.name = name.text;
         result.mutableValue = mutableValue != 0;
         if (lexer.accept(":")) result.declaredType = type();
         lexer.expect("=");
         result.expression = expression();
+        if (locals.back().contains(result.name))
+          fail({}, name.offset, "duplicate local variable '" + result.name + "'");
+        const auto symbol = Semantic::local(context, result.name);
+        locals.back().emplace(result.name, symbol);
+        recordLocal(symbol, name);
       }
 
       void parseAssignment(Statement &result, const Token &start, lexicon::Phrase syntax) {
@@ -273,6 +282,34 @@ namespace recurloop {
         result.operation = lexer.take().text;
         if (result.operationSyntax.isNull()) fail({}, start.offset, "expected an assignment operator");
         result.expression = expression();
+        assignmentMetadata(result);
+      }
+
+      const std::uint64_t *findLocal(const std::string &name) const {
+        return findScopedLocal(locals, name);
+      }
+
+      void recordLocal(std::uint64_t symbol, const Token &token) {
+        Semantic::recordLocal(context, symbol, {sourcePath, sourceLine, sourceColumn}, sourceText, token.offset,
+                              token.semanticEnd);
+      }
+
+      void assignmentMetadata(Statement &statement) {
+        // Only explicit `set` uses metadata; bare member assignments still write struct fields.
+        const Expression &target = *statement.target;
+        if (target.kind != Expression::Kind::Member || target.text != "docs" ||
+            target.children.front()->kind != Expression::Kind::Variable)
+          return;
+        const auto *local = findLocal(target.children.front()->text);
+        if (local == nullptr) return;
+        auto assignment = LanguageGrammar::behavior(statement.operationSyntax, AssignmentEmitName);
+        if (assignment.isNull() || !assignment.containsAction() ||
+            context.actions().name(assignment.getAction()) != "fn.assignment.emit-move")
+          fail({}, statement.offset, "local docs require '='");
+        if (statement.expression->kind != Expression::Kind::String)
+          fail({}, statement.expression->offset, "local docs require a string literal");
+        Semantic::localDocs(context, *local, statement.expression->text);
+        statement.docsAssignment = true;
       }
 
       void parseConditional(Statement &result, const Token &start, lexicon::Phrase syntax) {
@@ -447,6 +484,9 @@ namespace recurloop {
           fail({}, token.offset, "expected an expression");
         result->text = token.text;
         result->kind = Expression::Kind::Variable;
+        if (!LanguageGrammar::matches(context, lexer.current().text, ":")) {
+          if (const auto *local = findLocal(token.text)) recordLocal(*local, token);
+        }
         return result;
       }
 
@@ -484,7 +524,13 @@ namespace recurloop {
         lexer.expect("{");
         std::size_t closing = opening.offset + opening.text.size();
         std::size_t closingExpanded = opening.expandedOffset + opening.text.size();
+        // Function literals cannot capture their enclosing function's locals.
+        auto enclosingLocals = std::move(locals);
+        locals.clear();
+        locals.emplace_back();
+        for (const auto &name : definition.names) locals.back().emplace(name, Semantic::local(context, name));
         const std::vector<Statement> statements = blockContents(&closing, &closingExpanded);
+        locals = std::move(enclosingLocals);
         const std::size_t bodyBeginExpanded = opening.expandedOffset + opening.text.size();
         const SourceLocation bodyOrigin =
             sourceLocationAt({sourcePath, sourceLine, sourceColumn}, sourceText, opening.offset);
@@ -642,6 +688,7 @@ namespace recurloop {
       std::size_t sourceLine = 1;
       std::size_t sourceColumn = 1;
       std::size_t expressionGroupDepth = 0;
+      std::vector<std::unordered_map<std::string, std::uint64_t>> locals{1};
     };
 
     namespace {

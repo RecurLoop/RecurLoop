@@ -712,6 +712,7 @@ namespace recurloop {
       }
 
       void generateAssignment(const Statement &statement) {
+        if (statement.docsAssignment) return;
         const compiler::TypeId targetType = lvalue(*statement.target, true);
         emit("push", "rax");
         ++temporaryDepth;
@@ -1291,18 +1292,10 @@ namespace recurloop {
       }
 
       Local *findLocalOptional(const std::string &name) {
-        for (auto scope = scopes.rbegin(); scope != scopes.rend(); ++scope) {
-          const auto found = scope->find(name);
-          if (found != scope->end()) return &found->second;
-        }
-        return nullptr;
+        return findScopedLocal(scopes, name);
       }
       const Local *findLocalOptional(const std::string &name) const {
-        for (auto scope = scopes.rbegin(); scope != scopes.rend(); ++scope) {
-          const auto found = scope->find(name);
-          if (found != scope->end()) return &found->second;
-        }
-        return nullptr;
+        return findScopedLocal(scopes, name);
       }
       const Local &findLocal(const std::string &name, std::size_t offset) const {
         const Local *found = findLocalOptional(name);

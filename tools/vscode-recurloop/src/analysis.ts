@@ -334,10 +334,10 @@ export class AnalysisController implements vscode.Disposable {
     const result = await this.get(document, token);
     const offset = utf16OffsetToCodePoint(result.source, document.offsetAt(position));
     const occurrence = result.occurrences
-      .filter(item => item.start <= offset && offset <= item.end)
+      .filter(item => item.start <= offset && offset < item.end)
       .sort((a, b) => (a.end - a.start) - (b.end - b.start))[0];
     const span = result.spans
-      .filter(item => item.start <= offset && offset <= item.end && item.docs)
+      .filter(item => item.start <= offset && offset < item.end && item.docs)
       .sort((a, b) => (a.end - a.start) - (b.end - b.start))[0];
     const fact = occurrence
       ? result.symbols.find(item => item.name === occurrence.name && item.version === occurrence.version) ?? result.symbols.find(item => item.name === occurrence.name)
@@ -354,7 +354,7 @@ export class AnalysisController implements vscode.Disposable {
         markdown.appendCodeblock(fact.signature || fact.name, 'recurloop');
         const metadata = [fact.kind, fact.type ? `type: ${fact.type}` : '', fact.prototype ? `prototype: ${fact.prototype}` : ''].filter(Boolean);
         if (metadata.length) markdown.appendMarkdown(`*${metadata.join(' · ')}*\n\n`);
-        const docs = fact.docs || span?.docs;
+        const docs = fact.kind === 'local' ? fact.docs : fact.docs || span?.docs;
         if (docs) markdown.appendMarkdown(docs);
       }
     } else if (span) {

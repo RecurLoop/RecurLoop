@@ -87,6 +87,7 @@ namespace recurloop {
 
     struct ParsedExpression {
       Token token;
+      std::size_t end = 0;
       context::Value value;
       bool named = false;
       bool resolved = false;
@@ -174,7 +175,8 @@ namespace recurloop {
             symbols(findPhrase(grammar, "symbols")), builtins(findPhrase(grammar, "builtins")),
             dynamicBuiltins(findPhrase(grammar, "dynamic")), literals(findPhrase(grammar, "literals")),
             lexer(context, source, {symbols, prefixOperators, infixOperators, primaries, postfixes}, expressionFail,
-                  {.semanticTracing = !probing}) {
+                  {.semanticTracing = !probing},
+                  currentExpressionDiagnostic == nullptr ? SourceLocation{} : currentExpressionDiagnostic->origin) {
         if (grammar.isNull()) THROW(, "expression phrase grammar is not installed")
         if (prefixOperators.isNull() || infixOperators.isNull() || primaries.isNull() || postfixes.isNull() ||
             symbols.isNull())
@@ -288,6 +290,14 @@ namespace recurloop {
           } catch (const Exception &error) {
             if (error.hasSourceLocation()) throw;
             expressionFail(context, parsed.token.offset, error.description());
+          }
+        }
+        if (!probing && Semantic::active(context) && literal.isNull() && currentExpressionDiagnostic != nullptr) {
+          lexicon::Phrase phrase = findPhrase(context.lexicon.phrase(), parsed.token.text);
+          if (!phrase.isNull()) {
+            const auto &diagnostic = *currentExpressionDiagnostic;
+            Semantic::recordMapped(context, phrase, diagnostic.origin, diagnostic.source, parsed.token.offset,
+                                   parsed.end);
           }
         }
         parsed.resolved = true;
@@ -461,6 +471,7 @@ namespace recurloop {
         if (component.kind != TokenKind::Identifier)
           expressionFail(context, component.offset, "expected name after '" + operation.text + "'");
         base.token.text += ":" + component.text;
+        base.end = component.offset + component.text.size();
         return base;
       }
 
@@ -500,6 +511,7 @@ namespace recurloop {
         Token token = lexer.take();
         ParsedExpression result;
         result.token = token;
+        result.end = token.offset + token.text.size();
         if (token.kind == TokenKind::Integer) {
           std::string text = token.text;
           text.erase(std::remove(text.begin(), text.end(), '_'), text.end());

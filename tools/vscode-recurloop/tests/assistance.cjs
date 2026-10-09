@@ -145,6 +145,118 @@ confirm `;
   assert.equal(inserted, 'display ${1:answer}');
   const disabled = parseInspection({ version: 1, getText: () => '' }, '');
   assert.deepEqual(disabled.expected, []);
-  console.log('Assistance passed: source-owned help, selectors, aliases, choices, cursor visibility, Unicode, signature and discovery.');
+  // Runtime variable docs must reach both declarations and expression reads.
+  // Comments/string contents and longer names must not be treated as reads.
+  const variableSource = `// π 😀 pi in a comment\r\nvar pi = 3.14\r\nset pi.docs = "Przybliżenie **liczby π**."\r\nconst tau = pi * 2\r\nset tau.docs = "Dwa razy π."\r\nprint str(pi)\r\nprint pi+2\r\nvar pirate = 7\r\nprint pirate\r\nprint "pi in a string"\r\n`;
+  fs.writeFileSync(path.join(root, 'main.rl'), variableSource);
+  await runtime.reload(folder.uri);
+  analysis.invalidate();
+  const variableDoc = document(variableSource);
+  const hoverAt = offset => providers.registerHoverProvider.provideHover(variableDoc, variableDoc.positionAt(offset));
+  const variableOccurrences = ['var pi', 'const tau = pi', 'str(pi)', 'print pi+2'];
+  for (const fragment of variableOccurrences) {
+    const start = variableSource.indexOf(fragment) + fragment.indexOf('pi');
+    const hover = await hoverAt(start + 1);
+    assert.match(hover.contents.value, /Przybliżenie \*\*liczby π\*\*\./);
+    assert.equal(variableDoc.offsetAt(hover.range.start), start);
+    assert.equal(variableDoc.offsetAt(hover.range.end), start + 2);
+  }
+  assert.match((await hoverAt(variableSource.indexOf('tau') + 1)).contents.value, /Dwa razy π\./);
+  for (const offset of [variableSource.indexOf('pi in a comment'), variableSource.indexOf('pi in a string'),
+    variableSource.indexOf('print pirate') + 7, variableSource.indexOf('pi+2') + 2]) {
+    assert.ok(!(await hoverAt(offset))?.contents.value.includes('Przybliżenie'));
+  }
+  // The same response remains valid through editor cache hits and image replay.
+  assert.match((await hoverAt(variableSource.indexOf('var pi') + 5)).contents.value, /Przybliżenie/);
+  await runtime.restart(folder.uri);
+  analysis.invalidate();
+  assert.match((await hoverAt(variableSource.indexOf('str(pi)') + 5)).contents.value, /Przybliżenie/);
+  // An unsaved metadata change must invalidate the old document result.
+  const changed = variableSource.replace('Przybliżenie **liczby π**.', 'Nowy opis π.');
+  const changedDoc = { ...document(changed), version: 2 };
+  const changedHover = await providers.registerHoverProvider.provideHover(changedDoc,
+    changedDoc.positionAt(changed.indexOf('var pi') + 5));
+  assert.match(changedHover.contents.value, /Nowy opis π\./);
+  assert.ok(!changedHover.contents.value.includes('Przybliżenie'));
+  // Metadata restored from an included module must document reads in another file.
+  fs.writeFileSync(path.join(root, 'values.rl'), 'var pi = 3.14\nset pi.docs = "Opis z biblioteki."\n');
+  const consumer = 'include "values.rl"\nprint pi\n';
+  fs.writeFileSync(path.join(root, 'main.rl'), consumer);
+  await runtime.reload(folder.uri);
+  analysis.invalidate();
+  const consumerDoc = document(consumer);
+  const consumerHover = await providers.registerHoverProvider.provideHover(consumerDoc,
+    consumerDoc.positionAt(consumer.indexOf('print pi') + 7));
+  assert.match(consumerHover.contents.value, /Opis z biblioteki\./);
+  const localSource = `// π 😀\r\nvar tick = 99
+set tick.docs = "Global description."
+let Probe = phrase { dictionary = true permanent = true }
+link shared "c"
+extern printf(format:u8*, ...) -> i32 abi sysv-amd64
+let Probe:advance = fn (distance:i64, speed:i64) -> i64 { return distance + speed }
+let Probe:main = fn () -> i64 {
+    var distance:i64 = 0
+    var tick:i64 = 1
+    const before = tick
+    set tick.docs = "Przykładowa treść"
+    // tick in a comment
+    const caption = "tick in a string"
+    while tick <= 3 {
+        distance = Probe:advance(distance, 10)
+        printf("Tick %lld: %lld km\\n", tick, distance)
+        tick += 1
+    }
+    if tick > 0 {
+        var tick:i64 = 10
+        set tick.docs = "Inner description."
+        tick += 2
+    }
+    return tick
+}
+let other = fn () -> i64 {
+    var tick:i64 = 7
+    return tick
+}
+print tick
+`;
+  fs.writeFileSync(path.join(root, 'main.rl'), localSource);
+  await runtime.reload(folder.uri);
+  analysis.invalidate();
+  const localDoc = document(localSource);
+  const localHover = async fragment => {
+    const start = localSource.indexOf(fragment) + fragment.indexOf('tick');
+    const hover = await providers.registerHoverProvider.provideHover(localDoc, localDoc.positionAt(start + 1));
+    assert.equal(localDoc.offsetAt(hover.range.start), start);
+    assert.equal(localDoc.offsetAt(hover.range.end), start + 4);
+    return hover.contents.value;
+  };
+  for (const fragment of ['var tick:i64 = 1\n', 'const before = tick', 'set tick.docs = "Przykładowa',
+    'while tick', ', tick, distance)', 'tick += 1', 'return tick\n}']) {
+    assert.match(await localHover(fragment), /Przykładowa treść/);
+  }
+  for (const fragment of ['var tick:i64 = 10', 'set tick.docs = "Inner', 'tick += 2']) {
+    const text = await localHover(fragment);
+    assert.match(text, /Inner description/);
+    assert.ok(!text.includes('Przykładowa') && !text.includes('Global description'));
+  }
+  const undocumented = await localHover('var tick:i64 = 7');
+  assert.ok(!undocumented.includes('description') && !undocumented.includes('Przykładowa'));
+  assert.ok(!(await localHover('return tick\n}\nprint tick')).includes('Przykładowa'));
+  for (const fragment of ['tick in a comment', 'tick in a string']) {
+    const hover = await providers.registerHoverProvider.provideHover(localDoc,
+      localDoc.positionAt(localSource.indexOf(fragment) + 1));
+    assert.ok(!hover?.contents.value.includes('Przykładowa'));
+  }
+  assert.match(await localHover('print tick'), /Global description/);
+  await runtime.restart(folder.uri);
+  analysis.invalidate();
+  assert.match(await localHover('tick += 1'), /Przykładowa treść/);
+  const editedLocal = localSource.replace('Przykładowa treść', 'Zmieniony opis lokalny.');
+  const editedDoc = { ...document(editedLocal), version: 2 };
+  const editedHover = await providers.registerHoverProvider.provideHover(editedDoc,
+    editedDoc.positionAt(editedLocal.indexOf('while tick') + 7));
+  assert.match(editedHover.contents.value, /Zmieniony opis lokalny/);
+  assert.ok(!editedHover.contents.value.includes('Przykładowa treść'));
+  console.log('Assistance passed: source-owned help, selectors, aliases, choices, cursor visibility, Unicode, signature, discovery and variable documentation hovers.');
 })().catch(error => { console.error(error); process.exitCode = 1; })
   .finally(() => { analysis.dispose(); runtime.dispose(); fs.rmSync(root, { recursive: true, force: true }); });

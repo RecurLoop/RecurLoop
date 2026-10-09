@@ -52,6 +52,7 @@ const vscode = { workspace: {
 const original = Module._load;
 Module._load = function(name, ...rest) { return name === 'vscode' ? vscode : original.call(this, name, ...rest); };
 const { RecurLoopRuntime } = require('../out/runtime');
+const { resolveExecutable } = require('../out/util');
 const log = [];
 const runtime = new RecurLoopRuntime({ appendLine: line => log.push(line), append: line => log.push(line) }, async () => executable);
 async function child() {
@@ -101,7 +102,7 @@ async function command(process, line, expected) {
   // A managed/prepared server must also supply the client executable and info.
   assert.equal(terminal.shellPath, executable);
   assert.ok(runtime.info(folder.uri).includes(`executable=${executable}\n`));
-  assert.ok(runtime.info(folder.uri).includes('configured executable=recurloop\n'));
+  assert.ok(runtime.info(folder.uri).includes(`configured executable=${resolveExecutable(folder.uri)}\n`));
   runtime.dispose();
 
   const failing = new RecurLoopRuntime({ appendLine() {}, append() {} }, async () => executable);

@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+- Show top-level runtime variable documentation on declarations and expression
+  reads, including metadata attached with `set name.docs = "..."`.
+- Support documentation for local variables in `fn`, with lexical scope and
+  separate descriptions for shadowed bindings, without emitting runtime stores.
+- Use the captured expression's source origin for semantic token locations and
+  keep hover ranges from including the following token.
+
 ## 0.2.9
 
 - Require RecurLoop 0.2.9 or a newer patch in the 0.2 series.

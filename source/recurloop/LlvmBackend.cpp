@@ -492,6 +492,7 @@ namespace recurloop::function_internal {
       }
 
       void assignment(const Statement &statement) {
+        if (statement.docsAssignment) return;
         auto [address, targetType] = lvalue(*statement.target, true);
         Emitted right = coerce(expression(*statement.expression, targetType), targetType, statement.offset);
         const std::string action = behaviorAction(statement.operationSyntax, AssignmentEmitName);
@@ -1153,18 +1154,10 @@ namespace recurloop::function_internal {
       }
 
       LlvmLocal *findLocalOptional(const std::string &name) {
-        for (auto scope = scopes.rbegin(); scope != scopes.rend(); ++scope) {
-          auto found = scope->find(name);
-          if (found != scope->end()) return &found->second;
-        }
-        return nullptr;
+        return findScopedLocal(scopes, name);
       }
       const LlvmLocal *findLocalOptional(const std::string &name) const {
-        for (auto scope = scopes.rbegin(); scope != scopes.rend(); ++scope) {
-          auto found = scope->find(name);
-          if (found != scope->end()) return &found->second;
-        }
-        return nullptr;
+        return findScopedLocal(scopes, name);
       }
       const LlvmLocal &findLocal(const std::string &name, std::size_t offset) const {
         const LlvmLocal *local = findLocalOptional(name);

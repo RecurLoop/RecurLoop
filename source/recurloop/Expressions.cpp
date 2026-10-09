@@ -46,7 +46,14 @@ namespace recurloop {
       SourceLocation expressionOrigin;
       const std::string expression = Blocks::captureExpression(context, &expressionOrigin);
       if (expression.empty()) expressionFail(context, 0, "assignment requires an expression");
-      return {parsed.qualified(), parsed.operation, expression, std::move(expressionOrigin)};
+      return {parsed.qualified(),          parsed.operation,        expression,
+              std::move(expressionOrigin), std::move(parsed.start), std::move(parsed.end)};
+    }
+
+    void recordBinding(context::Context &context, const Assignment &statement) {
+      if (!Semantic::active(context)) return;
+      lexicon::Phrase phrase = findPhrase(context.lexicon.phrase(), statement.name);
+      if (!phrase.isNull()) Semantic::record(context, phrase, statement.nameStart, statement.nameEnd);
     }
 
     void assignBound(context::Context &context, lexicon::Phrase &invoked) {
@@ -254,6 +261,7 @@ namespace recurloop {
     const context::Value value = evaluate(context, statement.expression, statement.expressionOrigin);
     if (!Semantic::active(context)) context.values().define(statement.name, value, true);
     bindAssignment(context, statement.name);
+    internal::recordBinding(context, statement);
   }
 
   void Expressions::constant(context::Context &context, lexicon::Phrase &) {
@@ -261,6 +269,7 @@ namespace recurloop {
     const context::Value value = evaluate(context, statement.expression, statement.expressionOrigin);
     if (!Semantic::active(context)) context.values().define(statement.name, value, false);
     bindAssignment(context, statement.name);
+    internal::recordBinding(context, statement);
   }
 
   void Expressions::bindAssignment(context::Context &context, std::string_view name) {

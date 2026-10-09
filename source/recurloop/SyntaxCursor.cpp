@@ -297,7 +297,8 @@ namespace recurloop {
         if (!std::isalnum(character) && character != '_') break;
         ++cursor;
       }
-      token = {SyntaxTokenKind::Identifier, std::string(text.substr(begin, cursor - begin)), tokenOffset, begin};
+      token = {SyntaxTokenKind::Identifier, std::string(text.substr(begin, cursor - begin)), tokenOffset, begin, 0,
+               sourceOffset(cursor)};
       return;
     }
 

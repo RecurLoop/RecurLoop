@@ -3,8 +3,10 @@
 #include <context/Context.hpp>
 #include <recurloop/LanguageGrammar.hpp>
 #include <recurloop/NameInterpolation.hpp>
+#include <recurloop/Semantic.hpp>
 #include <utilities/Exception.hpp>
 
+#include <algorithm>
 #include <cctype>
 #include <string_view>
 
@@ -238,6 +240,7 @@ namespace recurloop {
       THROW(, "phrase-name grammar is not initialized")
 
     Frame state;
+    const bool tracing = Semantic::active(context);
     Frame *previous = currentFrame;
     currentFrame = &state;
     context.workspace.key.clear();
@@ -264,9 +267,20 @@ namespace recurloop {
 
         lexicon::Phrase mode = state.quote == '\'' ? single : state.quote == '"' ? doubleQuoted : plain;
         lexicon::Dictionary tokens = mode.getSubdictionary();
+        SourceLocation start;
+        if (tracing) start = {context.source.path, context.source.line, context.source.position};
         lexicon::Phrase token = context::Source::matchLongest(context, tokens, nameAction, false);
         if (token.isNull()) THROW(, "phrase name: cannot match the next source byte")
+        bool nameToken = false;
+        if (tracing) {
+          const std::string key = token.getKey();
+          nameToken = key.empty() || !std::ranges::all_of(key, [](unsigned char byte) { return std::isspace(byte); });
+        }
         token.invoke(context);
+        if (nameToken) {
+          if (state.result.start.path.empty()) state.result.start = std::move(start);
+          state.result.end = {context.source.path, context.source.line, context.source.position};
+        }
       }
     } catch (...) {
       currentFrame = previous;

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <lexicon/Phrase.hpp>
+#include <utilities/Exception.hpp>
 
 #include <string>
 #include <vector>
@@ -14,6 +15,9 @@ namespace recurloop {
     std::vector<std::string> path;
     std::string name;
     lexicon::Phrase operation;
+    // Source range of the consumed name during semantic inspection.
+    SourceLocation start;
+    SourceLocation end;
 
     std::string qualified() const;
   };

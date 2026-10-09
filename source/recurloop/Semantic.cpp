@@ -30,6 +30,8 @@ namespace recurloop {
   namespace {
     constexpr std::string_view RegistryName{"\0semantic-metadata", 18};
     constexpr std::string_view SchemaName{"\0semantic-metadata-schema", 25};
+    // Local versions occupy a separate, exactly representable inspection namespace.
+    constexpr std::uint64_t LocalVersionBase = std::uint64_t{1} << 32;
     constexpr std::uint32_t MetadataMagic = 0x53454d31; // SEM1
 
     enum MetadataFlags : std::uint8_t {
@@ -96,6 +98,12 @@ namespace recurloop {
       std::size_t sourceSteps = 0;
       std::size_t sourceStepBudget = 0;
       std::vector<std::string> matches;
+      struct LocalFact {
+        std::string name;
+        std::string docs;
+      };
+      std::vector<LocalFact> locals;
+      std::vector<std::string> localMatches;
       struct Anchor { Size phrase; std::size_t end; };
       std::vector<Anchor> anchors;
       std::unordered_map<Size, std::string> names;
@@ -355,6 +363,14 @@ namespace recurloop {
         result.push_back(digits[value & 0xf]);
       }
       return result;
+    }
+
+    std::string matchRecord(const TraceState &trace, std::size_t start, std::size_t end, std::size_t line,
+                            std::uint64_t version, std::string_view name) {
+      std::ostringstream match;
+      match << "R\t" << characterOffset(trace, start) << '\t' << characterOffset(trace, end) << '\t' << line << '\t'
+            << version << '\t' << hex(name) << '\n';
+      return match.str();
     }
 
     struct DocsAnchor {
@@ -737,6 +753,13 @@ namespace recurloop {
     auto &state = *static_cast<TraceState *>(state_);
     context::Context &context = *state.context;
     std::ostringstream output;
+    // Local resolution takes precedence over a same-spelled root phrase.
+    for (const std::string &match : state.localMatches) output << match;
+    for (std::size_t index = 0; index < state.locals.size(); ++index) {
+      const auto &local = state.locals[index];
+      output << "P\t" << LocalVersionBase + index << '\t' << hex(local.name) << '\t' << hex("local") << '\t'
+             << hex(local.docs) << "\t\t\t\n";
+    }
     for (const std::string &match : state.matches) output << match;
 
     // Export compiler facts rather than interpreting source spellings. Clients
@@ -932,6 +955,29 @@ namespace recurloop {
       THROW(, "semantic inspection exceeded the deterministic source-step budget")
   }
 
+  std::uint64_t Semantic::local(context::Context &context, std::string name) {
+    if (!active(context)) return 0;
+    currentTrace->locals.push_back({std::move(name), {}});
+    return LocalVersionBase + currentTrace->locals.size() - 1;
+  }
+
+  void Semantic::localDocs(context::Context &context, std::uint64_t local, std::string docs) {
+    if (active(context) && local >= LocalVersionBase)
+      currentTrace->locals.at(static_cast<std::size_t>(local - LocalVersionBase)).docs = std::move(docs);
+  }
+
+  void Semantic::recordLocal(context::Context &context, std::uint64_t local, const SourceLocation &origin,
+                             std::string_view source, std::size_t start, std::size_t end) {
+    if (!active(context) || local < LocalVersionBase) return;
+    TraceState &trace = *currentTrace;
+    const SourceLocation from = sourceLocationAt(origin, source, start);
+    const auto first = sourceOffset(trace, from);
+    const auto last = sourceOffset(trace, sourceLocationAt(origin, source, end));
+    if (!first || !last || *last <= *first) return;
+    trace.localMatches.push_back(matchRecord(trace, *first, *last, from.line, local,
+                                             trace.locals.at(static_cast<std::size_t>(local - LocalVersionBase)).name));
+  }
+
   std::uint64_t Semantic::record(context::Context &context, lexicon::Phrase phrase,
                                  const SourceLocation &start, const SourceLocation &end,
                                  std::uint64_t fallbackOwner, bool continueOwner,
@@ -949,10 +995,8 @@ namespace recurloop {
       trace.namesDirty = false;
       trace.names.try_emplace(phrase.getAddress(), phrase.getKey());
     }
-    std::ostringstream match;
-    match << "R\t" << characterOffset(trace, *startByte) << '\t' << characterOffset(trace, *endByte) << '\t'
-          << start.line << '\t' << phraseVersion(phrase) << '\t' << hex(phrasePath(trace.names, phrase)) << '\n';
-    trace.matches.push_back(match.str());
+    trace.matches.push_back(
+        matchRecord(trace, *startByte, *endByte, start.line, phraseVersion(phrase), phrasePath(trace.names, phrase)));
     trace.anchors.push_back({phrase.getAddress(), *endByte});
     const auto key = phrase.getKey();
     if (!key.empty() && std::ranges::all_of(key, [](unsigned char byte) { return std::isspace(byte); }))

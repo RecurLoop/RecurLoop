@@ -88,6 +88,13 @@ namespace recurloop {
     static std::uint64_t owner(context::Context &context);
     static std::uint64_t group(context::Context &context);
 
+    // Compiler locals have lexical identities, not persistent phrase addresses.
+    // Keep their facts in the current inspection and export the same P/R records.
+    static std::uint64_t local(context::Context &context, std::string name);
+    static void localDocs(context::Context &context, std::uint64_t local, std::string docs);
+    static void recordLocal(context::Context &context, std::uint64_t local, const SourceLocation &origin,
+                            std::string_view source, std::size_t start, std::size_t end);
+
     // A root lookup starts a fresh user construct. Non-root lookup dictionaries
     // are continuation states and intentionally retain the previous docs owner.
     static void beginSourceStep(context::Context &context, bool rootLookup);
