@@ -14,8 +14,10 @@ VS Code starts this runtime only for workspace folders containing the saved
 entry selected by `recurloop.projectFile` (default `recurloop.project.rl`). An
 empty entry opts in; **RecurLoop: Initialize Project** simply creates that file
 without overwriting existing source. Deleting the entry stops the editor's
-shared server. Loose source files retain static highlighting without launching
-the host. Custom entry paths and each workspace folder are checked separately.
+shared server. Loose source files use the theme's plain text color without
+launching the host. The extension has no static syntax grammar; source colors
+come from runtime inspection in the project's language context. Custom entry
+paths and each workspace folder are checked separately.
 
 An entry is normal RecurLoop source. `recurloop --project recurloop.project.rl
 --serve` loads it with the project vocabulary and publishes its environment,

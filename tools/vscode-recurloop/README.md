@@ -40,8 +40,10 @@ must run in the same workspace environment.
 
 The saved project entry enables runtime-backed features. An empty entry is
 valid, but including source makes it part of the project graph used for analysis
-and navigation. Without an entry, `.rl` and `.rl.example` files retain basic
-syntax highlighting. Each folder in a multi-folder workspace has its own entry.
+and navigation. Without an entry, `.rl` and `.rl.example` files use the theme's
+plain text color. The extension has no static syntax grammar; source colors
+appear only after runtime inspection in the project's language context.
+Each folder in a multi-folder workspace has its own entry.
 
 **The project entry executes when loaded.** Keep builds and application startup
 inside targets for larger projects. The introductory `print` example above runs
@@ -253,7 +255,7 @@ For a standalone CLI installation, follow the
 
 | Symptom | What to check |
 | --- | --- |
-| Only basic highlighting appears | Open a trusted workspace folder with a saved project entry; include the source in its graph and keep analysis enabled. |
+| Source stays plain text | Open a trusted workspace folder with a saved project entry; include the source in its graph and keep analysis enabled. Colors appear after runtime inspection. |
 | Runtime is missing | Run **RecurLoop: Install Runtime**, or set `recurloop.executablePath` to a compatible runtime in the workspace environment. |
 | Wrong or incompatible runtime is selected | Check **Show Runtime Info**, explicit settings and PATH. An explicit missing path is an error; installing a managed runtime does not override PATH. |
 | Libraries cannot be loaded | Remove a stale `RECURLOOP_LIBRARY_PATH` or point it at the libraries belonging to the selected runtime. |

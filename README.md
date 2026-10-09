@@ -87,10 +87,12 @@ without overwriting an existing entry, or create it yourself:
 touch recurloop.project.rl
 ```
 
-Without a project entry, files retain basic syntax highlighting; analysis,
+Without a project entry, files use the theme's plain text color; analysis,
 runtime installation, consoles, tasks, Run and Debug do not launch RecurLoop.
 The extension stays inactive silently: it creates no runtime resources or
 language providers, and missing projects produce no error notifications.
+The extension has no static syntax grammar. Source colors appear only after
+runtime inspection in the project's language context.
 Each folder in a multi-folder workspace opts in separately. Creating the entry
 enables the runtime; deleting it stops the shared server.
 

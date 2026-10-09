@@ -204,9 +204,9 @@ the phrase contract directly in the editor.
 
 Write `docs` as compact Markdown: show the invocation first in a fenced
 `recurloop` code block, then explain its effect and any scope restriction.
-Add one small example when the signature alone is insufficient. The registered
-RecurLoop grammar supplies syntax colors in editor hovers and completions;
-plain Markdown clients can still read the same text. In signatures, `...`
+Add one small example when the signature alone is insufficient. Fenced examples
+remain plain text: their language context is not available for runtime inspection
+in editor hovers and completions. In signatures, `...`
 stands for additional parameters or statements unless described as variadic.
 
 Document public constructs and meaningful grammar variants on their owning

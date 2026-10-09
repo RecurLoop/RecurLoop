@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- Remove static syntax highlighting. Source uses the theme's plain text color
+  until runtime inspection supplies colors in the project's language context.
+
 ## 0.2.8
 
 - Require RecurLoop 0.2.8 or a newer patch in the 0.2 series.

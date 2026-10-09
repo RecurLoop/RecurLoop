@@ -428,8 +428,10 @@ namespace recurloop {
         SemanticMetadata metadata = resolved(trace.metadata, phrase);
         if ((!metadata.hasColor || metadata.color.empty()) && (!metadata.hasDocs || metadata.docs.empty())) continue;
         auto found = unique.find(key);
+        // Assignment evaluates the value before unique[key]. Moving key into
+        // that value would put every phrase under the same moved-from key.
         if (found == unique.end() || found->second.address < address)
-          unique[key] = {std::move(key), std::move(metadata), address};
+          unique[key] = {key, std::move(metadata), address};
       }
       std::vector<LexicalPhraseStyle> result;
       result.reserve(unique.size());

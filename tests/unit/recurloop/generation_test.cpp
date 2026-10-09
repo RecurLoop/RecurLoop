@@ -9,6 +9,7 @@
 #include <compiler/DynamicLinker.hpp>
 
 #include <algorithm>
+#include <cstring>
 #include <cstdlib>
 #include <unistd.h>
 #include <filesystem>
@@ -849,6 +850,37 @@ TEST(RecurloopGeneration, CompletionWithoutShellOnlyUsesLexicon) {
   EXPECT_EQ(files.start, directory.string().size() + 1);
   EXPECT_EQ(files.candidates, (std::vector<std::string>{"unique_completion_phrase"}));
   EXPECT_EQ(arguments.candidates, (std::vector<std::string>{"unique_completion_phrase"}));
+}
+
+TEST(RecurloopGeneration, PhrasePalettePreservesEachKeywordColor) {
+  auto session = project()->openSession();
+  const std::string source = "let palette_probe = fn () -> i64 { var value:i64 = 1; return value }\n";
+  const auto expectColors = [&](const std::string &output) {
+    for (const auto &[token, color] : {std::pair{"let", "23353639434436"},
+                                      std::pair{"fn", "23353639434436"},
+                                      std::pair{"var", "23353639434436"},
+                                      std::pair{"return", "23433538364330"}}) {
+      const auto start = source.find(token);
+      const auto end = start + std::strlen(token);
+      bool found = false;
+      std::istringstream rows(output);
+      for (std::string row; std::getline(rows, row);) {
+        std::istringstream fields(row);
+        std::string tag, actualColor;
+        std::size_t spanStart = 0, spanEnd = 0, group = 0;
+        if (!(fields >> tag >> spanStart >> spanEnd >> group >> actualColor) || tag != "S") continue;
+        if (spanStart <= start && spanEnd >= end) {
+          EXPECT_EQ(actualColor, color) << token << ": " << row;
+          found = true;
+        }
+      }
+      EXPECT_TRUE(found) << token << ": " << output;
+    }
+  };
+  expectColors(session->highlight(source));
+  const auto inspected = session->inspect(source, "/tmp/palette-inspection.rl", false, true);
+  ASSERT_EQ(inspected.output.find("E\t"), std::string::npos) << inspected.output;
+  expectColors(inspected.output);
 }
 
 TEST(RecurloopGeneration, ConsoleHighlightingDoesNotCommitInput) {
