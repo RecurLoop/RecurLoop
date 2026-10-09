@@ -66,7 +66,7 @@ that downloaded file, then reload the window. You can also install it from the
 command line (use the filename you downloaded):
 
 ```bash
-code --install-extension ./recurloop-vscode-0.2.7.vsix --force
+code --install-extension ./recurloop-vscode-0.2.8.vsix --force
 ```
 
 For a command-line download of the latest release with GitHub CLI:

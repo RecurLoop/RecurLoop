@@ -222,7 +222,7 @@ After **RecurLoop: Restart Language Runtime**, reopen consoles to reconnect.
 The extension selects an explicitly configured executable first, then
 `recurloop` on the workspace host's `PATH`, then its managed installation.
 Managed installs require no administrator access and do not modify your shell
-`PATH`. This extension version requires RecurLoop 0.2.7 or a newer patch in the
+`PATH`. This extension version requires RecurLoop 0.2.8 or a newer patch in the
 0.2 series. Downloads are pinned to the release bundled with the extension and
 verified against the archive checksum and file manifest.
 
