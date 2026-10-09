@@ -86,9 +86,18 @@ async function request(command, args = {}) {
   assert.equal(crossRefs[0].uri.fsPath, callsPath);
   const rename = await nav.rename(definitionsDoc, new Position(1, 5), 'sum');
   assert.equal(rename.edits.length, 2, JSON.stringify(rename.edits));
-  folder.uri = { fsPath: repo };
+  folder.uri = { fsPath: root };
   terminalLibraries = ['shell', 'inferred'];
   const source = path.join(repo, 'examples/07-workflows/ide/application/main.rl');
+  const projectPath = path.join(root, 'recurloop.project.rl');
+  fs.writeFileSync(projectPath, `include ${JSON.stringify(source)}
+target build-debug {
+    emit executable debug ".cache/recurloop/application-debug" application_debug_main = fn () -> i64 {
+        return ExampleApplication:main()
+    }
+}
+target debug depends [build-debug] debug executable ".cache/recurloop/application-debug" {}
+`);
   const doc = document(source);
   const navigation = new NavigationController(runtime);
   const defs = await navigation.locations(doc, new Position(20, 40), 'definition');
@@ -97,7 +106,7 @@ async function request(command, args = {}) {
   assert.ok(refs.some(item => item.range.start.line === 20), JSON.stringify(refs));
   const locals = await navigation.locations(doc, new Position(10, 6), 'definition');
   assert.ok(locals.some(item => item.range.start.line === 9), JSON.stringify(locals));
-  const config = { target: 'debug', cwd: repo };
+  const config = { target: 'debug', cwd: root };
   const provider = new DebugConfigurationProvider(project);
   config.type = 'recurloop';
   await provider.resolveDebugConfiguration(folder, config);
@@ -169,7 +178,7 @@ async function request(command, args = {}) {
   // The native entry wrapper is emitted by the project file; stopOnEntry must
   // stop there before stepping into the included application implementation.
   const entryFrame = (await request('stackTrace')).stackFrames[0];
-  assert.equal(entryFrame.source.path, path.join(repo, 'recurloop.project.rl'));
+  assert.equal(entryFrame.source.path, projectPath);
   assert.equal(entryFrame.name, 'application_debug_main');
   mark = messages.length;
   await request('stepIn');

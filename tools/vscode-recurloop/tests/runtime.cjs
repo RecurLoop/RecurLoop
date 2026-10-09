@@ -98,14 +98,25 @@ target cycle depends [cycle] {}
   await assert.rejects(runtime.execute(folder.uri, ['echo missing-shell']));
   terminalLibraries = ['shell', 'inferred'];
   projectEntry = 'recurloop.project.rl';
-  folder.uri = { fsPath: repo };
+  fs.writeFileSync(path.join(root, projectEntry), `include ${JSON.stringify(path.join(repo, 'examples/07-workflows/ide/application/main.rl'))}
+target build-release {
+    emit executable ".cache/recurloop/application" application_main = fn () -> i64 { return ExampleApplication:main() }
+}
+target build-debug {
+    emit executable debug ".cache/recurloop/application-debug" application_debug_main = fn () -> i64 { return ExampleApplication:main() }
+}
+target run depends [build-release] { ./.cache/recurloop/application }
+target debug depends [build-debug] debug executable ".cache/recurloop/application-debug" {}
+target check { assert ExampleApplication:advance(3, 2) == 8 }
+`);
+  await runtime.restart(folder.uri);
   assert.equal((await project.targets(folder.uri)).length, 5);
   await project.run(folder.uri, 'check');
   await project.run(folder.uri, 'build-release');
   await project.run(folder.uri, 'build-debug');
   await project.run(folder.uri, 'run');
-  assert.ok(fs.existsSync(path.join(repo, '.cache/recurloop/application')));
-  assert.ok(fs.existsSync(path.join(repo, '.cache/recurloop/application-debug')));
+  assert.ok(fs.existsSync(path.join(root, '.cache/recurloop/application')));
+  assert.ok(fs.existsSync(path.join(root, '.cache/recurloop/application-debug')));
   console.log('Runtime integration passed: project graph, custom syntax, targets, failure, cycle, console and restart.');
 })().catch(error => { console.error(error, log.join('\n')); process.exitCode = 1; })
   .finally(() => { runtime.dispose(); setup.dispose(); fs.rmSync(root, { recursive: true, force: true }); });

@@ -33,19 +33,6 @@
                 "${workspaceFolder}/tools/vscode-recurloop/out/**/*.js"
             ],
             "preLaunchTask": "Build RecurLoop VS Code Extension"
-        },
-        {
-            "type": "recurloop",
-            "request": "launch",
-            "name": "RecurLoop: Project run",
-            "target": "run",
-            "noDebug": true
-        },
-        {
-            "type": "recurloop",
-            "request": "launch",
-            "name": "RecurLoop: Project debug",
-            "target": "debug"
         }
     ]
 }
