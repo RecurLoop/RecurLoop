@@ -1,7 +1,10 @@
 # Changelog
 
-## Unreleased
+## 0.2.9
 
+- Require RecurLoop 0.2.9 or a newer patch in the 0.2 series.
+- Fix runtime phrase palette entries overwriting each other, which could color
+  keywords such as `let` as identifiers with the default language libraries.
 - Remove static syntax highlighting. Source uses the theme's plain text color
   until runtime inspection supplies colors in the project's language context.
 

@@ -2,7 +2,7 @@
   "name": "recurloop-vscode",
   "displayName": "RecurLoop",
   "description": "Language intelligence and debugging for RecurLoop.",
-  "version": "0.2.8",
+  "version": "0.2.9",
   "publisher": "recurloop",
   "license": "Apache-2.0",
   "engines": {

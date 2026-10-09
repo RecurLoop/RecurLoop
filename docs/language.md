@@ -40,7 +40,7 @@ var version = recurloop_version
 print version
 ```
 
-For a host built from release 0.2.8, this prints `0.2.8`.
+For a host built from release 0.2.9, this prints `0.2.9`.
 
 ```rl
 const project = "Recur" + "Loop"
