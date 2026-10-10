@@ -59,9 +59,10 @@ namespace compiler {
 
     class Reader {
     public:
-      explicit Reader(lexicon::Phrase phrase) : phrase(phrase), bytes(phrase.payloadSize()) {
+      explicit Reader(lexicon::Phrase phrase) : bytes(phrase.payloadSize()) {
         if (!bytes.empty()) std::memcpy(bytes.data(), phrase.content(0, bytes.size()).toPtr(), bytes.size());
       }
+      explicit Reader(std::span<const std::uint8_t> source) : bytes(source.begin(), source.end()) {}
 
       template <typename Number> Number number() {
         if (cursor > bytes.size() || sizeof(Number) > bytes.size() - cursor) THROW(, "truncated type phrase payload")
@@ -92,7 +93,6 @@ namespace compiler {
       }
 
     private:
-      lexicon::Phrase phrase;
       std::vector<std::uint8_t> bytes;
       std::size_t cursor = 0;
     };
@@ -192,8 +192,7 @@ namespace compiler {
       return writer.bytes;
     }
 
-    TypeDescriptor decode(lexicon::Phrase phrase) {
-      Reader reader(phrase);
+    TypeDescriptor decode(Reader &reader) {
       TypeDescriptor result;
       result.id = reader.number<TypeId>();
       result.name = reader.text();
@@ -225,6 +224,11 @@ namespace compiler {
       return result;
     }
 
+    TypeDescriptor decode(lexicon::Phrase phrase) {
+      Reader reader(phrase);
+      return decode(reader);
+    }
+
     void store(lexicon::Phrase dictionary, std::string_view key, const TypeDescriptor &type) {
       lexicon::Phrase phrase =
           dictionary.append(std::string(key)).make().setType(lexicon::phrase::type::getData(dictionary)).save();
@@ -248,6 +252,30 @@ namespace compiler {
     }
 
   } // namespace
+
+  TypeId remapTypeId(TypeId id, const TypeIdRemapping &mapping) {
+    if (id == InvalidType) return id;
+    const auto found = mapping.find(id);
+    if (found == mapping.end()) THROW(, "engine image references an unknown compiler type: " << id)
+    return found->second;
+  }
+
+  TypeDescriptor TypeRegistry::deserialize(std::span<const std::uint8_t> bytes) {
+    Reader reader(bytes);
+    return decode(reader);
+  }
+
+  std::vector<std::uint8_t> TypeRegistry::serialize(const TypeDescriptor &type) {
+    return encode(type);
+  }
+
+  void TypeRegistry::remap(TypeDescriptor &type, const TypeIdRemapping &mapping) {
+    type.id = remapTypeId(type.id, mapping);
+    type.element = remapTypeId(type.element, mapping);
+    for (auto &field : type.fields) field.type = remapTypeId(field.type, mapping);
+    for (auto &parameter : type.parameterTypes) parameter = remapTypeId(parameter, mapping);
+    type.resultType = remapTypeId(type.resultType, mapping);
+  }
 
   TypeRegistry::TypeRegistry(lexicon::Phrase language)
       : lexicon(language.getLexicon()), languageAddress(language.getAddress()) {}

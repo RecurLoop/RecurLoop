@@ -9,6 +9,7 @@
 #include <span>
 #include <string>
 #include <string_view>
+#include <unordered_map>
 #include <vector>
 
 namespace lexicon {
@@ -19,6 +20,8 @@ namespace lexicon {
 namespace compiler {
   using TypeId = std::uint32_t;
   inline constexpr TypeId InvalidType = 0;
+  using TypeIdRemapping = std::unordered_map<TypeId, TypeId>;
+  TypeId remapTypeId(TypeId id, const TypeIdRemapping &mapping);
 
   enum class TypeKind : std::uint8_t { Void, Integer, FloatingPoint, Pointer, Array, Structure, Function };
 
@@ -58,6 +61,9 @@ namespace compiler {
 
   class TypeRegistry {
   public:
+    static TypeDescriptor deserialize(std::span<const std::uint8_t> bytes);
+    static std::vector<std::uint8_t> serialize(const TypeDescriptor &type);
+    static void remap(TypeDescriptor &type, const TypeIdRemapping &mapping);
     explicit TypeRegistry(lexicon::Phrase language);
 
     TypeId find(std::string_view name) const;

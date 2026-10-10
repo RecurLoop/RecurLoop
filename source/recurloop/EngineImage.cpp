@@ -1,5 +1,7 @@
 #include <recurloop/EngineImage.hpp>
 #include <recurloop/Semantic.hpp>
+#include <recurloop/Functions.hpp>
+#include <recurloop/Typed.hpp>
 
 #include "CoreDefinition.hpp"
 
@@ -14,6 +16,7 @@
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <functional>
 #include <iterator>
 #include <limits>
 #include <set>
@@ -94,6 +97,29 @@ namespace recurloop {
     };
 
     using PayloadLayouts = std::unordered_map<Size, std::vector<PayloadLayoutField>>;
+
+    std::vector<std::uint8_t> phrasePayload(lexicon::Phrase phrase) {
+      if (phrase.isNull()) return {};
+      std::vector<std::uint8_t> bytes(phrase.payloadSize());
+      if (!bytes.empty()) std::memcpy(bytes.data(), phrase.content(0, bytes.size()).toPtr(), bytes.size());
+      return bytes;
+    }
+
+    template <typename Metadata> std::optional<Metadata> schemaMetadata(std::span<const std::uint8_t> payload) {
+      if (payload.size() < sizeof(Metadata)) return std::nullopt;
+      Metadata metadata;
+      std::memcpy(&metadata, payload.data(), sizeof(metadata));
+      if (metadata.magic != Metadata::Magic || metadata.version != Metadata::Version || metadata.reserved != 0)
+        return std::nullopt;
+      return metadata;
+    }
+
+    bool compilerTypeMetadata(std::span<const std::uint8_t> payload, std::span<const std::uint8_t> parentPayload) {
+      const auto role = schemaMetadata<compiler::RegistryBinding>(parentPayload);
+      const auto slot = schemaMetadata<compiler::SlotBinding>(payload);
+      return (role && (role->role == compiler::RegistryRole::Types || role->role == compiler::RegistryRole::TypeIds)) ||
+             (slot && slot->role == compiler::SlotRole::TypeNextId);
+    }
 
     class Writer {
     public:
@@ -428,14 +454,8 @@ namespace recurloop {
         return owner != dictionaryOwners.end() && owner->second == dependencyMetadata.getAddress();
       };
 
-      const auto payload = [](lexicon::Phrase phrase) {
-        std::vector<std::uint8_t> result(phrase.payloadSize());
-        if (!result.empty()) std::memcpy(result.data(), phrase.content(0, result.size()).toPtr(), result.size());
-        return result;
-      };
-
       const auto payloadTargets = [&](lexicon::Phrase phrase) {
-        const std::vector<std::uint8_t> bytes = payload(phrase);
+        const std::vector<std::uint8_t> bytes = phrasePayload(phrase);
         std::vector<Size> result;
         if (!dependencyPayload(phrase) && bytes.size() >= sizeof(compiler::LanguageBinding)) {
           compiler::LanguageBinding binding;
@@ -514,7 +534,8 @@ namespace recurloop {
           for (lexicon::Dictionary child = owner.fore(populated); !child.isNull(); child = child.next(populated)) {
             lexicon::Phrase candidate = child.getPhrase();
             if (!candidate.isSerializable()) continue;
-            if (candidate.getAddress() >= since) ensure(candidate.getAddress(), ensure);
+            if (candidate.getAddress() >= since || compilerTypeMetadata(phrasePayload(candidate), phrasePayload(owner)))
+              ensure(candidate.getAddress(), ensure);
             if (candidate.containsSubdictionary()) dictionaries.push_back(candidate);
           }
         }
@@ -611,7 +632,7 @@ namespace recurloop {
           lexicon::Phrase implementation = phrase.getActionImplementation();
           if (!implementation.isNull()) record.actionImplementationId = ids.at(implementation.getAddress());
         }
-        record.payload = payload(phrase);
+        record.payload = phrasePayload(phrase);
         record.sourceAddress = pending[index].address;
         record.parentAddress = pending[index].parent;
         record.depth = pending[index].depth;
@@ -791,6 +812,178 @@ namespace recurloop {
       return result;
     }
 
+    // Type IDs belong to one compiler registry, not to an image or process.
+    // Rebase incoming metadata before comparing paths or writing any phrases.
+    void rebaseTypes(context::Context &context, std::vector<Record> &records,
+                     const std::function<lexicon::Phrase(std::uint64_t)> &external = {}) {
+      std::unordered_map<std::uint64_t, Record *> byId;
+      for (Record &record : records) byId.emplace(record.id, &record);
+      lexicon::Phrase undefined(&context.lexicon);
+      std::unordered_map<Size, lexicon::Phrase> dictionaryOwners;
+      if (external) {
+        for (radix::Item item = context.lexicon.lastItem(); !item.isNull(); item = item.earlier()) {
+          lexicon::Phrase phrase(item);
+          phrase.load();
+          if (phrase.containsSubdictionary())
+            dictionaryOwners.try_emplace(phrase.getSubdictionary().getAddress(), phrase);
+        }
+      }
+      const auto lexicalParent = [&](lexicon::Phrase phrase) {
+        if (phrase.isNull() || phrase.getAddress() == context.lexicon.phrase().getAddress()) return undefined;
+        const auto found = dictionaryOwners.find(dictionaryRoot(phrase));
+        if (found == dictionaryOwners.end()) THROW(, "engine image compiler registry has no dictionary owner")
+        return found->second;
+      };
+      const auto recordPayload = [&](std::uint64_t id) {
+        if (id == 0) return std::vector<std::uint8_t>{};
+        if (const auto found = byId.find(id); found != byId.end()) return found->second->payload;
+        return external ? phrasePayload(external(id)) : std::vector<std::uint8_t>{};
+      };
+      const auto parentId = [&](std::uint64_t id) {
+        const auto found = byId.find(id);
+        return found == byId.end() ? std::uint64_t{0} : found->second->parent;
+      };
+      const auto registry = [&](std::uint64_t id) {
+        return schemaMetadata<compiler::RegistryBinding>(recordPayload(id));
+      };
+      const auto actionName = [&](std::uint64_t id) -> std::string {
+        if (const auto found = byId.find(id); found != byId.end()) return found->second->actionName;
+        if (!external || id == 0) return {};
+        lexicon::Phrase phrase = external(id);
+        return phrase.containsAction() ? context.actions().name(phrase.getAction()) : std::string{};
+      };
+      std::unordered_map<std::uint64_t, lexicon::Phrase> existing;
+      std::function<lexicon::Phrase(std::uint64_t)> existingPhrase = [&](std::uint64_t id) {
+        if (const auto found = existing.find(id); found != existing.end()) return found->second;
+        const auto found = byId.find(id);
+        if (found == byId.end()) return external ? external(id) : undefined;
+        const Record &record = *found->second;
+        lexicon::Phrase phrase = record.parent == 0 ? context.lexicon.phrase() : existingPhrase(record.parent);
+        if (record.parent != 0 && !phrase.isNull()) phrase = exact(phrase, record.key, record.keyBits);
+        existing.emplace(id, phrase);
+        return phrase;
+      };
+      struct Plan {
+        compiler::TypeIdRemapping mapping;
+        std::unordered_map<std::string, compiler::TypeDescriptor> previous;
+        std::uint64_t next = 1;
+        lexicon::Phrase language;
+      };
+      std::unordered_map<std::uint64_t, Plan> plans;
+      std::unordered_map<std::uint64_t, std::uint64_t> registryLanguages;
+      std::unordered_map<Size, std::uint64_t> languagePlans;
+      for (Record &record : records) {
+        const auto role = registry(record.parent);
+        if (!role || role->role != compiler::RegistryRole::Types) continue;
+        const auto language = byId.contains(record.parent)
+                                  ? parentId(record.parent)
+                                  : (ExternalReferenceMask | lexicalParent(external(record.parent)).getAddress());
+        auto [entry, inserted] = plans.try_emplace(language);
+        Plan &plan = entry->second;
+        if (inserted) {
+          plan.language =
+              byId.contains(record.parent) ? existingPhrase(language) : lexicalParent(external(record.parent));
+          if (!plan.language.isNull()) {
+            if (!schemaMetadata<compiler::Language>(phrasePayload(plan.language)))
+              THROW(, "engine image compiler language conflicts with an existing phrase")
+            const compiler::TypeRegistry types(plan.language);
+            for (const auto &type : types.types()) {
+              plan.previous.emplace(type.name, type);
+              plan.next = std::max(plan.next, std::uint64_t{type.id} + 1);
+            }
+            plan.next =
+                std::max(plan.next, compiler::RegistrySchema::unsignedSlot(context.lexicon, plan.language.getAddress(),
+                                                                           compiler::SlotRole::TypeNextId));
+            languagePlans.emplace(plan.language.getAddress(), language);
+          }
+        }
+        registryLanguages.emplace(record.parent, language);
+        const auto type = compiler::TypeRegistry::deserialize(record.payload);
+        compiler::TypeId id = type.id;
+        if (!plan.language.isNull()) {
+          const auto previous = plan.previous.find(type.name);
+          if (previous != plan.previous.end())
+            id = previous->second.id;
+          else {
+            if (plan.next >= std::numeric_limits<compiler::TypeId>::max()) THROW(, "type registry is full")
+            id = static_cast<compiler::TypeId>(plan.next++);
+          }
+        } else
+          plan.next = std::max(plan.next, std::uint64_t{type.id} + 1);
+        if (!plan.mapping.emplace(type.id, id).second) THROW(, "engine image contains duplicate compiler type IDs")
+      }
+      if (plans.empty()) return;
+      const auto planForRegistry = [&](std::uint64_t id) -> Plan * {
+        if (id == 0) return nullptr;
+        if (const auto found = registryLanguages.find(id); found != registryLanguages.end())
+          return &plans.at(found->second);
+        if (byId.contains(id)) {
+          const auto found = plans.find(parentId(id));
+          return found == plans.end() ? nullptr : &found->second;
+        }
+        const auto found = languagePlans.find(lexicalParent(external(id)).getAddress());
+        return found == languagePlans.end() ? nullptr : &plans.at(found->second);
+      };
+      Plan *defaultPlan = nullptr;
+      for (auto &[id, plan] : plans) {
+        if ((external && !plan.language.isNull() &&
+             lexicalParent(plan.language).getAddress() == context.lexicon.phrase().getAddress()) ||
+            (byId.contains(id) && byId.contains(parentId(id)) && parentId(parentId(id)) == 0))
+          defaultPlan = &plan;
+      }
+      for (Record &record : records) {
+        const auto owner = registry(record.parent);
+        if (owner && (owner->role == compiler::RegistryRole::Types || owner->role == compiler::RegistryRole::TypeIds)) {
+          Plan *plan = planForRegistry(record.parent);
+          if (!plan) continue;
+          auto type = compiler::TypeRegistry::deserialize(record.payload);
+          compiler::TypeRegistry::remap(type, plan->mapping);
+          record.payload = compiler::TypeRegistry::serialize(type);
+          const auto previous = plan->previous.find(type.name);
+          if (previous != plan->previous.end() && record.payload != compiler::TypeRegistry::serialize(previous->second))
+            THROW(, "engine image contains an incompatible definition of type '" << type.name << "'")
+          if (owner->role == compiler::RegistryRole::TypeIds) {
+            record.key.assign(reinterpret_cast<const char *>(&type.id), sizeof(type.id));
+            record.keyBits = sizeof(type.id) * Byte::length;
+          }
+          continue;
+        }
+        const auto overloads =
+            byId.contains(record.parent)
+                ? registry(parentId(record.parent))
+                : (external && record.parent != 0 ? schemaMetadata<compiler::RegistryBinding>(
+                                                        phrasePayload(lexicalParent(external(record.parent))))
+                                                  : std::nullopt);
+        if (overloads && overloads->role == compiler::RegistryRole::Functions) {
+          Plan *plan = nullptr;
+          if (byId.contains(record.parent))
+            plan = planForRegistry(parentId(record.parent));
+          else {
+            const auto found = languagePlans.find(lexicalParent(lexicalParent(external(record.parent))).getAddress());
+            if (found != languagePlans.end()) plan = &plans.at(found->second);
+          }
+          if (plan) compiler::LanguageState::remapFunctionPayload(record.payload, plan->mapping);
+          continue;
+        }
+        const auto slot = schemaMetadata<compiler::SlotBinding>(record.payload);
+        if (slot && slot->role == compiler::SlotRole::TypeNextId) {
+          if (Plan *plan = planForRegistry(record.parent)) {
+            if (record.payload.size() != sizeof(*slot) + sizeof(plan->next)) THROW(, "invalid compiler type counter")
+            std::memcpy(record.payload.data() + sizeof(*slot), &plan->next, sizeof(plan->next));
+          }
+          continue;
+        }
+        if (defaultPlan) {
+          const bool field =
+              actionName(record.parent) == "typed.instantiate" && !record.subdictionary && !record.action;
+          const bool instance = actionName(record.prototypeId) == "typed.instantiate";
+          if (record.actionName == "typed.instantiate" || field || instance)
+            Typed::remapTypePayload(record.payload, defaultPlan->mapping, field);
+          Functions::remapSignaturePayload(record.payload, defaultPlan->mapping);
+        }
+      }
+    }
+
     LinkedSnapshot captureLinked(context::Context &context, Size since, const std::filesystem::path &outputPath) {
       if (since == 0 || since > context.lexicon.memoryUsed())
         THROW(, "linked engine image checkpoint is outside the lexicon")
@@ -828,7 +1021,11 @@ namespace recurloop {
       local.reserve(captured.size());
       std::unordered_map<std::uint64_t, std::uint64_t> localIds;
       for (const Record &record : captured) {
-        if (record.sourceAddress < since || dependencyRecords.contains(record.id)) continue;
+        const auto parent = byId.find(record.parent);
+        // Keep symbolic type metadata for IDs inherited from a base image.
+        const bool typeMetadata = compilerTypeMetadata(
+            record.payload, parent == byId.end() ? std::vector<std::uint8_t>{} : parent->second->payload);
+        if ((record.sourceAddress < since && !typeMetadata) || dependencyRecords.contains(record.id)) continue;
         const std::uint64_t id = local.size() + 1;
         if ((id & ExternalReferenceMask) != 0) THROW(, "linked engine image has too many local phrases")
         localIds.emplace(record.id, id);
@@ -1095,10 +1292,16 @@ namespace recurloop {
       return result;
     }
 
-    void applyLinked(context::Context &context, const LinkedSnapshot &snapshot) {
+    void applyLinked(context::Context &context, LinkedSnapshot snapshot) {
       std::vector<lexicon::Phrase> external;
       external.reserve(snapshot.external.size());
       for (const ExternalReference &reference : snapshot.external) external.push_back(resolveExternal(context, reference));
+      rebaseTypes(context, snapshot.phrases, [&](std::uint64_t id) {
+        const auto index = id & ~ExternalReferenceMask;
+        if (!(id & ExternalReferenceMask) || index == 0 || index > external.size())
+          THROW(, "linked engine image compiler reference is unavailable")
+        return external[index - 1];
+      });
 
       std::unordered_map<std::uint64_t, lexicon::Phrase> phrases;
       phrases.reserve(snapshot.phrases.size());
@@ -1724,8 +1927,8 @@ namespace recurloop {
       }
     }
 
-    void restore(context::Context &context, const Snapshot &snapshot, bool initializeSemanticDefaults,
-                 bool preserveExisting) {
+    void restore(context::Context &context, Snapshot snapshot, bool initializeSemanticDefaults, bool preserveExisting) {
+      if (preserveExisting) rebaseTypes(context, snapshot.phrases);
       const std::vector<Record> &records = snapshot.phrases;
       // Normal image imports are composable overlays and therefore need a
       // complete capture of the current graph before replacement. A project

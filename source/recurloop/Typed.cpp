@@ -545,6 +545,21 @@ namespace recurloop {
     std::memset(storage.toPtr(), 0, sizeof(std::uintptr_t));
   }
 
+  void Typed::remapTypePayload(std::vector<std::uint8_t> &payload, const compiler::TypeIdRemapping &mapping,
+                               bool field) {
+    if (field) {
+      if (payload.size() != sizeof(TypedFieldData)) return;
+      TypedFieldData data;
+      std::memcpy(&data, payload.data(), sizeof(data));
+      if (data.reserved != 0) return;
+    }
+    if (payload.size() < sizeof(TypedPhraseData)) THROW(, "typed phrase has a truncated type payload")
+    compiler::TypeId type;
+    std::memcpy(&type, payload.data(), sizeof(type));
+    type = compiler::remapTypeId(type, mapping);
+    std::memcpy(payload.data(), &type, sizeof(type));
+  }
+
   void Typed::registerActions(context::Context &context) {
     context.actions().define("typed.abi", declareConvention);
     context.actions().define("typed.module", configureModule);

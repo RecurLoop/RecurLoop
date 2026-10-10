@@ -1,5 +1,7 @@
 #pragma once
 
+#include <compiler/TypeSystem.hpp>
+
 namespace context { class Context; }
 namespace lexicon { class Phrase; }
 
@@ -7,6 +9,8 @@ namespace recurloop {
   class Typed {
   public:
     Typed() = delete;
+    static void remapTypePayload(std::vector<std::uint8_t> &payload, const compiler::TypeIdRemapping &mapping,
+                                 bool field = false);
     static void registerActions(context::Context &context);
     static void setup(context::Context &context);
     static void declareConvention(context::Context &context, lexicon::Phrase &invoked);

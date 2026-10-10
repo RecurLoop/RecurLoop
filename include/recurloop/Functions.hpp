@@ -27,6 +27,7 @@ namespace recurloop {
     static void registerActions(context::Context &context);
     static void setup(context::Context &context);
     static void finalizeSyntax(context::Context &context);
+    static void remapSignaturePayload(std::vector<std::uint8_t> &payload, const compiler::TypeIdRemapping &mapping);
     static void forward(context::Context &context, lexicon::Phrase &invoked);
     static void define(context::Context &context, lexicon::Phrase &invoked);
     static compiler::TypeId signatureType(context::Context &context, std::string_view name);

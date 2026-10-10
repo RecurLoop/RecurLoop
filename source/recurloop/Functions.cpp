@@ -642,6 +642,15 @@ namespace recurloop {
     context.exec.pendingFunctionVariant.clear();
   }
 
+  void Functions::remapSignaturePayload(std::vector<std::uint8_t> &payload, const compiler::TypeIdRemapping &mapping) {
+    if (payload.size() < sizeof(SignaturePhraseHeader)) return;
+    SignaturePhraseHeader header;
+    std::memcpy(&header, payload.data(), sizeof(header));
+    if (header.magic != SignaturePhraseMagic) return;
+    header.type = compiler::remapTypeId(header.type, mapping);
+    std::memcpy(payload.data(), &header, sizeof(header));
+  }
+
   void Functions::registerActions(context::Context &context) {
     context.actions().define("fn.forward", forward);
     context.actions().define("fn.define", define);

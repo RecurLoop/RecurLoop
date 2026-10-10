@@ -3,6 +3,7 @@
 #include <compiler/LanguageState.hpp>
 #include <recurloop/EngineImage.hpp>
 #include <recurloop/Execution.hpp>
+#include <recurloop/Functions.hpp>
 #include <recurloop/Recurloop.hpp>
 #include <recurloop/TranslationUnits.hpp>
 
@@ -628,6 +629,100 @@ TEST_F(EngineImageTesting, ImportsBinaryImagesByMergingIntoTheExistingLexicon) {
   recurloop::executeSource(context, "first\nsecond\n", "<merge-test>", 1);
   restoredChild.getPhrase().invoke(context);
   EXPECT_EQ(output.str(), "pong\npong\npong\n");
+}
+
+TEST_F(EngineImageTesting, RebasesCollidingTypeIdsInSnapshotsAndLinkedImages) {
+  initializeWith("extern free(value:u8*) -> void abi sysv-amd64\n");
+  const auto directory = std::filesystem::path("/tmp") / ("recurloop-type-import-" + std::to_string(getpid()));
+  std::filesystem::create_directories(directory);
+  const auto baseline = directory / "baseline.rli";
+  const auto linked = directory / "left.rli";
+  recurloop::EngineImage::saveFull(context, baseline.string());
+  auto checkpoint = context.lexicon.checkpoint();
+  ASSERT_NO_THROW(recurloop::executeSource(context, R"(
+record Left { value:i64 bytes:u8[3] next:Left* }
+let LeftReader = fn (value:Left*) -> i64
+let left_read = LeftReader { return value.value + value.bytes[0] }
+let left_new = fn () -> Left* {
+  let value = alloc(Left)
+  value.value = 25
+  value.bytes[0] = 7
+  value.next = cast(Left*, 0)
+  return value
+}
+let left_check = fn () -> i64 {
+  let value = left_new()
+  defer free(value)
+  return left_read(value)
+}
+Left stored_left
+)",
+                                           "<left-image>", 1));
+  const auto leftOriginalId = context.language().types.find("Left");
+  const auto image = recurloop::EngineImage::encode(context);
+  const auto delta = recurloop::EngineImage::encode(context, checkpoint.getAddress());
+  recurloop::EngineImage::saveLinked(context, checkpoint.getAddress(), linked.string());
+
+  for (const unsigned format : {0u, 1u, 2u}) {
+    SCOPED_TRACE(format == 0 ? "snapshot" : format == 1 ? "partial snapshot" : "linked image");
+    recurloop::EngineImage::loadFull(context, baseline.string());
+    ASSERT_NO_THROW(recurloop::executeSource(context, R"(
+record Right { value:f64 }
+let right_new = fn () -> Right* {
+  let value = alloc(Right)
+  value.value = 2.5
+  return value
+}
+let right_check = fn () -> i64 {
+  let value = right_new()
+  defer free(value)
+  return cast(i64, value.value * 4.0)
+}
+)",
+                                             "<right-image>", 1));
+    const auto rightOriginalId = context.language().types.find("Right");
+    ASSERT_EQ(leftOriginalId, rightOriginalId);
+    if (format == 2)
+      ASSERT_NO_THROW(recurloop::EngineImage::load(context, linked.string()));
+    else
+      ASSERT_NO_THROW(recurloop::EngineImage::decode(context, format == 0 ? image : delta));
+
+    const auto &types = context.language().types;
+    EXPECT_EQ(types.find("Right"), rightOriginalId);
+    EXPECT_NE(types.find("Left"), rightOriginalId);
+    const auto left = types.get("Left");
+    ASSERT_EQ(left.fields.size(), 3u);
+    EXPECT_EQ(types.get(left.fields[1].type).elementCount, 3u);
+    EXPECT_EQ(types.get(left.fields[2].type).element, left.id);
+    compiler::TypeId instanceType;
+    rootPhrase("stored_left").fetch(0, instanceType);
+    EXPECT_EQ(instanceType, left.id);
+    const auto constructor = context.language().findFunction("left_new");
+    ASSERT_TRUE(constructor);
+    EXPECT_EQ(types.get(constructor->resultType).kind, compiler::TypeKind::Pointer);
+    EXPECT_EQ(types.get(constructor->resultType).element, left.id);
+    const auto reader = types.get(recurloop::Functions::signatureType(context, "LeftReader"));
+    ASSERT_EQ(reader.parameterTypes.size(), 1u);
+    EXPECT_EQ(types.get(reader.parameterTypes[0]).element, left.id);
+    ASSERT_NO_THROW(recurloop::executeSource(context, "var import_result = left_check() + right_check()\n",
+                                             "<combined-images>", 1));
+    EXPECT_EQ(context.values().get("import_result").asInteger(), 42);
+  }
+  std::filesystem::remove_all(directory);
+}
+
+TEST_F(EngineImageTesting, RejectsIncompatibleImportedTypesBeforeChangingTheLexicon) {
+  initializeWith("");
+  auto checkpoint = context.lexicon.checkpoint();
+  recurloop::executeSource(context, "record Clash { value:i64 }\n", "<integer-layout>", 1);
+  const auto image = recurloop::EngineImage::encode(context);
+  checkpoint.restore();
+  recurloop::executeSource(context, "record Clash { value:f64 }\n", "<floating-layout>", 1);
+  EXPECT_THROW(recurloop::EngineImage::decode(context, image), Exception);
+  const auto clash = context.language().types.get("Clash");
+  ASSERT_EQ(clash.fields.size(), 1u);
+  EXPECT_EQ(clash.fields[0].type, context.language().types.find("f64"));
+  EXPECT_FALSE(rootPhrase("Clash").isNull());
 }
 
 TEST_F(EngineImageTesting, RejectsAnInvalidManifestBeforeClearingTheLanguage) {

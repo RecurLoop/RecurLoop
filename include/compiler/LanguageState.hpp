@@ -58,6 +58,7 @@ namespace compiler {
 
   class LanguageState {
   public:
+    static void remapFunctionPayload(std::vector<std::uint8_t> &payload, const TypeIdRemapping &mapping);
     explicit LanguageState(lexicon::Phrase language);
     static LanguageState locate(lexicon::Lexicon &lexicon);
     static LanguageState resolve(lexicon::Lexicon &lexicon, lexicon::Phrase *invoked);

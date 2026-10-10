@@ -54,6 +54,13 @@ Dependency loading is recursive and deterministic:
   dependency path again;
 - cycles, missing files, and content-identity mismatches are rejected.
 
+Compiler type IDs are local to each language registry. Imports match types by
+name, retain the IDs of existing types, and rebase incoming field, pointer,
+array and function references before applying the image. An incompatible
+definition of an existing type is rejected before applying that image. Partial
+and linked images include their type name/ID tables, including inherited types,
+so loading another library first cannot change a function's signature.
+
 A full export remains standalone even if `engine import` was executed earlier
 at runtime. The loaded-image registry is useful for duplicate suppression in
 that process, but it is not serialized as a requirement when the export already

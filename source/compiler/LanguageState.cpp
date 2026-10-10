@@ -225,9 +225,7 @@ namespace compiler {
       return writer.bytes;
     }
 
-    TypedFunction decodeFunction(lexicon::Phrase phrase) {
-      const std::vector<std::uint8_t> bytes = payload(phrase);
-      Reader reader(bytes);
+    TypedFunction decodeFunction(Reader &reader) {
       TypedFunction result;
       result.name = reader.text();
       result.signature = readSignature(reader);
@@ -238,6 +236,12 @@ namespace compiler {
       result.imported = reader.boolean();
       reader.finish();
       return result;
+    }
+
+    TypedFunction decodeFunction(lexicon::Phrase phrase) {
+      const auto bytes = payload(phrase);
+      Reader reader(bytes);
+      return decodeFunction(reader);
     }
 
     std::uint64_t setting(lexicon::Lexicon &lexicon, Size languageAddress, SlotRole role) {
@@ -336,6 +340,14 @@ namespace compiler {
              sameConvention(left.signature.convention, right.signature.convention);
     }
   } // namespace
+
+  void LanguageState::remapFunctionPayload(std::vector<std::uint8_t> &payload, const TypeIdRemapping &mapping) {
+    Reader reader(payload);
+    auto function = decodeFunction(reader);
+    for (auto &parameter : function.parameterTypes) parameter = remapTypeId(parameter, mapping);
+    function.resultType = remapTypeId(function.resultType, mapping);
+    payload = encode(function);
+  }
 
   LanguageState::LanguageState(lexicon::Phrase language)
       : types(language), lexicon(language.getLexicon()), languageAddress(language.getAddress()) {
