@@ -113,8 +113,8 @@ fn First:probe() -> i64 {
     std::size_t start = 0, end = 0, line = 0, version = 0;
     if (fields >> tag >> start >> end >> line >> version >> name && tag == "R") references[start] = name;
   }
-  EXPECT_EQ(references[source.find("First:new()")], "46697273743a6e6577");
-  EXPECT_EQ(references[source.find("Second:new()")], "5365636f6e643a6e6577");
+  EXPECT_EQ(references[source.find("First:new()") + 6], "46697273743a6e6577");
+  EXPECT_EQ(references[source.find("Second:new()") + 7], "5365636f6e643a6e6577");
   EXPECT_EQ(references[source.find("new()", source.find("return first"))], "46697273743a6e6577");
   EXPECT_NE(inspected.output.find("466972737420636f6e7374727563746f722e"), std::string::npos);
   EXPECT_NE(inspected.output.find("5365636f6e6420636f6e7374727563746f722e"), std::string::npos);
@@ -468,6 +468,87 @@ TEST(RecurloopGeneration, TraceResolvesRecordFieldDeclarationsReadsAndWritesWith
   EXPECT_NE(session->evaluate("reset").status, 0);
 }
 
+TEST(RecurloopGeneration, QualifiedPhraseComponentsShareResolvedReferencesAndDeclarations) {
+  auto session = project()->openSession();
+  const std::string source = "let Game = phrase { dictionary = true }\n"
+                             "let Game:Phase = phrase { dictionary = true }\n"
+                             "const Game:Phase:Ready = 0\nvar Game:score = 1\n"
+                             "record Game:State { phase:i64 }\n"
+                             "let Game:read = fn (state:Game:State*) -> i64 {\n"
+                             "    if state.phase == Game : Phase : Ready { return Game:score }\n"
+                             "    return Game:Phase:Ready\n}\n"
+                             "let qualify = <\":\">\n"
+                             "let alias_read = fn () -> i64 { return Game qualify Phase qualify Ready }\n";
+  const auto inspected = session->inspect(source, "/tmp/qualified-phrase-trace.rl", true, true);
+  ASSERT_EQ(inspected.output.find("E\t"), std::string::npos) << inspected.output;
+  const auto expect = [&](char tag, std::size_t start, std::size_t length, std::string_view name) {
+    const auto line = 1 + std::count(source.begin(), source.begin() + start, '\n');
+    const auto row = std::string(1, tag) + '\t' + std::to_string(start) + '\t' + std::to_string(start + length) + '\t' +
+                     std::to_string(line) + "\t0\t" + std::string(name) + '\n';
+    EXPECT_NE(inspected.output.find(row), std::string::npos) << row;
+  };
+  const auto use = source.find("Game : Phase : Ready");
+  expect('R', use, 4, "47616d65");
+  expect('R', use + 7, 5, "47616d653a5068617365");
+  expect('R', use + 15, 5, "47616d653a50686173653a5265616479");
+  expect('B', source.find("Game:Phase =") + 5, 5, "47616d653a5068617365");
+  expect('B', source.find("Game:Phase:Ready =") + 11, 5, "47616d653a50686173653a5265616479");
+  expect('B', source.find("Game:score =") + 5, 5, "47616d653a73636f7265");
+  expect('R', source.rfind("Game:score") + 5, 5, "47616d653a73636f7265");
+  expect('B', source.find("Game:State {") + 5, 5, "47616d653a5374617465");
+  expect('B', source.find("Game:read =") + 5, 4, "47616d653a72656164");
+  const auto alias = source.find("Game qualify Phase qualify Ready");
+  expect('R', alias, 4, "47616d65");
+  expect('R', alias + 13, 5, "47616d653a5068617365");
+  expect('R', alias + 27, 5, "47616d653a50686173653a5265616479");
+}
+
+TEST(RecurloopGeneration, DefinitionLocationsFollowPhraseReferencesThroughImages) {
+  auto session = project()->openSession();
+  const auto root = std::filesystem::temp_directory_path() / "recurloop-definition-reference-test";
+  std::filesystem::create_directories(root);
+  const auto path = (root / "definitions.rl").string();
+  const auto image = root / "definitions.rli";
+  const std::string source = "let \"words : with separators\" = phrase { payload = \"text\" }\n"
+                             "let alias = <\"words : with separators\">\n"
+                             "const answer = 42\nrecord State { value:i64 }\n"
+                             "fn read(state:State*) -> i64 { return state.value }\n";
+  const auto defined = session->evaluate(source, path);
+  ASSERT_EQ(defined.status, 0) << defined.error;
+  const auto before = session->inspect(source, path, true, true).output;
+  ASSERT_EQ(session->evaluate("engine export \"" + image.string() + "\"").status, 0);
+  auto restored = project()->openSession();
+  const auto imported = restored->evaluate("engine import \"" + image.string() + "\"");
+  ASSERT_EQ(imported.status, 0) << imported.error;
+  const auto importSource = "engine import \"" + image.string() + "\"\n";
+  const auto after = restored->inspect(importSource, (root / "empty.rl").string(), true, true).output;
+  std::string encodedPath;
+  constexpr char digits[] = "0123456789abcdef";
+  for (const unsigned char ch : path) {
+    encodedPath += digits[ch / 16];
+    encodedPath += digits[ch % 16];
+  }
+  const auto definitions = [&](const std::string &trace) {
+    std::set<std::string> locations;
+    std::istringstream rows(trace);
+    for (std::string row; std::getline(rows, row);)
+      if (row.starts_with("F\t") && row.contains('\t' + encodedPath + '\t'))
+        locations.insert(row.substr(row.find('\t', 2) + 1));
+    return locations;
+  };
+  const auto expected = definitions(before);
+  EXPECT_EQ(expected.size(), 6); // phrase, alias, value, record, field, function
+  const auto importedDefinitions = definitions(after);
+  // Native compilation can add overload phrases inheriting the function's
+  // definition; every source declaration must retain its original location.
+  EXPECT_TRUE(std::includes(importedDefinitions.begin(), importedDefinitions.end(), expected.begin(), expected.end()));
+  // Inspection must roll back new declarations without losing the stored graph.
+  const auto edited = restored->inspect("let temporary = phrase {}\n", path, true, true);
+  ASSERT_EQ(edited.output.find("E\t"), std::string::npos) << edited.output;
+  EXPECT_EQ(definitions(restored->inspect(importSource, path, true, true).output), importedDefinitions);
+  std::filesystem::remove_all(root);
+}
+
 TEST(RecurloopGeneration, RuntimeVariableDocsHaveDeclarationAndExpressionOccurrences) {
   auto session = project()->openSession();
   const std::string source = "var pi = 3.14\n"
@@ -639,9 +720,10 @@ print "Example:answer() is text" // Example:answer() is a comment
                             source.rfind("\nExample:answer()") + 1, source.find("print Example:answer()") + 6,
                             source.find("+ Example:answer()") + 2}) {
     const auto range = std::pair{offset, offset + std::string_view("Example:answer").size()};
-    EXPECT_TRUE(matches.contains(range)) << offset;
-    ASSERT_TRUE(colors.contains(range)) << offset;
-    EXPECT_EQ(colors.at(range), "23464638383030");
+    EXPECT_TRUE(matches.contains({offset + 8, range.second})) << offset;
+    const auto leafRange = std::pair{offset + 8, range.second};
+    ASSERT_TRUE(colors.contains(leafRange)) << offset;
+    EXPECT_EQ(colors.at(leafRange), "23464638383030");
   }
   EXPECT_FALSE(
       matches.contains({source.find("Example:answer() is text"), source.find("Example:answer() is text") + 14}));
@@ -690,7 +772,8 @@ let metadata_entry = phrase { color = "#008800" docs = "new" }
     ASSERT_EQ(cleared.output.find("E\t"), std::string::npos) << cleared.output;
     const auto clearedColors = inspectionColors(cleared.output);
     for (const auto name : {"style", "metadata_entry", "\"two words\"", "Space:metadata_entry"}) {
-      const auto expected = range(name);
+      auto expected = range(name);
+      if (std::string_view(name) == "Space:metadata_entry") expected.first += std::string_view("Space:").size();
       ASSERT_TRUE(colors.contains(expected)) << name << "\n" << inspected.output;
       EXPECT_EQ(colors.at(expected), "23464638383030") << name;
       EXPECT_FALSE(clearedColors.contains(expected)) << name;

@@ -352,6 +352,41 @@ TEST_F(EngineImageTesting, ProvenanceSurvivesFlatteningWithoutRetainingObsoleteO
   EXPECT_NE(trace.find("G\t0\t736861646f776564\t2f666978747572652f6c6962726172792e726c\t\t-1\n"), std::string::npos);
 }
 
+TEST_F(EngineImageTesting, DefinitionReferencesSurviveImagesAndFollowActualPrototypes) {
+  initializeWith("");
+  const std::string path = "/fixture/definitions.rl";
+  recurloop::executeSource(
+      context, "let \"words : with separators\" = phrase {}\nlet alias = <\"words : with separators\">\n", path, 1);
+  auto root = context.lexicon.phrase();
+  root.append("inherited")
+      .make()
+      .setPrototype(rootPhrase("words : with separators"))
+      .setType(lexicon::phrase::type::getData(root))
+      .save();
+  const auto check = [&] {
+    const auto original = recurloop::Semantic::definition(context, rootPhrase("words : with separators"));
+    const auto alias = recurloop::Semantic::definition(context, rootPhrase("alias"));
+    const auto inherited = recurloop::Semantic::definition(context, rootPhrase("inherited"));
+    ASSERT_TRUE(original);
+    ASSERT_TRUE(alias);
+    ASSERT_TRUE(inherited);
+    EXPECT_EQ(original->start.path, path);
+    EXPECT_EQ(original->start.line, 1);
+    EXPECT_EQ(alias->start.path, path);
+    EXPECT_EQ(alias->start.line, 2);
+    EXPECT_EQ(inherited->start.line, original->start.line);
+    EXPECT_EQ(inherited->start.column, original->start.column);
+    EXPECT_EQ(inherited->end.column, original->end.column);
+  };
+  check();
+  const auto image = recurloop::EngineImage::encode(context);
+  recurloop::EngineImage::decode(context, image);
+  check();
+  root = context.lexicon.phrase();
+  auto unknown = root.append("unknown").make().setType(lexicon::phrase::type::getData(root)).save();
+  EXPECT_FALSE(recurloop::Semantic::definition(context, unknown));
+}
+
 TEST_F(EngineImageTesting, ImportsTypeDescriptorsWhoseNamesAreNotExported) {
   initializeWith("");
   auto language = compiler::LanguageState::locate(context.lexicon);

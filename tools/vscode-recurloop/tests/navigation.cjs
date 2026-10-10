@@ -224,24 +224,24 @@ const at = (doc, text, occurrence = 0) => {
       const definitions = await nav.locations(usesDoc, usesDoc.positionAt(offset + component), 'definition');
       assert.equal(definitions.length, 1);
       assert.equal(definitions[0].uri.fsPath, typesPath);
-      assert.equal(definitions[0].range.start.line, 1);
-      assert.equal(definitions[0].range.start.character, 'record '.length);
-      assert.equal(definitions[0].range.end.character, 'record Game:State'.length);
+      assert.equal(definitions[0].range.start.line, component === 0 ? 0 : 1);
+      assert.equal(definitions[0].range.start.character, component === 0 ? 'let '.length : 'record Game:'.length);
+      assert.equal(definitions[0].range.end.character, component === 0 ? 'let Game'.length : 'record Game:State'.length);
     }
   }
-  const typeRefs = await nav.locations(typesDoc, at(typesDoc, 'Game:State'), 'references', false);
+  const typeRefs = await nav.locations(typesDoc, typesDoc.positionAt(typesSource.indexOf('Game:State') + 5), 'references', false);
   assert.equal(typeRefs.length, 6);
   const allocType = usesDoc.positionAt(usesSource.indexOf('alloc(Game:State') + 'alloc('.length + 5);
   assert.equal((await nav.locations(usesDoc, allocType, 'references', false)).length, typeRefs.length);
   for (const location of typeRefs) {
     const doc = documents.get(location.uri.fsPath);
-    assert.equal(doc.getText().slice(doc.offsetAt(location.range.start), doc.offsetAt(location.range.end)), 'Game:State');
+    assert.equal(doc.getText().slice(doc.offsetAt(location.range.start), doc.offsetAt(location.range.end)), 'State');
   }
   // Reopened documents can reuse a version number. Identity must invalidate
   // cached results too, including references requested from another document.
   const reopened = document(usesPath, usesSource + 'let copy = fn (input:Game:State*) -> Game:State* { return input }\n');
   assert.equal(reopened.version, usesDoc.version);
-  assert.equal((await nav.locations(typesDoc, at(typesDoc, 'Game:State'), 'references', false)).length, 8);
+  assert.equal((await nav.locations(typesDoc, typesDoc.positionAt(typesSource.indexOf('Game:State') + 5), 'references', false)).length, 8);
   // Record fields are resolved by receiver type, including reads, writes,
   // inferred aliases, nested records, pointer/array indexing and a local with
   // the same name. Other records' identically named fields stay independent.
@@ -295,6 +295,71 @@ const at = (doc, text, occurrence = 0) => {
   await runtime.restart(folder.uri);
   await checkDefinition(fieldsDoc, ballUse, ballDeclaration);
   assert.equal((await nav.locations(fieldsDoc, declaration(fieldsDoc, ballUse), 'references', false)).length, 7);
+  // One resolved phrase/range path covers namespace components, constants,
+  // mutable globals, functions, types and fields. Selection and rename must
+  // use the component under the cursor, regardless of identical leaf names.
+  const qualifiedPath = path.join(root, 'qualified.rl');
+  const qualifiedUsesPath = path.join(root, 'qualified-uses.rl');
+  const qualifiedSource = 'let Game = phrase { dictionary = true }\n' +
+    'let Game:Phase = phrase { dictionary = true }\nconst Game:Phase:Ready = 0\n' +
+    'var Game:score = 0\nrecord Game:State { phase:i64 }\n' +
+    'let Game:read = fn (state:Game:State*) -> i64 {\n' +
+    '    if state.phase == Game:Phase:Ready { return 0 }\n    return 1\n}\n' +
+    'let Other = phrase { dictionary = true }\nlet Other:Phase = phrase { dictionary = true }\n' +
+    'const Other:Phase:Ready = 1\n';
+  const qualifiedUses = 'Game:score = 1\nprint Game:score\nlet check = fn (state:Game:State*) -> i64 {\n' +
+    '    let value = Game:read(state)\n    if state.phase == Game:Phase:Ready { return Other:Phase:Ready }\n' +
+    '    return Game : Phase : Ready\n}\nlet qualify = <\":\">\n' +
+    'let aliased = fn () -> i64 { return Game qualify Phase qualify Ready }\n';
+  fs.writeFileSync(qualifiedPath, qualifiedSource); fs.writeFileSync(qualifiedUsesPath, qualifiedUses);
+  const qualifiedDoc = document(qualifiedPath), qualifiedUsesDoc = document(qualifiedUsesPath);
+  const qualifiedEntry = 'include "qualified.rl"\ninclude "qualified-uses.rl"\n';
+  fs.writeFileSync(entryPath, qualifiedEntry); documents.get(entryPath).setText(qualifiedEntry);
+  await runtime.reload(folder.uri);
+  const checkComponent = async (doc, expression, component, declaration, occurrence = 0) => {
+    const position = doc.positionAt(doc.offsetAt(at(doc, expression, occurrence)) + expression.lastIndexOf(component));
+    const locations = await nav.locations(doc, position, 'definition');
+    assert.equal(locations.length, 1, `${expression}/${component}`);
+    assert.equal(locations[0].uri.fsPath, qualifiedPath);
+    const expected = qualifiedSource.indexOf(declaration) + declaration.lastIndexOf(component);
+    assert.equal(qualifiedDoc.offsetAt(locations[0].range.start), expected, `${expression}/${component}`);
+    assert.equal(qualifiedDoc.offsetAt(locations[0].range.end), expected + component.length);
+    return position;
+  };
+  for (const doc of [qualifiedDoc, qualifiedUsesDoc]) {
+    await checkComponent(doc, 'Game:Phase:Ready', 'Game', 'let Game');
+    await checkComponent(doc, 'Game:Phase:Ready', 'Phase', 'let Game:Phase');
+    await checkComponent(doc, 'Game:Phase:Ready', 'Ready', 'const Game:Phase:Ready');
+  }
+  const ready = await checkComponent(qualifiedUsesDoc, 'Game : Phase : Ready', 'Ready', 'const Game:Phase:Ready');
+  await checkComponent(qualifiedUsesDoc, 'Game : Phase : Ready', 'Phase', 'let Game:Phase');
+  await checkComponent(qualifiedUsesDoc, 'Game:read', 'read', 'let Game:read');
+  await checkComponent(qualifiedUsesDoc, 'Game:score', 'score', 'var Game:score');
+  await checkComponent(qualifiedUsesDoc, 'Game:State', 'State', 'record Game:State');
+  await checkComponent(qualifiedUsesDoc, 'state.phase', 'phase', 'record Game:State { phase');
+  await checkComponent(qualifiedUsesDoc, 'Other:Phase:Ready', 'Phase', 'let Other:Phase');
+  await checkComponent(qualifiedUsesDoc, 'Other:Phase:Ready', 'Ready', 'const Other:Phase:Ready');
+  await checkComponent(qualifiedUsesDoc, 'Game qualify Phase qualify Ready', 'Game', 'let Game');
+  await checkComponent(qualifiedUsesDoc, 'Game qualify Phase qualify Ready', 'Phase', 'let Game:Phase');
+  await checkComponent(qualifiedUsesDoc, 'Game qualify Phase qualify Ready', 'Ready', 'const Game:Phase:Ready');
+  const readyRefs = await nav.locations(qualifiedUsesDoc, ready, 'references', false);
+  assert.equal(readyRefs.length, 4);
+  for (const loc of readyRefs) {
+    const doc = documents.get(loc.uri.fsPath);
+    assert.equal(doc.getText().slice(doc.offsetAt(loc.range.start), doc.offsetAt(loc.range.end)), 'Ready');
+  }
+  assert.equal((await nav.rename(qualifiedUsesDoc, ready, 'Prepared')).edits.length, 5);
+  const phase = at(qualifiedDoc, 'Game:Phase'); phase.character += 5;
+  const phaseRename = await nav.rename(qualifiedDoc, phase, 'Mode');
+  assert.equal(phaseRename.edits.length, 6);
+  for (const edit of phaseRename.edits) {
+    const doc = documents.get(edit.uri.fsPath);
+    assert.equal(doc.getText().slice(doc.offsetAt(edit.range.start), doc.offsetAt(edit.range.end)), 'Phase');
+  }
+  await runtime.restart(folder.uri);
+  await checkComponent(qualifiedUsesDoc, 'Game:Phase:Ready', 'Game', 'let Game');
+  await checkComponent(qualifiedUsesDoc, 'Game:Phase:Ready', 'Phase', 'let Game:Phase');
+  await checkComponent(qualifiedUsesDoc, 'Game:Phase:Ready', 'Ready', 'const Game:Phase:Ready');
   console.log('Navigation passed: shared traces, scoped queries, cached results, incremental edits/publication/removal/reopening, Unicode, rename, symbols, retained work after cancellation and restart.');
 })().catch(error => { console.error(error); process.exitCode = 1; }).finally(() => {
   nav.dispose(); runtime.dispose(); fs.rmSync(root, { recursive: true, force: true }); fs.rmSync(external, { recursive: true, force: true });

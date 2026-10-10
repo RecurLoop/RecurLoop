@@ -442,10 +442,12 @@ namespace recurloop {
       lexicon::Phrase dataType = types.isNull() ? lexicon::Phrase(&context.lexicon) : exact(types, "data");
       lexicon::Phrase dependencyMetadata = imageDependencies(context, false);
       const Size originMetadata = exact(root, std::string(Semantic::OriginsRegistryName)).getAddress();
+      const Size definitionMetadata = exact(root, std::string(Semantic::DefinitionsRegistryName)).getAddress();
       const auto serializable = [&](lexicon::Phrase phrase, lexicon::Phrase owner) {
         // Capture provenance after the semantic graph. These optional references
         // must never retain obsolete compiler signatures or private helpers.
-        return phrase.isSerializable() && owner.getAddress() != originMetadata;
+        return phrase.isSerializable() && owner.getAddress() != originMetadata &&
+               owner.getAddress() != definitionMetadata;
       };
       const std::unordered_set<Size> behaviorTypes =
           types.isNull()
@@ -568,16 +570,17 @@ namespace recurloop {
         for (Size target : payloadTargets(phrase)) ensure(target, ensure);
       }
 
-      if (originMetadata != 0) {
-        auto registry = all.at(originMetadata);
+      for (const auto metadata : {originMetadata, definitionMetadata}) {
+        if (metadata == 0) continue;
+        auto registry = all.at(metadata);
         auto populated = [](radix::Node *, radix::Node *candidate) { return !candidate->isEmpty(); };
         for (auto child = registry.fore(populated); !child.isNull(); child = child.next(populated)) {
           auto entry = child.getPhrase();
           if (!entry.isSerializable() || !entry.containsSuccessor() || (since != 0 && entry.getAddress() < since) ||
               !indices.contains(entry.getSuccessor().getAddress()))
             continue;
-          ensure(originMetadata, ensure);
-          add(entry, originMetadata);
+          ensure(metadata, ensure);
+          add(entry, metadata);
         }
       }
 

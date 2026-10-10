@@ -210,6 +210,7 @@ record LanguageKit:Analysis:Symbol {
     type:u8*
     signature:u8*
     no_source:i64
+    definition:u8*
     next:LanguageKit:Analysis:Symbol*
 }
 
@@ -250,6 +251,9 @@ record LanguageKit:Analysis:Occurrence {
 record LanguageKit:Analysis:File {
     path:u8*
     source:u8*
+    line_starts:u64*
+    line_bytes:u64*
+    line_count:u64
     diagnostic:u8*
     symbols:LanguageKit:Analysis:Symbol*
     tokens:LanguageKit:Analysis:Token*
@@ -257,6 +261,7 @@ record LanguageKit:Analysis:File {
     declarations:LanguageKit:Analysis:Occurrence*
     symbols_by_name:LanguageKit:Analysis:Table
     by_position:LanguageKit:Analysis:Table
+    by_finish:LanguageKit:Analysis:Table
     by_target:LanguageKit:Analysis:Table
     by_container:LanguageKit:Analysis:Table
     locals_by_name:LanguageKit:Analysis:Table
@@ -315,6 +320,7 @@ let LanguageKit:Analysis:file_clear = fn (file:LanguageKit:Analysis:File*) -> vo
     file.ranges = cast(LanguageKit:Analysis:Occurrence**, 0); file.range_ends = cast(u64*, 0); file.range_count = 0
     LanguageKit:Analysis:table_clear(&file.symbols_by_name)
     LanguageKit:Analysis:table_clear(&file.by_position)
+    LanguageKit:Analysis:table_clear(&file.by_finish)
     LanguageKit:Analysis:table_clear(&file.by_target)
     LanguageKit:Analysis:table_clear(&file.by_container)
     LanguageKit:Analysis:table_clear(&file.locals_by_name)
@@ -322,7 +328,7 @@ let LanguageKit:Analysis:file_clear = fn (file:LanguageKit:Analysis:File*) -> vo
     while symbol {
         let next = symbol.next
         free(symbol.key); free(symbol.name); free(symbol.kind); free(symbol.docs)
-        free(symbol.prototype); free(symbol.type); free(symbol.signature)
+        free(symbol.prototype); free(symbol.type); free(symbol.signature); free(symbol.definition)
         free(cast(u8*, symbol)); symbol = next
     }
     var token = file.tokens
@@ -333,6 +339,7 @@ let LanguageKit:Analysis:file_clear = fn (file:LanguageKit:Analysis:File*) -> vo
         free(occurrence.target); free(occurrence.container); free(occurrence.label)
         free(cast(u8*, occurrence)); occurrence = next
     }
+    free(cast(u8*, file.line_starts)); free(cast(u8*, file.line_bytes))
     if file.source { free(file.source) }
     if file.diagnostic { free(file.diagnostic) }
     file.source = cast(u8*, 0); file.diagnostic = cast(u8*, 0)
@@ -483,9 +490,53 @@ let LanguageKit:Analysis:add = fn (file:LanguageKit:Analysis:File*, target:u8*, 
     item.declaration_next = cast(LanguageKit:Analysis:Occurrence*, 0)
     item.next = file.occurrences; file.occurrences = item
     LanguageKit:Analysis:table_add(&file.by_position, "", start, cast(u8*, item))
+    LanguageKit:Analysis:table_add(&file.by_finish, "", finish, cast(u8*, item))
     LanguageKit:Analysis:table_add(&file.by_target, item.target, 0, cast(u8*, item))
     if local != 0 && role == 2 { LanguageKit:Analysis:table_add(&file.locals_by_name, item.label, 0, cast(u8*, item)) }
     return item
+}
+
+// Prefer the ranges emitted by the matching phrase, including grammar aliases.
+let LanguageKit:Analysis:matched = fn (file:LanguageKit:Analysis:File*, target:u8*, start:u64, finish:u64) -> LanguageKit:Analysis:Occurrence* {
+    var entry = LanguageKit:Analysis:table_find(&file.by_finish, "", finish)
+    while entry {
+        let item = cast(LanguageKit:Analysis:Occurrence*, entry.value)
+        if item.exact != 0 && item.start >= start && LanguageKit:Analysis:equal(item.target, target) { return item }
+        entry = LanguageKit:Analysis:table_next(entry)
+    }
+    return cast(LanguageKit:Analysis:Occurrence*, 0)
+}
+
+let LanguageKit:Analysis:source_lines = fn (file:LanguageKit:Analysis:File*) -> void {
+    var at:u64 = 0
+    file.line_count = 1
+    while file.source[at] != 0 { if file.source[at] == 10 { file.line_count += 1 }; at += 1 }
+    file.line_starts = cast(u64*, malloc(file.line_count * 8))
+    file.line_bytes = cast(u64*, malloc(file.line_count * 8))
+    if !file.line_starts || !file.line_bytes { file.line_count = 0; return }
+    file.line_starts[0] = 0; file.line_bytes[0] = 0
+    var line:u64 = 1
+    var position:u64 = 0
+    at = 0
+    while file.source[at] != 0 {
+        if file.source[at] == 10 { file.line_starts[line] = position + 1; file.line_bytes[line] = at + 1; line += 1 }
+        at += 1; while file.source[at] / 64 == 2 { at += 1 }; position += 1
+    }
+}
+
+let LanguageKit:Analysis:source_position = fn (file:LanguageKit:Analysis:File*, line:u64, column:u64) -> u64 {
+    if line == 0 || line > file.line_count || column == 0 { return 0 }
+    return file.line_starts[line - 1] + column - 1
+}
+
+let LanguageKit:Analysis:source_byte = fn (file:LanguageKit:Analysis:File*, line:u64, column:u64) -> u64 {
+    if line == 0 || line > file.line_count || column == 0 { return 0 }
+    var at = file.line_bytes[line - 1]
+    var current_column:u64 = 1
+    while file.source[at] != 0 && file.source[at] != 10 && current_column < column {
+        at += 1; while file.source[at] / 64 == 2 { at += 1 }; current_column += 1
+    }
+    return at
 }
 
 let LanguageKit:Analysis:parse_trace = fn (file:LanguageKit:Analysis:File*, response:u8*) -> void {
@@ -514,10 +565,42 @@ let LanguageKit:Analysis:parse_trace = fn (file:LanguageKit:Analysis:File*, resp
                 item.prototype = LanguageKit:Analysis:decode_hex(response, f4 + 1, f5)
                 item.type = LanguageKit:Analysis:decode_hex(response, f5 + 1, f6)
                 item.signature = LanguageKit:Analysis:decode_hex(response, f6 + 1, end)
-                item.no_source = 0
+                item.no_source = 0; item.definition = cast(u8*, 0)
                 item.next = file.symbols; file.symbols = item
                 LanguageKit:Analysis:table_add(&file.symbols_by_name, item.name, 0, cast(u8*, item))
                 LanguageKit:Analysis:table_add(&file.symbols_by_name, item.key, 0, cast(u8*, item))
+            }
+        } else if response[at] == 70 && response[at + 1] == 9 {
+            let f1 = LanguageKit:Analysis:find_byte(response, at + 2, 9)
+            let f2 = LanguageKit:Analysis:find_byte(response, f1 + 1, 9)
+            let f3 = LanguageKit:Analysis:find_byte(response, f2 + 1, 9)
+            let f4 = LanguageKit:Analysis:find_byte(response, f3 + 1, 9)
+            let f5 = LanguageKit:Analysis:find_byte(response, f4 + 1, 9)
+            let f6 = LanguageKit:Analysis:find_byte(response, f5 + 1, 9)
+            if f6 < end {
+                let version = cast(u64, LanguageKit:Analysis:parse_decimal(response, at + 2, f1))
+                let name = LanguageKit:Analysis:decode_hex(response, f1 + 1, f2)
+                let path = LanguageKit:Analysis:decode_hex(response, f2 + 1, f3)
+                if name && path {
+                    let key = LanguageKit:Analysis:key(name, version)
+                    let symbol = LanguageKit:Analysis:symbol(file, key)
+                    if symbol { free(symbol.definition); symbol.definition = LanguageKit:copy_text(path) }
+                    if LanguageKit:Analysis:equal(path, file.path) {
+                        let line = cast(u64, LanguageKit:Analysis:parse_decimal(response, f3 + 1, f4))
+                        let column = cast(u64, LanguageKit:Analysis:parse_decimal(response, f4 + 1, f5))
+                        let end_line = cast(u64, LanguageKit:Analysis:parse_decimal(response, f5 + 1, f6))
+                        let end_column = cast(u64, LanguageKit:Analysis:parse_decimal(response, f6 + 1, end))
+                        let start = LanguageKit:Analysis:source_position(file, line, column)
+                        let finish = LanguageKit:Analysis:source_position(file, end_line, end_column)
+                        let begin_byte = LanguageKit:Analysis:source_byte(file, line, column)
+                        let end_byte = LanguageKit:Analysis:source_byte(file, end_line, end_column)
+                        let label = LanguageKit:copy_bytes(&file.source[begin_byte], cast(i64, end_byte - begin_byte))
+                        if label && finish > start { LanguageKit:Analysis:add(file, key, "", label, start, finish, line, 2, 1, 0) }
+                        free(label)
+                    }
+                    free(key)
+                }
+                free(name); free(path)
             }
         } else if response[at] == 71 && response[at + 1] == 9 {
             let f1 = LanguageKit:Analysis:find_byte(response, at + 2, 9)
@@ -609,7 +692,11 @@ let LanguageKit:Analysis:declare_local = fn (file:LanguageKit:Analysis:File*, to
     if cast(u64, colon) < size {
         let type = &token.text[colon + 1]
         let symbol = LanguageKit:Analysis:symbol(file, type)
-        if symbol { LanguageKit:Analysis:add(file, symbol.key, key, type, token.start + cast(u64, colon) + 1, token.finish, token.line, 4, 0, 0) }
+        if symbol {
+            let matched = LanguageKit:Analysis:matched(file, symbol.key, token.start + cast(u64, colon) + 1, token.finish)
+            if matched { matched.role = 4; free(matched.container); matched.container = LanguageKit:copy_text(key) }
+            else { LanguageKit:Analysis:add(file, symbol.key, key, type, token.start + cast(u64, colon) + 1, token.finish, token.line, 4, 0, 0) }
+        }
     }
 }
 
@@ -636,7 +723,9 @@ let LanguageKit:Analysis:function = fn (file:LanguageKit:Analysis:File*, name:La
             free(function_symbol.signature); function_symbol.signature = signature.take(); signature.destroy()
         }
     }
-    LanguageKit:Analysis:add(file, function_symbol.key, "", name.text, name.start, name.finish, name.line, 2, 0, 0)
+    let matched = LanguageKit:Analysis:matched(file, function_symbol.key, name.start, name.finish)
+    if matched { matched.role = 2 }
+    else { LanguageKit:Analysis:add(file, function_symbol.key, "", name.text, name.start, name.finish, name.line, 2, 0, 0) }
     var parameter = open.next
     var expect:i64 = 1
     var nested:i64 = 0
@@ -715,15 +804,11 @@ let LanguageKit:Analysis:classify = fn (file:LanguageKit:Analysis:File*) -> void
             else if token.next && LanguageKit:Analysis:equal(token.next.text, "(") { role = 3 }
             else if token.previous && token.previous.previous && token.previous.text[0] == 62 && token.previous.previous.text[0] == 45 { role = 4 }
             let symbol = LanguageKit:Analysis:symbol(file, token.text)
-            var exact_entry = LanguageKit:Analysis:table_find(&file.by_position, "", token.start)
-            while exact_entry {
-                let occurrence = cast(LanguageKit:Analysis:Occurrence*, exact_entry.value)
-                if symbol && occurrence.exact != 0 && occurrence.start == token.start && occurrence.finish == token.finish &&
-                   LanguageKit:Analysis:equal(occurrence.target, symbol.key) {
-                    if role > occurrence.role { occurrence.role = role }
-                    free(occurrence.container); occurrence.container = LanguageKit:copy_text(token.container)
-                }
-                exact_entry = LanguageKit:Analysis:table_next(exact_entry)
+            var matched = cast(LanguageKit:Analysis:Occurrence*, 0)
+            if symbol { matched = LanguageKit:Analysis:matched(file, symbol.key, token.start, token.finish) }
+            if matched {
+                if role > matched.role { matched.role = role }
+                free(matched.container); matched.container = LanguageKit:copy_text(token.container)
             }
             // Typed fn identifiers are not phrase-dispatch tokens. Resolve calls
             // against the exported compiler catalog here, excluding member names
@@ -739,7 +824,7 @@ let LanguageKit:Analysis:classify = fn (file:LanguageKit:Analysis:File*) -> void
                     local_entry = LanguageKit:Analysis:table_next(local_entry)
                 }
             }
-            if (definition != 0 || role == 4 || role == 5 || typed_call != 0) && symbol {
+            if (definition != 0 || role == 4 || role == 5 || typed_call != 0) && symbol && !matched {
                 let added = LanguageKit:Analysis:add(file, symbol.key, "", token.text, token.start, token.finish, token.line, role, 0, 0)
                 if added && typed_call != 0 {
                     free(added.container); added.container = LanguageKit:copy_text(token.container)
@@ -776,7 +861,10 @@ let LanguageKit:Analysis:location = fn (out:LanguageKit:Text*, file:LanguageKit:
     out.append("L\t"); LanguageKit:Analysis:append_hex(out, file.path); out.append("\t")
     LanguageKit:Analysis:append_u64(out, item.start); out.append("\t"); LanguageKit:Analysis:append_u64(out, item.finish); out.append("\t")
     LanguageKit:Analysis:append_u64(out, item.line); out.append("\t"); LanguageKit:Analysis:append_u64(out, cast(u64, item.role)); out.append("\t")
-    LanguageKit:Analysis:append_hex(out, item.label); out.append("\n")
+    LanguageKit:Analysis:append_hex(out, item.label)
+    let symbol = LanguageKit:Analysis:symbol(file, item.target)
+    if symbol { out.append("\t"); LanguageKit:Analysis:append_hex(out, symbol.name) }
+    out.append("\n")
 }
 
 let LanguageKit:Analysis:sort_results = fn (head:LanguageKit:Analysis:Result*, descending:i64) -> LanguageKit:Analysis:Result* {
@@ -940,12 +1028,25 @@ let LanguageKit:Analysis:query_index = fn (index:LanguageKit:Analysis:Index*, cu
     if LanguageKit:Analysis:equal(operation, "scope") {
         if !selected { out.append("Q\tnone\n") }
         else if file_only != 0 { out.append("Q\tlocal\n") }
-        else { out.append("Q\tproject\n") }
+        else {
+            let symbol = LanguageKit:Analysis:symbol(current, selected.target)
+            if LanguageKit:Analysis:equal(effective_operation, "definition") && symbol && symbol.definition {
+                out.append("Q\tsource\t"); LanguageKit:Analysis:append_hex(out, symbol.definition); out.append("\n")
+            } else { out.append("Q\tproject\n") }
+        }
         return out.take()
     }
     if !selected && !document && !workspace { out.append("E\t"); LanguageKit:Analysis:append_hex(out, "no semantic symbol at cursor"); out.append("\n"); return out.take() }
     var requested = cast(u8*, 0)
     if selected { requested = selected.target }
+    var definition_file = current
+    if file_only == 0 && selected && LanguageKit:Analysis:equal(operation, "definition") {
+        let symbol = LanguageKit:Analysis:symbol(current, selected.target)
+        if symbol && symbol.definition {
+            let entry = LanguageKit:Analysis:table_find(&index.by_path, symbol.definition, 0)
+            if entry { definition_file = cast(LanguageKit:Analysis:File*, entry.value); file_only = 1 }
+        }
+    }
     if LanguageKit:Analysis:equal(operation, "type-definition") {
         var entry = LanguageKit:Analysis:table_find(&current.by_container, selected.target, 0)
         while entry {
@@ -988,7 +1089,7 @@ let LanguageKit:Analysis:query_index = fn (index:LanguageKit:Analysis:Index*, cu
     let outgoing = LanguageKit:Analysis:equal(operation, "outgoing-calls")
     let targeted = outgoing || LanguageKit:Analysis:equal(operation, "incoming-calls") || LanguageKit:Analysis:equal(operation, "definition") || LanguageKit:Analysis:equal(operation, "type-definition") ||
                    LanguageKit:Analysis:equal(operation, "references") || LanguageKit:Analysis:equal(operation, "rename")
-    if file_only != 0 { file = current }
+    if file_only != 0 { file = definition_file }
     while file {
         if context:process:interrupted() { break }
         var entry = cast(LanguageKit:Analysis:Entry*, 0)
@@ -1061,6 +1162,7 @@ let LanguageKit:Analysis:file = fn (index:LanguageKit:Analysis:Index*, path:u8*,
     file.occurrences = cast(LanguageKit:Analysis:Occurrence*, 0); file.declarations = cast(LanguageKit:Analysis:Occurrence*, 0)
     LanguageKit:Analysis:table_init(&file.symbols_by_name)
     LanguageKit:Analysis:table_init(&file.by_position)
+    LanguageKit:Analysis:table_init(&file.by_finish)
     LanguageKit:Analysis:table_init(&file.by_target)
     LanguageKit:Analysis:table_init(&file.by_container)
     LanguageKit:Analysis:table_init(&file.locals_by_name)
@@ -1069,6 +1171,7 @@ let LanguageKit:Analysis:file = fn (index:LanguageKit:Analysis:Index*, path:u8*,
     if index.files { index.files.previous = file }
     index.files = file
     LanguageKit:Analysis:table_add(&index.by_path, file.path, 0, cast(u8*, file))
+    LanguageKit:Analysis:source_lines(file)
     LanguageKit:Analysis:parse_trace(file, trace)
     LanguageKit:Analysis:classify(file)
     if context:process:interrupted() { return file }

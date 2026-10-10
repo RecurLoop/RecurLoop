@@ -75,6 +75,18 @@ namespace recurloop {
                                            &semanticGroup);
   }
 
+  void SyntaxCursor::recordResolved(lexicon::Phrase phrase, std::span<const SyntaxToken> path) {
+    if (!semanticTracing || !Semantic::active(context)) return;
+    auto dictionary = context.lexicon.phrase();
+    for (std::size_t index = 0; index < path.size(); ++index) {
+      const auto &part = path[index];
+      auto resolved = LanguageGrammar::findInherited(dictionary, part.text);
+      if (index + 1 == path.size() && !phrase.isNull()) resolved = phrase;
+      recordResolved(resolved, part.offset, part.semanticEnd);
+      dictionary = resolved;
+    }
+  }
+
   bool SyntaxCursor::accept(std::string_view canonical) {
     if (!LanguageGrammar::matches(context, token.text, canonical)) return false;
     take();
@@ -288,7 +300,8 @@ namespace recurloop {
         ++cursor;
       }
       if (cursor == begin) failSource(begin, "unexpected character '" + std::string(1, static_cast<char>(first)) + "'");
-      token = {SyntaxTokenKind::Word, std::string(text.substr(begin, cursor - begin)), tokenOffset, begin};
+      token = {SyntaxTokenKind::Word, std::string(text.substr(begin, cursor - begin)), tokenOffset, begin, 0,
+               sourceOffset(cursor)};
       return;
     }
 

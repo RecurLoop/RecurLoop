@@ -92,6 +92,7 @@ namespace recurloop {
       } kind;
       lexicon::Phrase syntax;
       std::string text;
+      std::vector<Token> namePath;
       std::vector<std::unique_ptr<Expression>> children;
       std::shared_ptr<ExpressionBody> body;
       std::size_t offset = 0;

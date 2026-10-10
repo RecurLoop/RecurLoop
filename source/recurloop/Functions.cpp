@@ -127,6 +127,7 @@ namespace recurloop {
       std::string name;
       std::string signature;
       std::size_t signatureOffset = 0;
+      std::size_t nameStart = 0, nameEnd = 0;
     };
 
     std::size_t signatureOpening(context::Context &context, std::string_view header) {
@@ -150,12 +151,26 @@ namespace recurloop {
       return std::string::npos;
     }
 
-    DefinitionHeader definitionHeader(context::Context &context, std::string header) {
+    DefinitionHeader definitionHeader(context::Context &context, std::string header, SourceLocation origin = {}) {
       const std::size_t opening = signatureOpening(context, header);
       if (opening == std::string::npos) THROW(, "fn expects '[name](parameters) -> result' before '{'")
       DefinitionHeader result{function_internal::trim(header.substr(0, opening)), header.substr(opening), opening};
       if (!result.name.empty() && !validSymbol(result.name))
         THROW(, "fn: invalid function name '" << result.name << "'")
+      if (!result.name.empty()) {
+        const auto grammar = LanguageGrammar::find(context.lexicon.phrase(), function_internal::FunctionGrammarName);
+        SyntaxCursor cursor(context, std::string_view(header).substr(0, opening),
+                            {LanguageGrammar::find(grammar, "symbols")}, function_internal::lexerFail,
+                            {.bareWords = true}, std::move(origin));
+        std::vector<SyntaxToken> path;
+        do {
+          const auto name = cursor.take();
+          path.push_back(name);
+          result.nameStart = name.offset;
+          result.nameEnd = name.semanticEnd;
+        } while (cursor.accept(":"));
+        cursor.recordResolved(lexicon::Phrase(&context.lexicon), path);
+      }
       return result;
     }
 
@@ -464,7 +479,7 @@ namespace recurloop {
       if (!header.name.empty() && !validSymbol(header.name))
         THROW(, "fn: invalid function name '" << header.name << "'")
     } else {
-      header = definitionHeader(context, std::move(block.header));
+      header = definitionHeader(context, std::move(block.header), {block.path, block.headerLine, block.headerPosition});
     }
 
     context.workspace.key.clear();
@@ -484,6 +499,9 @@ namespace recurloop {
 
     const SourceLocation headerLocation{block.path, block.headerLine, block.headerPosition};
     const SourceLocation signatureLocation = sourceLocationAt(headerLocation, headerSource, header.signatureOffset);
+    if (!stagedByLet)
+      Semantic::stageDefinition(context, sourceLocationAt(headerLocation, headerSource, header.nameStart),
+                                sourceLocationAt(headerLocation, headerSource, header.nameEnd));
     function_internal::FunctionDefinition signature =
         inheritedSignature
             ? signatureDefinition(context, *inheritedSignature, symbol)
@@ -502,13 +520,18 @@ namespace recurloop {
     // IntelliSense needs the real function grammar (signature + body) but must
     // never JIT/link a function just because the editor asked for semantics.
     // parseBody() drives SyntaxCursor and therefore emits phrase-backed spans;
-    // stop before declaring/code-generating runtime state.
+    // register its signature for later lookups, without code generation/linking.
     if (Semantic::active(context)) {
+      context.language().declareFunction(signature.function);
       (void)function_internal::parseBody(context, block.body, symbol, block.path, block.line, block.position,
                                          signature.names, signature.function.parameterTypes);
       if (stagedByLet) {
         context::Lookup::leave(context, invoked);
       } else {
+        auto root = context.lexicon.phrase();
+        context.staging.phrase.enableSubdictionary().setType(lexicon::phrase::type::getCallable(root));
+        auto saved = context.staging.phrase.save();
+        Semantic::recordDefinition(context, saved);
         context.staging.phrase = context.staging.dictionary.append("");
         context.workspace.key.clear();
       }
@@ -582,6 +605,7 @@ namespace recurloop {
     lexicon::Phrase &saved = context.staging.phrase.save();
     Assembler::commitNative(context, saved);
     commitVariant(context, saved);
+    Semantic::recordDefinition(context, saved);
     context.staging.phrase = context.staging.dictionary.append("");
     context.workspace.key.clear();
   }
@@ -591,12 +615,17 @@ namespace recurloop {
     return signature ? signature->type : compiler::InvalidType;
   }
 
-  compiler::TypedFunction Functions::parseDeclaration(context::Context &context, std::string_view source,
-                                                      bool imported) {
-    DefinitionHeader header = definitionHeader(context, std::string(source));
+  compiler::TypedFunction Functions::parseDeclaration(context::Context &context, std::string_view source, bool imported,
+                                                      SourceLocation origin) {
+    DefinitionHeader header = definitionHeader(context, std::string(source), origin);
     if (header.name.empty()) THROW(, "typed function declaration requires a symbol")
+    if (origin.path.empty()) origin = {context.source.path, context.source.line, context.source.position};
+    Semantic::stageDefinition(context, sourceLocationAt(origin, source, header.nameStart),
+                              sourceLocationAt(origin, source, header.nameEnd));
+    const auto signatureOrigin = sourceLocationAt(origin, source, header.signatureOffset);
     function_internal::FunctionDefinition definition =
-        function_internal::parseSignature(context, header.signature, header.name, true);
+        function_internal::parseSignature(context, header.signature, header.name, true, signatureOrigin.path,
+                                          signatureOrigin.line, signatureOrigin.column);
     definition.function.imported = imported;
     definition.function.name = header.name;
     return std::move(definition.function);

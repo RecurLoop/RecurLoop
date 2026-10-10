@@ -551,13 +551,16 @@ namespace recurloop {
           if (Semantic::active(context) && result->kind == Expression::Kind::Variable &&
               !findLocal(result->text) && !LanguageGrammar::matches(context, lexer.current().text, ":")) {
             const auto binding = context.values().find(result->text, scope, Semantic::valueBindings(context));
-            if (binding && !binding->mutableValue) {
+            if (binding) {
               lexer.recordResolved(LanguageGrammar::findQualified(context.lexicon.phrase(), binding->name),
-                                   result->offset, lexer.consumedEnd());
+                                   result->namePath);
             } else if (const auto functions = context.language().findFunctions(result->text, scope);
                        !functions.empty()) {
               const auto phrase = LanguageGrammar::findQualified(context.lexicon.phrase(), functions.front().name);
-              lexer.recordResolved(phrase, result->offset, lexer.consumedEnd());
+              lexer.recordResolved(phrase, result->namePath);
+            } else {
+              lexer.recordResolved(LanguageGrammar::findQualified(context.lexicon.phrase(), result->text),
+                                   result->namePath);
             }
           }
           lexicon::Phrase syntax = LanguageGrammar::resolve(context, postfixes, lexer.current().text);
@@ -593,6 +596,7 @@ namespace recurloop {
           fail({}, token.offset, "expected an expression");
         result->text = token.text;
         result->kind = Expression::Kind::Variable;
+        result->namePath.push_back(token);
         if (!LanguageGrammar::matches(context, lexer.current().text, ":")) {
           if (const auto *local = findLocal(token.text)) recordLocal(local->symbol, token);
         }
@@ -735,6 +739,10 @@ namespace recurloop {
           return result;
         }
         result->kind = Expression::Kind::MethodCall;
+        if (const auto owner = recordType(*result->children.front()))
+          lexer.recordResolved(
+              LanguageGrammar::findQualified(context.lexicon.phrase(), owner->name + ':' + result->text), field.offset,
+              field.semanticEnd);
         lexer.skipNewlines();
         if (!lexer.accept(")")) {
           while (true) {
@@ -758,7 +766,9 @@ namespace recurloop {
       std::unique_ptr<Expression> parseQualification(Token operation, std::unique_ptr<Expression> base) {
         if (base->kind != Expression::Kind::Variable)
           fail({}, operation.offset, "name qualification requires an unresolved name");
-        base->text += ":" + identifier("a qualified name component").text;
+        auto component = identifier("a qualified name component");
+        base->text += ":" + component.text;
+        base->namePath.push_back(std::move(component));
         return base;
       }
 

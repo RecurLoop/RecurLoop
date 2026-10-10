@@ -6,6 +6,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <functional>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <span>
@@ -27,6 +28,15 @@ namespace recurloop {
   public:
     Semantic() = delete;
     static constexpr std::string_view OriginsRegistryName{"\0semantic-origins", 17};
+    static constexpr std::string_view DefinitionsRegistryName{"\0semantic-definitions", 21};
+    struct Definition {
+      SourceLocation start;
+      SourceLocation end;
+    };
+    // Follow the exact phrase reference and then its prototypes. Definition
+    // records are optional references relocated by EngineImage, not owners
+    // retaining obsolete or unserializable entries.
+    static std::optional<Definition> definition(context::Context &context, lexicon::Phrase phrase);
 
     // Source-level phrase metadata. Values are stored in a serializable hidden
     // lexicon registry whose phrase reference is relocated by EngineImage.

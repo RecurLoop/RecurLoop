@@ -97,17 +97,29 @@ namespace recurloop {
       std::string field(std::vector<std::pair<SourceLocation, SourceLocation>> &locations) {
         const auto start = sourceLocationAt(origin, source, cursor.current().offset);
         std::string name = take("a field name");
-        if (Semantic::active(context))
-          locations.emplace_back(start, sourceLocationAt(origin, source, cursor.consumedEnd()));
+        locations.emplace_back(start, sourceLocationAt(origin, source, cursor.consumedEnd()));
         return name;
       }
-      std::string qualified(std::string_view description) {
+      std::string qualified(std::string_view description,
+                            std::pair<SourceLocation, SourceLocation> *location = nullptr) {
+        std::vector<SyntaxToken> path{cursor.current()};
+        auto start = cursor.current().offset;
         std::string result = take(description);
-        while (accept(":")) result += ":" + take("a qualified name component");
+        while (accept(":")) {
+          path.push_back(cursor.current());
+          start = cursor.current().offset;
+          result += ":" + take("a qualified name component");
+        }
+        cursor.recordResolved(lexicon::Phrase(&context.lexicon), path);
+        if (location)
+          *location = {sourceLocationAt(origin, source, start), sourceLocationAt(origin, source, cursor.consumedEnd())};
         return result;
       }
       std::string remaining() const {
         return std::string(source.substr(cursor.current().offset));
+      }
+      SourceLocation remainingOrigin() const {
+        return sourceLocationAt(origin, source, cursor.current().offset);
       }
       void expect(std::string_view token) {
         if (!accept(token)) fail(cursor.current().offset, "expected '" + std::string(token) + "'");
@@ -322,6 +334,7 @@ namespace recurloop {
 
     void defineTypedPhrase(context::Context &context, const compiler::TypeDescriptor &type,
                            const std::string &declaredName,
+                           const std::pair<SourceLocation, SourceLocation> &nameLocation,
                            const std::vector<std::pair<SourceLocation, SourceLocation>> &locations) {
       lexicon::Phrase root = context.lexicon.phrase();
       lexicon::Phrase owner = context.staging.dictionary;
@@ -349,6 +362,7 @@ namespace recurloop {
                                       .enableSubdictionary()
                                       .save()
                                       .store(TypedPhraseData{type.id, type.size});
+      Semantic::recordDefinition(context, structure, nameLocation.first, nameLocation.second);
       for (std::size_t index = 0; index < type.fields.size(); ++index) {
         const auto &field = type.fields[index];
         auto phrase = structure.append(field.name)
@@ -407,7 +421,9 @@ namespace recurloop {
   }
 
   void Typed::declareExternal(context::Context &context, lexicon::Phrase &) {
-    compiler::TypedFunction function = Functions::parseDeclaration(context, readLine(context), true);
+    SourceLocation origin;
+    const auto source = readLine(context, &origin);
+    compiler::TypedFunction function = Functions::parseDeclaration(context, source, true, origin);
 
     lexicon::Phrase root = context.lexicon.phrase();
     lexicon::Phrase overloads = LanguageGrammar::find(root, function.name);
@@ -424,17 +440,21 @@ namespace recurloop {
         .enableSubdictionary()
         .setType(lexicon::phrase::type::getCallable(root))
         .save();
+    Semantic::recordDefinition(context, overloads);
     context.language().declareFunction(std::move(function));
   }
 
   void Typed::declareFunction(context::Context &context, lexicon::Phrase &) {
-    compiler::TypedFunction function = Functions::parseDeclaration(context, readLine(context), false);
+    SourceLocation origin;
+    const auto source = readLine(context, &origin);
+    compiler::TypedFunction function = Functions::parseDeclaration(context, source, false, origin);
     lexicon::Phrase root = context.lexicon.phrase();
     lexicon::Phrase phrase = LanguageGrammar::find(root, function.signature.symbol);
     if (phrase.isNull() || !phrase.isInvokable())
       THROW(, "typed declaration: function phrase is not invokable: '" << function.signature.symbol << "'")
     if (!context.language().findModule(function.signature.symbol))
       THROW(, "typed declaration: function phrase has no native module: '" << function.signature.symbol << "'")
+    Semantic::recordDefinition(context, phrase);
     context.language().declareFunction(std::move(function));
   }
 
@@ -442,6 +462,7 @@ namespace recurloop {
     std::vector<compiler::FieldDeclaration> fields;
     std::vector<std::pair<SourceLocation, SourceLocation>> locations;
     std::string declaredName;
+    std::pair<SourceLocation, SourceLocation> nameLocation;
     bool packed = false;
     std::size_t alignment = 0;
 
@@ -460,7 +481,7 @@ namespace recurloop {
     if (Blocks::hasOpeningBrace(context)) {
       SourceBlock block = Blocks::capture(context);
       Parser header(context, block.header, {block.path, block.headerLine, block.headerPosition});
-      declaredName = header.qualified("a record name");
+      declaredName = header.qualified("a record name", &nameLocation);
       options(header);
 
       const std::string name = qualify(context, declaredName);
@@ -474,13 +495,13 @@ namespace recurloop {
         if (!body.done()) body.accept(",");
       }
       context.language().types.completeStructure(type, fields, packed, alignment);
-      defineTypedPhrase(context, context.language().types.get(type), declaredName, locations);
+      defineTypedPhrase(context, context.language().types.get(type), declaredName, nameLocation, locations);
       return;
     } else {
       SourceLocation origin;
       std::string source = readLine(context, &origin);
       Parser parser(context, std::move(source), std::move(origin));
-      declaredName = parser.qualified("a record name");
+      declaredName = parser.qualified("a record name", &nameLocation);
       const std::string name = qualify(context, declaredName);
       const compiler::TypeId type = context.language().types.declareStructure(name);
       parser.expect("(");
@@ -495,7 +516,7 @@ namespace recurloop {
       }
       options(parser);
       context.language().types.completeStructure(type, fields, packed, alignment);
-      defineTypedPhrase(context, context.language().types.get(type), declaredName, locations);
+      defineTypedPhrase(context, context.language().types.get(type), declaredName, nameLocation, locations);
       return;
     }
   }
@@ -509,7 +530,8 @@ namespace recurloop {
     if (structure == compiler::InvalidType ||
         context.language().types.get(structure).kind != compiler::TypeKind::Structure)
       THROW(, "typed declaration: method owner is not a structure: '" << structureName << "'")
-    compiler::TypedFunction function = Functions::parseDeclaration(context, parser.remaining(), true);
+    compiler::TypedFunction function =
+        Functions::parseDeclaration(context, parser.remaining(), true, parser.remainingOrigin());
     const std::string methodName = function.signature.symbol;
     function.signature.symbol = structureName + ":" + methodName;
     function.name = function.signature.symbol;
@@ -532,6 +554,7 @@ namespace recurloop {
         .enableSubdictionary()
         .setType(lexicon::phrase::type::getCallable(root))
         .save();
+    Semantic::recordDefinition(context, overloads);
   }
 
   void Typed::declarePointer(context::Context &context, lexicon::Phrase &) {

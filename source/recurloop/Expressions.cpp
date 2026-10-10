@@ -50,10 +50,15 @@ namespace recurloop {
               std::move(expressionOrigin), std::move(parsed.start), std::move(parsed.end)};
     }
 
-    void recordBinding(context::Context &context, const Assignment &statement) {
-      if (!Semantic::active(context)) return;
+    void recordBinding(context::Context &context, const Assignment &statement, bool declaration = false) {
+      if (!declaration && !Semantic::active(context)) return;
       lexicon::Phrase phrase = findPhrase(context.lexicon.phrase(), statement.name);
-      if (!phrase.isNull()) Semantic::record(context, phrase, statement.nameStart, statement.nameEnd);
+      if (!phrase.isNull()) {
+        if (declaration)
+          Semantic::recordDefinition(context, phrase, statement.nameStart, statement.nameEnd);
+        else
+          Semantic::record(context, phrase, statement.nameStart, statement.nameEnd);
+      }
     }
 
     void assignBound(context::Context &context, lexicon::Phrase &invoked) {
@@ -264,7 +269,7 @@ namespace recurloop {
     else
       (*Semantic::valueBindings(context))[statement.name] = {statement.name, value, true};
     bindAssignment(context, statement.name);
-    internal::recordBinding(context, statement);
+    internal::recordBinding(context, statement, true);
   }
 
   void Expressions::constant(context::Context &context, lexicon::Phrase &) {
@@ -279,7 +284,7 @@ namespace recurloop {
       (*Semantic::valueBindings(context))[statement.name] = {statement.name, {}, false, false};
     }
     bindAssignment(context, statement.name);
-    internal::recordBinding(context, statement);
+    internal::recordBinding(context, statement, true);
   }
 
   void Expressions::bindAssignment(context::Context &context, std::string_view name) {

@@ -17,6 +17,7 @@ namespace recurloop {
 
     struct Frame {
       ParsedPhraseName result;
+      lexicon::Phrase dictionary;
       std::string pendingWhitespace;
       char quote = '\0';
     };
@@ -58,6 +59,8 @@ namespace recurloop {
     }
 
     void byte(context::Context &context, lexicon::Phrase &) {
+      if (frame().quote == '\0' && context.workspace.key.bits() == 0)
+        frame().result.start = {context.source.path, context.source.line, context.source.position};
       if (frame().quote == '\0') flushWhitespace(context);
       context.workspace.key.append(take(context));
     }
@@ -101,8 +104,11 @@ namespace recurloop {
       state.pendingWhitespace.clear();
       const std::string value = context.workspace.key.c_str();
       if (value.empty()) THROW(, "phrase name: dictionary segment cannot be empty")
+      state.dictionary = LanguageGrammar::findInherited(state.dictionary, value);
+      Semantic::record(context, state.dictionary, state.result.start, state.result.end);
       state.result.path.push_back(value);
       context.workspace.key.clear();
+      state.result.start = {context.source.path, context.source.line, context.source.position};
     }
 
     void defineToken(lexicon::Phrase dictionary, std::string_view key, lexicon::Phrase::Action action) {
@@ -240,7 +246,7 @@ namespace recurloop {
       THROW(, "phrase-name grammar is not initialized")
 
     Frame state;
-    const bool tracing = Semantic::active(context);
+    state.dictionary = context.staging.dictionary;
     Frame *previous = currentFrame;
     currentFrame = &state;
     context.workspace.key.clear();
@@ -267,15 +273,12 @@ namespace recurloop {
 
         lexicon::Phrase mode = state.quote == '\'' ? single : state.quote == '"' ? doubleQuoted : plain;
         lexicon::Dictionary tokens = mode.getSubdictionary();
-        SourceLocation start;
-        if (tracing) start = {context.source.path, context.source.line, context.source.position};
+        SourceLocation start{context.source.path, context.source.line, context.source.position};
         lexicon::Phrase token = context::Source::matchLongest(context, tokens, nameAction, false);
         if (token.isNull()) THROW(, "phrase name: cannot match the next source byte")
-        bool nameToken = false;
-        if (tracing) {
-          const std::string key = token.getKey();
-          nameToken = key.empty() || !std::ranges::all_of(key, [](unsigned char byte) { return std::isspace(byte); });
-        }
+        const std::string key = token.getKey();
+        const bool nameToken =
+            key.empty() || !std::ranges::all_of(key, [](unsigned char byte) { return std::isspace(byte); });
         token.invoke(context);
         if (nameToken) {
           if (state.result.start.path.empty()) state.result.start = std::move(start);

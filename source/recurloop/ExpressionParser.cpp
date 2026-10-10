@@ -87,6 +87,7 @@ namespace recurloop {
 
     struct ParsedExpression {
       Token token;
+      std::vector<Token> namePath;
       std::size_t end = 0;
       context::Value value;
       bool named = false;
@@ -282,8 +283,7 @@ namespace recurloop {
         if (probing || constantOnly || !Semantic::active(context) || currentExpressionDiagnostic == nullptr) return;
         auto phrase = LanguageGrammar::findQualified(context.lexicon.phrase(), parsed.token.text);
         if (phrase.isNull()) return;
-        const auto &diagnostic = *currentExpressionDiagnostic;
-        Semantic::recordMapped(context, phrase, diagnostic.origin, diagnostic.source, parsed.token.offset, parsed.end);
+        lexer.recordResolved(phrase, parsed.namePath);
       }
 
       context::Value resolve(ParsedExpression &parsed, bool active) {
@@ -480,6 +480,7 @@ namespace recurloop {
         if (component.kind != TokenKind::Identifier)
           expressionFail(context, component.offset, "expected name after '" + operation.text + "'");
         base.token.text += ":" + component.text;
+        base.namePath.push_back(component);
         base.end = component.offset + component.text.size();
         return base;
       }
@@ -560,6 +561,7 @@ namespace recurloop {
             result = invokePrimary(syntax, std::move(token), active);
           } else if (token.kind == TokenKind::Identifier) {
             result.named = true;
+            result.namePath.push_back(token);
           } else {
             expressionFail(context, token.offset, "expected a value, variable or primary phrase");
           }

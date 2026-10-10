@@ -19,6 +19,7 @@ namespace context {
         THROW_AT(location, "cannot pop an empty staging stack")
       }
 
+      context.staging.definitions.erase(context.staging.stack.size());
       context.staging.stack.pop_back();
     }
 

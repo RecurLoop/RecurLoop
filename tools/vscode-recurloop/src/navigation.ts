@@ -124,7 +124,7 @@ export class NavigationController implements vscode.Disposable {
       // Keep the shared trace alive for the next cursor request, including when
       // navigation is its only consumer. Runtime timeout/reload still cancels it.
       const response = await this.runtime.inspect(doc, true, undefined, uri);
-      const trace = response.split(/\r?\n/).filter(line => /^[PREGB]\t/.test(line)).join('\n');
+      const trace = response.split(/\r?\n/).filter(line => /^[PREFGB]\t/.test(line)).join('\n');
       const fingerprint = createHash('sha256').update(trace).digest('hex');
       signal.throwIfAborted();
       if (this.runtime.revision(uri) !== revision || doc.version !== docVersion || doc.getText() !== source) throw new vscode.CancellationError();
@@ -158,7 +158,13 @@ export class NavigationController implements vscode.Disposable {
         if (operation === 'rename') throw new Error('No unambiguous semantic definition at the cursor.');
         return [];
       }
-      if (!scope.includes('Q\tlocal') || operation === 'workspace-symbols') {
+      const source = scope.split(/\r?\n/).find(line => line.startsWith('Q\tsource\t'));
+      if (source && operation === 'definition') {
+        const path = hexDecode(source.split('\t')[2]);
+        const doc = vscode.workspace.textDocuments.find(doc => doc.uri.fsPath === path)
+          ?? await vscode.workspace.openTextDocument(vscode.Uri.file(path));
+        await synchronize(doc);
+      } else if (!scope.includes('Q\tlocal') || operation === 'workspace-symbols') {
         if (!index.dependencies) index.dependencies = (await this.runtime.execute(uri, [':cache-dependencies'], signal))
           .split(/\r?\n/).filter(file => file.endsWith('.rl') && fs.existsSync(file));
         const sources = new Set([...index.dependencies, uri.fsPath]);
@@ -189,7 +195,7 @@ export class NavigationController implements vscode.Disposable {
       const file = index.files.get(hexDecode(fields[1]));
       if (!file) continue;
       const label = hexDecode(fields[6]);
-      const fact = file.catalog.get(label);
+      const fact = file.catalog.get(fields[7] ? hexDecode(fields[7]) : label);
       result.push({ location: new vscode.Location(file.document.uri, new vscode.Range(
         positionFromCodePoint(file.document, file.mapping, Number(fields[2])),
         positionFromCodePoint(file.document, file.mapping, Number(fields[3])))),

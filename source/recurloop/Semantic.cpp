@@ -34,6 +34,11 @@ namespace recurloop {
     constexpr std::uint64_t LocalVersionBase = std::uint64_t{1} << 32;
     constexpr std::uint32_t MetadataMagic = 0x53454d31; // SEM1
     constexpr auto OriginsName = Semantic::OriginsRegistryName;
+    constexpr auto DefinitionsName = Semantic::DefinitionsRegistryName;
+
+    struct DefinitionLocation {
+      std::uint64_t startLine, startColumn, endLine, endColumn;
+    };
 
     struct Origin {
       std::string source;
@@ -117,7 +122,6 @@ namespace recurloop {
       };
       std::vector<LocalFact> locals;
       std::vector<std::string> localMatches;
-      std::unordered_map<std::size_t, std::pair<SourceLocation, SourceLocation>> definitions;
       struct Anchor { Size phrase; std::size_t end; };
       std::vector<Anchor> anchors;
       struct Symbol {
@@ -214,6 +218,61 @@ namespace recurloop {
           origin = {payload.substr(0, separator), payload.substr(separator + 1), entry.getAddress()};
       }
       return result;
+    }
+
+    void rememberDefinition(context::Context &context, lexicon::Phrase phrase, const SourceLocation &start,
+                            const SourceLocation &end) {
+      if (phrase.isNull() || start.path.empty() || start.path.front() == '<' || start.path != end.path) return;
+      auto root = context.lexicon.phrase();
+      auto registry = LanguageGrammar::find(root, DefinitionsName);
+      if (registry.isNull())
+        registry = root.append(std::string(DefinitionsName))
+                       .make()
+                       .enableSubdictionary()
+                       .setType(lexicon::phrase::type::getData(root))
+                       .save();
+      const DefinitionLocation location{start.line, start.column, end.line, end.column};
+      const std::string key =
+          start.path + '\0' + std::to_string(start.line) + '\0' + std::to_string(start.column) + '\0' + phrase.getKey();
+      auto entry =
+          registry.append(key).make().setType(lexicon::phrase::type::getData(root)).setSuccessor(phrase).save();
+      auto payload = entry.allocate(sizeof(location) + start.path.size());
+      std::memcpy(payload.toPtr(), &location, sizeof(location));
+      std::memcpy(static_cast<unsigned char *>(payload.toPtr()) + sizeof(location), start.path.data(),
+                  start.path.size());
+      entry.save();
+    }
+
+    std::unordered_map<Size, Semantic::Definition> definitions(context::Context &context) {
+      std::unordered_map<Size, Semantic::Definition> result;
+      auto registry = LanguageGrammar::find(context.lexicon.phrase(), DefinitionsName);
+      if (registry.isNull()) return result;
+      auto populated = [](radix::Node *, radix::Node *candidate) { return !candidate->isEmpty(); };
+      for (auto node = registry.fore(populated); !node.isNull(); node = node.next(populated)) {
+        auto entry = node.getPhrase();
+        if (!entry.containsSuccessor() || entry.payloadSize() <= sizeof(DefinitionLocation)) continue;
+        auto target = entry.getSuccessor();
+        if (!entry.getKey().ends_with('\0' + target.getKey())) continue;
+        DefinitionLocation location;
+        entry.fetch(0, location);
+        const auto pathBytes = entry.payloadSize() - sizeof(location);
+        std::string path(reinterpret_cast<const char *>(entry.content(sizeof(location), pathBytes).toPtr()), pathBytes);
+        result[target.getAddress()] = {{path, location.startLine, location.startColumn},
+                                       {path, location.endLine, location.endColumn}};
+      }
+      return result;
+    }
+
+    std::optional<Semantic::Definition> definition(const std::unordered_map<Size, Semantic::Definition> &locations,
+                                                   lexicon::Phrase phrase) {
+      std::unordered_set<Size> visited;
+      while (!phrase.isNull() && visited.insert(phrase.getAddress()).second) {
+        const auto found = locations.find(phrase.getAddress());
+        if (found != locations.end()) return found->second;
+        if (!phrase.containsPrototype()) break;
+        phrase = phrase.getPrototype();
+      }
+      return std::nullopt;
     }
 
     void rememberOrigins(context::Context &context, Size since, std::string_view path, bool image,
@@ -862,13 +921,16 @@ namespace recurloop {
   }
 
   void Semantic::stageDefinition(context::Context &context, const SourceLocation &start, const SourceLocation &end) {
-    if (!active(context) || start.path.empty()) return;
-    currentTrace->definitions[context.staging.stack.size()] = {start, end};
+    if (start.path.empty()) return;
+    context.staging.definitions[context.staging.stack.size()] = {start, end};
+  }
+
+  std::optional<Semantic::Definition> Semantic::definition(context::Context &context, lexicon::Phrase phrase) {
+    return recurloop::definition(definitions(context), phrase);
   }
 
   void Semantic::recordDefinition(context::Context &context, lexicon::Phrase phrase) {
-    if (!active(context)) return;
-    auto &definitions = currentTrace->definitions;
+    auto &definitions = context.staging.definitions;
     const auto found = definitions.find(context.staging.stack.size());
     if (found == definitions.end()) return;
     recordDefinition(context, phrase, found->second.first, found->second.second);
@@ -877,6 +939,7 @@ namespace recurloop {
 
   void Semantic::recordDefinition(context::Context &context, lexicon::Phrase phrase, const SourceLocation &start,
                                   const SourceLocation &end) {
+    rememberDefinition(context, phrase, start, end);
     record(context, phrase, start, end);
     if (!active(context) || phrase.isNull()) return;
     auto &trace = *currentTrace;
@@ -1068,6 +1131,7 @@ namespace recurloop {
     }
     const auto metadata = catalog(context);
     const auto names = phrasePaths(context);
+    const auto sourceDefinitions = definitions(context);
     const Assistance assistance(context);
     std::unordered_map<Size, std::string> patterns;
     struct Candidate { lexicon::Phrase phrase; std::string name; std::string kind; };
@@ -1086,6 +1150,16 @@ namespace recurloop {
       if (exported.insert(id).second) {
         output << "P\t" << fact.version << '\t' << hex(name) << '\t' << hex(kind) << '\t' << hex(style.docs) << '\t'
                << hex(fact.prototype) << '\t' << hex(fact.type) << '\t' << hex(signatures[name]) << '\n';
+        const auto present = names.find(fact.address);
+        const auto location = present != names.end() && present->second == name
+                                  ? recurloop::definition(sourceDefinitions, phraseAt(state, fact.address))
+                                  : std::nullopt;
+        if (location) {
+          const auto &range = *location;
+          output << "F\t" << fact.version << '\t' << hex(name) << '\t' << hex(range.start.path) << '\t'
+                 << range.start.line << '\t' << range.start.column << '\t' << range.end.line << '\t' << range.end.column
+                 << '\n';
+        }
         if (!fact.origin.source.empty() || !fact.origin.image.empty()) {
           output << "G\t" << fact.version << '\t' << hex(name) << '\t' << hex(fact.origin.source) << '\t'
                  << hex(fact.origin.image) << '\t';

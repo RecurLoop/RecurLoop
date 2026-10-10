@@ -31,7 +31,8 @@ namespace recurloop {
     static void forward(context::Context &context, lexicon::Phrase &invoked);
     static void define(context::Context &context, lexicon::Phrase &invoked);
     static compiler::TypeId signatureType(context::Context &context, std::string_view name);
-    static compiler::TypedFunction parseDeclaration(context::Context &context, std::string_view source, bool imported);
+    static compiler::TypedFunction parseDeclaration(context::Context &context, std::string_view source, bool imported,
+                                                    SourceLocation origin = {});
     static void commitVariant(context::Context &context, lexicon::Phrase &function);
     static lexicon::Phrase compileAction(context::Context &context, std::string_view signature, std::string_view body,
                                          std::string hint = {}, SourceLocation signatureOrigin = {},

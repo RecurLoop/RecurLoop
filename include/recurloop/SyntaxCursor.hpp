@@ -9,6 +9,7 @@
 #include <functional>
 #include <initializer_list>
 #include <memory>
+#include <span>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -61,6 +62,7 @@ namespace recurloop {
     SyntaxToken take();
     std::size_t consumedEnd() const;
     void recordResolved(lexicon::Phrase phrase, std::size_t start, std::size_t end);
+    void recordResolved(lexicon::Phrase phrase, std::span<const SyntaxToken> path);
     bool accept(std::string_view canonical);
     void expect(std::string_view canonical);
     bool skipNewlines();

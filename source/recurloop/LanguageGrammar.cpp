@@ -80,6 +80,17 @@ namespace recurloop::LanguageGrammar {
     return match.isNull() ? lexicon::Phrase(dictionary.getLexicon()) : match.getPhrase();
   }
 
+  lexicon::Phrase findInherited(lexicon::Phrase dictionary, std::string_view key) {
+    std::unordered_set<Size> visited;
+    while (!dictionary.isNull() && visited.insert(dictionary.getAddress()).second) {
+      auto result = find(dictionary, key);
+      if (!result.isNull()) return result;
+      if (!dictionary.containsPrototype()) break;
+      dictionary = dictionary.getPrototype();
+    }
+    return lexicon::Phrase(dictionary.getLexicon());
+  }
+
   lexicon::Phrase findQualified(lexicon::Phrase dictionary, std::string_view name) {
     while (!name.empty()) {
       auto direct = find(dictionary, name);

@@ -70,9 +70,13 @@ namespace recurloop {
       return local.result;
     }
 
-    std::string qualified(TypeSyntax::Cursor &cursor) {
+    std::string qualified(TypeSyntax::Cursor &cursor, std::vector<SyntaxToken> *path = nullptr) {
+      if (path) path->push_back(cursor.typeSyntaxCursor().current());
       std::string result = cursor.typeIdentifier("a type");
-      while (cursor.typeAccept(":")) result += ":" + cursor.typeIdentifier("a qualified name component");
+      while (cursor.typeAccept(":")) {
+        if (path) path->push_back(cursor.typeSyntaxCursor().current());
+        result += ":" + cursor.typeIdentifier("a qualified name component");
+      }
       return result;
     }
 
@@ -129,16 +133,15 @@ namespace recurloop {
       if (literal.bytes != 0 && literal.bytes == tokens.current().text.size() && !literal.real) {
         count = current.cursor->typeNumber("an array length");
       } else {
-        const auto start = tokens.current().offset;
-        const auto name = qualified(*current.cursor);
+        std::vector<SyntaxToken> path;
+        const auto name = qualified(*current.cursor, &path);
         const auto binding =
             current.context->values().find(name, current.scope, Semantic::valueBindings(*current.context));
         if (!binding || binding->mutableValue || !binding->knownValue || !binding->value.isInteger() ||
             binding->value.asInteger() < 0)
           current.cursor->typeError("array length requires a non-negative integer constant: '" + name + "'");
         count = static_cast<std::size_t>(binding->value.asInteger());
-        tokens.recordResolved(LanguageGrammar::findQualified(current.context->lexicon.phrase(), binding->name), start,
-                              tokens.consumedEnd());
+        tokens.recordResolved(LanguageGrammar::findQualified(current.context->lexicon.phrase(), binding->name), path);
       }
       current.cursor->typeExpect("]");
       current.result = current.context->language().types.arrayOf(current.result, count);
@@ -191,11 +194,11 @@ namespace recurloop {
       result = invoke(context, cursor, scope, constructor);
     } else {
       auto &tokens = cursor.typeSyntaxCursor();
-      const auto start = tokens.current().offset;
-      result = resolve(context, cursor, qualified(cursor), scope);
+      std::vector<SyntaxToken> path;
+      result = resolve(context, cursor, qualified(cursor, &path), scope);
       const auto phrase =
           LanguageGrammar::findQualified(context.lexicon.phrase(), context.language().types.get(result).name);
-      tokens.recordResolved(phrase, start, tokens.consumedEnd());
+      tokens.recordResolved(phrase, path);
     }
 
     while (true) {
