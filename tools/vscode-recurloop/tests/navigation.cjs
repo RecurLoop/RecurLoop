@@ -58,6 +58,7 @@ const nav = new NavigationController(runtime);
 const count = prefix => commands.filter(command => command.startsWith(prefix)).length;
 const updates = () => count('recurloop languagekit_analysis_request\tupdate');
 const traces = () => count(':trace\t');
+const queries = () => count('recurloop languagekit_analysis_request\tquery');
 const at = (doc, text, occurrence = 0) => {
   let offset = -1;
   for (let i = 0; i <= occurrence; ++i) offset = doc.getText().indexOf(text, offset + 1);
@@ -89,8 +90,18 @@ const at = (doc, text, occurrence = 0) => {
   assert.ok((await nav.locations(caller, at(caller, 'box:Box'), 'type-definition')).some(item => item.uri.fsPath === defsPath && item.range.start.line === 0));
   assert.ok((await nav.locations(caller, at(caller, 'multiply'), 'definition')).some(item => item.uri.fsPath === externalPath));
   const warm = { traces: traces(), updates: updates(), dependencies: count(':cache-dependencies') };
+  const warmQueries = queries();
   await Promise.all([nav.locations(defs, at(defs, 'add'), 'references'), nav.locations(caller, at(caller, 'add', 1), 'definition')]);
   assert.deepEqual({ traces: traces(), updates: updates(), dependencies: count(':cache-dependencies') }, warm);
+  // Ctrl+hover and Ctrl+click ask for the same location repeatedly. Once cached,
+  // both definition and references must avoid even scope/query round trips.
+  const cachedQueries = queries();
+  assert.ok(cachedQueries > warmQueries);
+  for (let repeat = 0; repeat < 10; ++repeat) {
+    assert.equal((await nav.locations(caller, at(caller, 'add', 1), 'definition')).length, 1);
+    assert.equal((await nav.locations(defs, at(defs, 'add'), 'references', false)).length, 1);
+  }
+  assert.equal(queries(), cachedQueries);
   // An unsaved edit rebuilds exactly one file, preserving the project index.
   caller.setText(calls.replace('add(42)', 'add(add(42))'));
   assert.equal((await nav.locations(defs, at(defs, 'add'), 'references', false)).length, 2);
@@ -117,15 +128,47 @@ const at = (doc, text, occurrence = 0) => {
   const live = nav.locations(defs, at(defs, 'add'), 'references');
   const queued = nav.locations(defs, at(defs, 'add'), 'references', true, queuedToken);
   queuedToken.cancel(); await assert.rejects(queued, CancellationError); await live;
-  // Cancel during a server-side update, discard the private session, recover.
+  // Cancel during a server-side update. Finish that atomic step and retain all
+  // classified files rather than importing LanguageKit/rebuilding the project.
   const activeToken = new Token();
   caller.setText(calls + ' '.repeat(3000));
+  const beforeCancellation = { traces: traces(), updates: updates(), imports: count(':baseline') };
   onCommand = command => {
     if (command.startsWith('recurloop languagekit_analysis_request\tupdate')) {
       onCommand = undefined; setImmediate(() => activeToken.cancel());
     }
   };
   await assert.rejects(nav.locations(caller, at(caller, 'add', 1), 'definition', true, activeToken), CancellationError);
+  assert.ok((await nav.locations(caller, at(caller, 'add', 1), 'definition')).some(item => item.uri.fsPath === defsPath));
+  assert.equal(traces(), beforeCancellation.traces + 1);
+  assert.equal(updates(), beforeCancellation.updates + 1);
+  assert.equal(count(':baseline'), beforeCancellation.imports);
+  // Cancel an active read too; the next query reuses the same private session.
+  const readToken = new Token();
+  const beforeRead = { traces: traces(), updates: updates(), imports: count(':baseline') };
+  onCommand = command => {
+    if (command.startsWith('recurloop languagekit_analysis_request\tquery')) {
+      onCommand = undefined; setImmediate(() => readToken.cancel());
+    }
+  };
+  await assert.rejects(nav.locations(caller, at(caller, 'multiply'), 'references', true, readToken), CancellationError);
+  assert.equal((await nav.locations(caller, at(caller, 'multiply'), 'references', false)).length, 1);
+  assert.deepEqual({ traces: traces(), updates: updates(), imports: count(':baseline') }, beforeRead);
+  // Moving the cursor during an expensive trace must retain that shared work,
+  // even when there is no highlighting request keeping it alive.
+  const traceToken = new Token();
+  caller.setText(calls + ' '.repeat(4000));
+  const beforeTrace = { traces: traces(), updates: updates(), imports: count(':baseline') };
+  onCommand = command => {
+    if (command.startsWith(':trace\t')) {
+      onCommand = undefined; setImmediate(() => traceToken.cancel());
+    }
+  };
+  await assert.rejects(nav.locations(caller, at(caller, 'add', 1), 'definition', true, traceToken), CancellationError);
+  assert.equal((await nav.locations(caller, at(caller, 'add', 1), 'definition')).length, 1);
+  assert.equal(traces(), beforeTrace.traces + 1);
+  assert.equal(updates(), beforeTrace.updates + 1);
+  assert.equal(count(':baseline'), beforeTrace.imports);
   caller.setText(calls);
   assert.ok((await nav.locations(caller, at(caller, 'add', 1), 'definition')).some(item => item.uri.fsPath === defsPath));
   // Publication revalidates semantics while unchanged classified files stay cached.
@@ -175,7 +218,12 @@ const at = (doc, text, occurrence = 0) => {
     const doc = documents.get(location.uri.fsPath);
     assert.equal(doc.getText().slice(doc.offsetAt(location.range.start), doc.offsetAt(location.range.end)), 'Game:State');
   }
-  console.log('Navigation passed: shared traces, scoped queries, warm reuse, incremental edits/publication/removal, Unicode, rename, symbols, cancellation and restart.');
+  // Reopened documents can reuse a version number. Identity must invalidate
+  // cached results too, including references requested from another document.
+  const reopened = document(usesPath, usesSource + 'let copy = fn (input:Game:State*) -> Game:State* { return input }\n');
+  assert.equal(reopened.version, usesDoc.version);
+  assert.equal((await nav.locations(typesDoc, at(typesDoc, 'Game:State'), 'references', false)).length, 8);
+  console.log('Navigation passed: shared traces, scoped queries, cached results, incremental edits/publication/removal/reopening, Unicode, rename, symbols, retained work after cancellation and restart.');
 })().catch(error => { console.error(error); process.exitCode = 1; }).finally(() => {
   nav.dispose(); runtime.dispose(); fs.rmSync(root, { recursive: true, force: true }); fs.rmSync(external, { recursive: true, force: true });
   net.createConnection = originalConnect; Module._load = originalLoad;

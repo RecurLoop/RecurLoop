@@ -23,6 +23,7 @@ interface ProjectIndex {
   revision: number;
   epoch: number;
   dependencies?: string[];
+  results: Map<string, { document: vscode.TextDocument; version: number; matches: Match[] }>;
 }
 
 /** LanguageKit owns classification and queries; the client synchronizes snapshots. */
@@ -42,16 +43,33 @@ export class NavigationController implements vscode.Disposable {
     const root = workspaceRoot(document.uri);
     let project = this.projects.get(root);
     if (!project) {
-      project = { queue: Promise.resolve(), files: new Map(), revision: -1, epoch: -1 };
+      project = { queue: Promise.resolve(), files: new Map(), revision: -1, epoch: -1, results: new Map() };
       this.projects.set(root, project);
     }
     const index = project;
     const task = index.queue.then(async () => {
       signal.throwIfAborted();
-      try { return await this.run(index, document, position, operation, argument, signal); }
+      const key = JSON.stringify([document.uri.fsPath, position.line, position.character, operation, argument]);
+      const open = new Map(vscode.workspace.textDocuments.map(doc => [doc.uri.fsPath, doc]));
+      if (index.epoch !== this.runtime.epoch(document.uri) || index.revision !== this.runtime.revision(document.uri) ||
+          [...index.files].some(([file, snapshot]) => {
+            const current = open.get(file) ?? snapshot.document;
+            return current !== snapshot.document || current.version !== snapshot.version;
+          })) index.results.clear();
+      const cached = index.results.get(key);
+      if (cached?.document === document && cached.version === document.version) return cached.matches;
+      try {
+        const matches = await this.run(index, document, position, operation, argument, signal);
+        index.results.set(key, { document, version: document.version, matches });
+        if (index.results.size > 128) index.results.delete(index.results.keys().next().value!);
+        return matches;
+      }
       catch (error) {
+        // Caller cancellation never interrupts an index mutation. Keep completed
+        // fragments so Ctrl+hover/Click can resume instead of rebuilding them.
+        if (error instanceof vscode.CancellationError) throw error;
         index.connection?.close(); index.connection = undefined;
-        index.files.clear(); index.dependencies = undefined;
+        index.files.clear(); index.dependencies = undefined; index.results.clear();
         throw error;
       }
     });
@@ -72,20 +90,26 @@ export class NavigationController implements vscode.Disposable {
     const uri = document.uri;
     const version = document.version;
     if (index.epoch !== this.runtime.epoch(uri)) {
-      index.connection?.close(); index.connection = undefined; index.files.clear(); index.dependencies = undefined;
+      index.connection?.close(); index.connection = undefined; index.files.clear(); index.dependencies = undefined; index.results.clear();
     }
     if (!index.connection) {
-      const trace = await this.runtime.inspect(document, true, signal);
+      const trace = await this.runtime.inspect(document, true);
+      signal.throwIfAborted();
       index.connection = await this.runtime.openAnalysis(uri);
       index.epoch = this.runtime.epoch(uri);
       // Use project policy when available; a core-only project needs a LanguageKit session.
       if (!trace.includes(hexEncode('languagekit_analysis_request'))) {
-        await index.connection.request([':baseline', `engine import ${rlString(resolveLibraryImage(uri, 'language-kit'))}`], 120000, signal);
+        await index.connection.request([':baseline', `engine import ${rlString(resolveLibraryImage(uri, 'language-kit'))}`], 120000);
       }
     }
     const connection = index.connection;
     const timeout = vscode.workspace.getConfiguration('recurloop', uri).get('analysis.timeoutMs', 5000) as number;
-    const request = (fields: string[]) => connection.request([`recurloop languagekit_analysis_request\t${fields.join('\t')}`], timeout, signal);
+    // Finish the current bounded protocol step even when its caller cancels.
+    // The caller returns immediately; the queue waits for an atomic index state.
+    const request = (fields: string[]) => {
+      signal.throwIfAborted();
+      return connection.request([`recurloop languagekit_analysis_request\t${fields.join('\t')}`], timeout);
+    };
     const revision = this.runtime.revision(uri);
     const participating = new Map<string, IndexedFile>();
     const synchronize = async (doc: vscode.TextDocument) => {
@@ -97,7 +121,9 @@ export class NavigationController implements vscode.Disposable {
         old.document = doc; old.version = docVersion; participating.set(doc.uri.fsPath, old);
         return;
       }
-      const response = await this.runtime.inspect(doc, true, signal, uri);
+      // Keep the shared trace alive for the next cursor request, including when
+      // navigation is its only consumer. Runtime timeout/reload still cancels it.
+      const response = await this.runtime.inspect(doc, true, undefined, uri);
       const trace = response.split(/\r?\n/).filter(line => /^[PRE]\t/.test(line)).join('\n');
       const fingerprint = createHash('sha256').update(trace).digest('hex');
       signal.throwIfAborted();
@@ -114,6 +140,7 @@ export class NavigationController implements vscode.Disposable {
         if (fields[0] === 'P' && fields.length >= 8) catalog.set(hexDecode(fields[2]), { kind: hexDecode(fields[3]), signature: hexDecode(fields[7]) });
       }
       const file = { document: doc, version: docVersion, source, fingerprint, revision, catalog, mapping: codePointToUtf16Map(source) };
+      index.results.clear();
       index.files.set(doc.uri.fsPath, file); participating.set(doc.uri.fsPath, file);
     };
     await synchronize(document);
@@ -131,7 +158,7 @@ export class NavigationController implements vscode.Disposable {
           .split(/\r?\n/).filter(file => file.endsWith('.rl') && fs.existsSync(file));
         const sources = new Set([...index.dependencies, uri.fsPath]);
         for (const file of index.files.keys()) if (!sources.has(file)) {
-          await request(['remove', hexEncode(file)]); index.files.delete(file);
+          await request(['remove', hexEncode(file)]); index.files.delete(file); index.results.clear();
         }
         const open = new Map(vscode.workspace.textDocuments.map(doc => [doc.uri.fsPath, doc]));
         for (const file of sources) {

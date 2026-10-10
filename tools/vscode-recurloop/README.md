@@ -173,6 +173,11 @@ editor buffers. A source outside that graph cannot receive project analysis;
 include it from the entry or an included source. Save valid changes before
 running a target, since execution uses the published project.
 
+The first navigation across files builds a project index. Repeated Ctrl+click
+and reference queries reuse results until a document or the project changes.
+Moving the cursor cancels the caller immediately while retaining completed
+index work and letting the current analysis step finish for the next query.
+
 The native debugger supports source/function breakpoints, conditions, hit counts,
 logpoints, stepping, pause, restart, call stacks, frame-local values and assignment.
 Records, arrays and pointer pointees can be expanded. Breakpoint conditions and
