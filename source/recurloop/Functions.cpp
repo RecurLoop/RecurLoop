@@ -505,7 +505,7 @@ namespace recurloop {
     // stop before declaring/code-generating runtime state.
     if (Semantic::active(context)) {
       (void)function_internal::parseBody(context, block.body, symbol, block.path, block.line, block.position,
-                                         signature.names);
+                                         signature.names, signature.function.parameterTypes);
       if (stagedByLet) {
         context::Lookup::leave(context, invoked);
       } else {

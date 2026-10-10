@@ -62,6 +62,8 @@ namespace recurloop {
     // Bind a parsed declaration range once its staged phrase has been saved.
     static void stageDefinition(context::Context &context, const SourceLocation &start, const SourceLocation &end);
     static void recordDefinition(context::Context &context, lexicon::Phrase phrase);
+    static void recordDefinition(context::Context &context, lexicon::Phrase phrase, const SourceLocation &start,
+                                 const SourceLocation &end);
 
     // Portable provenance uses phrase references, never arena addresses in payloads.
     static void rememberSource(context::Context &context, std::uint64_t since, std::string_view path);

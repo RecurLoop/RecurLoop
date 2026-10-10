@@ -534,7 +534,7 @@ let LanguageKit:Analysis:parse_trace = fn (file:LanguageKit:Analysis:File*, resp
                     free(key); free(name)
                 }
             }
-        } else if response[at] == 82 && response[at + 1] == 9 {
+        } else if (response[at] == 82 || response[at] == 66) && response[at + 1] == 9 {
             let f1 = LanguageKit:Analysis:find_byte(response, at + 2, 9)
             let f2 = LanguageKit:Analysis:find_byte(response, f1 + 1, 9)
             let f3 = LanguageKit:Analysis:find_byte(response, f2 + 1, 9)
@@ -558,7 +558,9 @@ let LanguageKit:Analysis:parse_trace = fn (file:LanguageKit:Analysis:File*, resp
                     }
                     let label = LanguageKit:copy_bytes(&file.source[begin_byte], cast(i64, end_byte - begin_byte))
                     let key = LanguageKit:Analysis:key(name, version)
-                    if label && key { LanguageKit:Analysis:add(file, key, "", label, cast(u64, start), cast(u64, finish), cast(u64, source_line), 1, 1, 0) }
+                    var role:i64 = 1
+                    if response[at] == 66 { role = 2 }
+                    if label && key { LanguageKit:Analysis:add(file, key, "", label, cast(u64, start), cast(u64, finish), cast(u64, source_line), role, 1, 0) }
                     if label { free(label) }; if key { free(key) }
                 }
                 if name { free(name) }
@@ -664,7 +666,7 @@ let LanguageKit:Analysis:function = fn (file:LanguageKit:Analysis:File*, name:La
     token = body.next
     while token && token != finish {
         if context:process:interrupted() { return }
-        if token.identifier != 0 {
+        if token.identifier != 0 && (!token.previous || token.previous.text[0] != 46) {
             var best = cast(LanguageKit:Analysis:Occurrence*, 0)
             var local_entry = LanguageKit:Analysis:table_find(&file.locals_by_name, token.text, 0)
             while local_entry {
@@ -1007,7 +1009,7 @@ let LanguageKit:Analysis:query_index = fn (index:LanguageKit:Analysis:Index*, cu
                 include = item.role == 2 && LanguageKit:Analysis:equal(item.target, requested)
             } else if LanguageKit:Analysis:equal(operation, "references") || LanguageKit:Analysis:equal(operation, "rename") {
                 include = LanguageKit:Analysis:equal(item.target, requested)
-                if include != 0 && item.local == 0 {
+                if include != 0 && item.local == 0 && item.exact == 0 {
                     let resolved = LanguageKit:Analysis:symbol(file, item.label)
                     if !resolved || !LanguageKit:Analysis:equal(resolved.key, requested) { include = 0 }
                 }

@@ -51,6 +51,11 @@ namespace recurloop {
     }
 
     class Parser : public TypeSyntax::Cursor {
+      struct Binding {
+        std::uint64_t symbol = 0;
+        compiler::TypeId type = compiler::InvalidType;
+      };
+
     public:
       Parser(context::Context &context, std::string_view source, std::string scope = {}, std::string sourcePath = {},
              std::size_t sourceLine = 1, std::size_t sourceColumn = 1)
@@ -119,13 +124,16 @@ namespace recurloop {
         return result;
       }
 
-      void bindParameters(std::span<const std::string> names) {
-        for (const auto &name : names)
-          if (!name.empty()) locals.back().emplace(name, Semantic::local(context, name));
+      void bindParameters(std::span<const std::string> names, std::span<const compiler::TypeId> types = {}) {
+        for (std::size_t index = 0; index < names.size(); ++index)
+          if (!names[index].empty())
+            locals.back().emplace(names[index], Binding{Semantic::local(context, names[index]),
+                                                        index < types.size() ? types[index] : compiler::InvalidType});
       }
 
-      std::vector<Statement> body(std::span<const std::string> parameterNames) {
-        bindParameters(parameterNames);
+      std::vector<Statement> body(std::span<const std::string> parameterNames,
+                                  std::span<const compiler::TypeId> parameterTypes) {
+        bindParameters(parameterNames, parameterTypes);
         lexer.skipNewlines();
         std::vector<Statement> result;
         while (lexer.current().kind != TokenKind::End) {
@@ -279,7 +287,9 @@ namespace recurloop {
         if (locals.back().contains(result.name))
           fail({}, name.offset, "duplicate local variable '" + result.name + "'");
         const auto symbol = Semantic::local(context, result.name);
-        locals.back().emplace(result.name, symbol);
+        const auto type =
+            result.declaredType != compiler::InvalidType ? result.declaredType : inspectionType(*result.expression);
+        locals.back().emplace(result.name, Binding{symbol, type});
         recordLocal(symbol, name);
       }
 
@@ -294,8 +304,86 @@ namespace recurloop {
         assignmentMetadata(result);
       }
 
-      const std::uint64_t *findLocal(const std::string &name) const {
+      const Binding *findLocal(const std::string &name) const {
         return findScopedLocal(locals, name);
+      }
+
+      std::optional<compiler::TypeDescriptor> recordType(const Expression &value) {
+        const auto type = inspectionType(value);
+        if (type == compiler::InvalidType) return std::nullopt;
+        auto descriptor = context.language().types.get(type);
+        if (descriptor.kind == compiler::TypeKind::Pointer)
+          descriptor = context.language().types.get(descriptor.element);
+        if (descriptor.kind != compiler::TypeKind::Structure) return std::nullopt;
+        return descriptor;
+      }
+
+      // Inspection follows resolved types without generating or linking code.
+      // Unknown receivers stay unresolved rather than matching a field by name.
+      compiler::TypeId inspectionType(const Expression &value) {
+        if (!Semantic::active(context)) return compiler::InvalidType;
+        auto types = context.language().types;
+        auto syntax = value.syntax;
+        switch (value.kind) {
+        case Expression::Kind::Variable:
+          if (const auto *local = findLocal(value.text)) return local->type;
+          return compiler::InvalidType;
+        case Expression::Kind::Member:
+          if (const auto owner = recordType(*value.children.front())) {
+            const auto field = std::ranges::find(owner->fields, value.text, &compiler::TypeField::name);
+            if (field != owner->fields.end()) return field->type;
+          }
+          return compiler::InvalidType;
+        case Expression::Kind::Index: {
+          const auto type = inspectionType(*value.children.front());
+          if (type == compiler::InvalidType) return type;
+          const auto descriptor = types.get(type);
+          return descriptor.kind == compiler::TypeKind::Pointer || descriptor.kind == compiler::TypeKind::Array
+                     ? descriptor.element
+                     : compiler::InvalidType;
+        }
+        case Expression::Kind::Unary:
+          if (value.declaredType != compiler::InvalidType) {
+            if (syntax.getAddress() == exact(intrinsics, "alloc").getAddress())
+              return types.pointerTo(value.declaredType);
+            if (syntax.getAddress() == exact(intrinsics, "sizeof").getAddress()) return types.find("u64");
+            return value.declaredType;
+          }
+          if (!value.children.empty()) {
+            const auto type = inspectionType(*value.children.front());
+            if (type == compiler::InvalidType) return type;
+            if (syntax.getAddress() == exact(intrinsics, "&").getAddress()) return types.pointerTo(type);
+            if (syntax.getAddress() == exact(intrinsics, "*").getAddress()) {
+              const auto descriptor = types.get(type);
+              return descriptor.kind == compiler::TypeKind::Pointer ? descriptor.element : compiler::InvalidType;
+            }
+            return type;
+          }
+          return compiler::InvalidType;
+        case Expression::Kind::Call:
+        case Expression::Kind::MethodCall: {
+          std::string name = value.text;
+          if (value.kind == Expression::Kind::MethodCall) {
+            const auto owner = recordType(*value.children.front());
+            if (!owner) return compiler::InvalidType;
+            name = owner->name + ':' + name;
+          } else if (const auto *local = findLocal(name)) {
+            if (local->type == compiler::InvalidType) return local->type;
+            const auto descriptor = types.get(local->type);
+            return descriptor.kind == compiler::TypeKind::Function ? descriptor.resultType : compiler::InvalidType;
+          }
+          const auto functions = context.language().findFunctions(name, scope);
+          if (functions.empty()) return compiler::InvalidType;
+          const auto type = functions.front().resultType;
+          for (const auto &function : functions)
+            if (function.resultType != type) return compiler::InvalidType;
+          return type;
+        }
+        case Expression::Kind::Integer: return types.find("i64");
+        case Expression::Kind::Real: return types.find("f64");
+        case Expression::Kind::String: return types.pointerTo(types.find("u8"));
+        default: return compiler::InvalidType;
+        }
       }
 
       void recordLocal(std::uint64_t symbol, const Token &token) {
@@ -317,7 +405,7 @@ namespace recurloop {
           fail({}, statement.offset, "local " + target.text + " require '='");
         if (statement.expression->kind != Expression::Kind::String)
           fail({}, statement.expression->offset, "local " + target.text + " require a string literal");
-        Semantic::localMetadata(context, *local, target.text, statement.expression->text);
+        Semantic::localMetadata(context, local->symbol, target.text, statement.expression->text);
         statement.metadataAssignment = true;
       }
 
@@ -506,7 +594,7 @@ namespace recurloop {
         result->text = token.text;
         result->kind = Expression::Kind::Variable;
         if (!LanguageGrammar::matches(context, lexer.current().text, ":")) {
-          if (const auto *local = findLocal(token.text)) recordLocal(*local, token);
+          if (const auto *local = findLocal(token.text)) recordLocal(local->symbol, token);
         }
         return result;
       }
@@ -549,7 +637,7 @@ namespace recurloop {
         auto enclosingLocals = std::move(locals);
         locals.clear();
         locals.emplace_back();
-        bindParameters(definition.names);
+        bindParameters(definition.names, definition.function.parameterTypes);
         const std::vector<Statement> statements = blockContents(&closing, &closingExpanded);
         locals = std::move(enclosingLocals);
         const std::size_t bodyBeginExpanded = opening.expandedOffset + opening.text.size();
@@ -637,6 +725,13 @@ namespace recurloop {
         result->children.push_back(std::move(base));
         if (!lexer.accept("(")) {
           result->kind = Expression::Kind::Member;
+          if (const auto owner = recordType(*result->children.front())) {
+            const auto found = std::ranges::find(owner->fields, result->text, &compiler::TypeField::name);
+            if (found != owner->fields.end())
+              lexer.recordResolved(
+                  LanguageGrammar::findQualified(context.lexicon.phrase(), owner->name + ':' + result->text),
+                  field.offset, field.semanticEnd);
+          }
           return result;
         }
         result->kind = Expression::Kind::MethodCall;
@@ -709,7 +804,7 @@ namespace recurloop {
       std::size_t sourceLine = 1;
       std::size_t sourceColumn = 1;
       std::size_t expressionGroupDepth = 0;
-      std::vector<std::unordered_map<std::string, std::uint64_t>> locals{1};
+      std::vector<std::unordered_map<std::string, Binding>> locals{1};
     };
 
     namespace {
@@ -967,7 +1062,8 @@ namespace recurloop {
 
     std::vector<Statement> parseBody(context::Context &context, std::string_view source, std::string scope,
                                      std::string sourcePath, std::size_t sourceLine, std::size_t sourceColumn,
-                                     std::span<const std::string> parameterNames) {
+                                     std::span<const std::string> parameterNames,
+                                     std::span<const compiler::TypeId> parameterTypes) {
       if (sourcePath.empty()) {
         sourcePath = context.source.path;
         sourceLine = context.source.line;
@@ -976,7 +1072,7 @@ namespace recurloop {
       const SourceLocation origin{sourcePath, sourceLine, sourceColumn};
       DiagnosticScope diagnostics(source, origin);
       Parser parser(context, source, std::move(scope), std::move(sourcePath), sourceLine, sourceColumn);
-      return parser.body(parameterNames);
+      return parser.body(parameterNames, parameterTypes);
     }
 
   } // namespace function_internal

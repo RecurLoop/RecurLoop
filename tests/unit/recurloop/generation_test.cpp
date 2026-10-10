@@ -443,6 +443,31 @@ TEST(RecurloopGeneration, TraceDistinguishesChronologicalDefinitions) {
   EXPECT_NE(response.output.find("R\t59\t65\t4\t1\t747261636564\n"), std::string::npos);
 }
 
+TEST(RecurloopGeneration, TraceResolvesRecordFieldDeclarationsReadsAndWritesWithoutExecutingFunctions) {
+  auto session = project()->openSession();
+  const std::string source = "let Game = phrase { dictionary = true }\n"
+                             "record Game:State { paddle_x:f64 ball_x:f64 }\n"
+                             "let reset = fn (state:Game:State*, ball_x:f64) -> void {\n"
+                             "    state.ball_x = state.paddle_x\n    let alias = state\n    alias.ball_x = ball_x\n}\n";
+  const auto response = session->inspect(source, "/tmp/record-field-trace.rl", true);
+  ASSERT_EQ(response.status, 0) << response.error;
+  ASSERT_EQ(response.output.find("E\t"), std::string::npos) << response.output;
+  const std::string ball = "47616d653a53746174653a62616c6c5f78";
+  const std::string paddle = "47616d653a53746174653a706164646c655f78";
+  const auto expect = [&](char tag, std::size_t offset, std::size_t size, const std::string &name) {
+    const auto line = 1 + std::count(source.begin(), source.begin() + offset, '\n');
+    const auto record = std::string(1, tag) + '\t' + std::to_string(offset) + '\t' + std::to_string(offset + size) +
+                        '\t' + std::to_string(line) + "\t0\t" + name + '\n';
+    EXPECT_NE(response.output.find(record), std::string::npos) << record;
+  };
+  expect('B', source.find("ball_x:f64"), 6, ball);
+  expect('B', source.find("paddle_x:f64"), 8, paddle);
+  expect('R', source.find("state.ball_x") + 6, 6, ball);
+  expect('R', source.find("state.paddle_x") + 6, 8, paddle);
+  expect('R', source.find("alias.ball_x") + 6, 6, ball);
+  EXPECT_NE(session->evaluate("reset").status, 0);
+}
+
 TEST(RecurloopGeneration, RuntimeVariableDocsHaveDeclarationAndExpressionOccurrences) {
   auto session = project()->openSession();
   const std::string source = "var pi = 3.14\n"

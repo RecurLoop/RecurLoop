@@ -182,6 +182,8 @@ project, Ctrl+click returns immediately after inspecting the current document.
 The hover shows a quiet italic note naming the library; Find All References
 still searches its uses in the project. Source module caches keep navigation
 to their original definitions.
+Record field definitions and references follow the receiver's type, keeping
+identically named fields in different records independent.
 
 The native debugger supports source/function breakpoints, conditions, hit counts,
 logpoints, stepping, pause, restart, call stacks, frame-local values and assignment.

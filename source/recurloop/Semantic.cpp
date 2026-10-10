@@ -871,8 +871,22 @@ namespace recurloop {
     auto &definitions = currentTrace->definitions;
     const auto found = definitions.find(context.staging.stack.size());
     if (found == definitions.end()) return;
-    record(context, phrase, found->second.first, found->second.second);
+    recordDefinition(context, phrase, found->second.first, found->second.second);
     definitions.erase(found);
+  }
+
+  void Semantic::recordDefinition(context::Context &context, lexicon::Phrase phrase, const SourceLocation &start,
+                                  const SourceLocation &end) {
+    record(context, phrase, start, end);
+    if (!active(context) || phrase.isNull()) return;
+    auto &trace = *currentTrace;
+    const auto first = sourceOffset(trace, start);
+    const auto last = sourceOffset(trace, end);
+    if (!first || !last || *last <= *first) return;
+    const auto fact = symbolFact(trace, symbolId(trace, phrase));
+    auto declaration = matchRecord(trace, *first, *last, start.line, fact.version, fact.name);
+    declaration.front() = 'B';
+    trace.matches.push_back(std::move(declaration));
   }
 
   void Semantic::rememberSource(context::Context &context, std::uint64_t since, std::string_view path) {
@@ -1024,9 +1038,13 @@ namespace recurloop {
     // can implement documentation, navigation or other analyses in .rl.
     std::unordered_map<std::string, std::string> signatures;
     std::unordered_set<std::string> types;
+    std::unordered_set<std::string> fields;
     try {
       compiler::LanguageState language = context.language();
-      for (const auto &type : language.types.types()) types.insert(type.name);
+      for (const auto &type : language.types.types()) {
+        types.insert(type.name);
+        for (const auto &field : type.fields) fields.insert(type.name + ':' + field.name);
+      }
       for (const auto &function : language.functions()) {
         std::ostringstream signature;
         signature << function.name << '(';
@@ -1062,6 +1080,8 @@ namespace recurloop {
       const SemanticMetadata &style = fact.metadata;
       std::string kind = style.hasKind ? style.kind : "phrase";
       if (types.contains(name)) kind = "type";
+      else if (fields.contains(name))
+        kind = "field";
       if (signatures.contains(name)) kind = "function";
       if (exported.insert(id).second) {
         output << "P\t" << fact.version << '\t' << hex(name) << '\t' << hex(kind) << '\t' << hex(style.docs) << '\t'

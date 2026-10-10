@@ -242,6 +242,59 @@ const at = (doc, text, occurrence = 0) => {
   const reopened = document(usesPath, usesSource + 'let copy = fn (input:Game:State*) -> Game:State* { return input }\n');
   assert.equal(reopened.version, usesDoc.version);
   assert.equal((await nav.locations(typesDoc, at(typesDoc, 'Game:State'), 'references', false)).length, 8);
+  // Record fields are resolved by receiver type, including reads, writes,
+  // inferred aliases, nested records, pointer/array indexing and a local with
+  // the same name. Other records' identically named fields stay independent.
+  const fieldsPath = path.join(root, 'fields.rl');
+  const fieldUsesPath = path.join(root, 'field-uses.rl');
+  const fieldsSource = 'let Game = phrase { dictionary = true }\n' +
+    'record Game:State {\n    paddle_x:f64\n    ball_x:f64 ball_y:f64\n}\n' +
+    'record Other { ball_x:f64 }\nrecord Envelope { state:Game:State }\n' +
+    'record Tuple (ball_x:f64, paddle_x:f64)\n' +
+    'let Game:reset_ball = fn (state:Game:State*, ball_x:f64) -> void {\n' +
+    '    state.ball_x = state.paddle_x\n    let alias = state\n    alias.ball_x += ball_x\n}\n';
+  const fieldUses = 'let read = fn (state:Game:State*, other:Other*, envelope:Envelope*, tuple:Tuple*, rows:Game:State*) -> f64 {\n' +
+    '    let value = state.ball_x\n    other.ball_x = value\n    envelope.state.ball_x = tuple.ball_x\n' +
+    '    rows[0].ball_x = value\n    let allocated = alloc(Game:State)\n    allocated.ball_x = value\n' +
+    '    let converted = cast(Game:State*, rows)\n    converted.ball_x = value\n' +
+    '    { let state = other; state.ball_x = value }\n    return state.paddle_x\n}\n';
+  fs.writeFileSync(fieldsPath, fieldsSource); fs.writeFileSync(fieldUsesPath, fieldUses);
+  const fieldsDoc = document(fieldsPath), fieldUsesDoc = document(fieldUsesPath);
+  const fieldsEntry = 'include "fields.rl"\ninclude "field-uses.rl"\n';
+  fs.writeFileSync(entryPath, fieldsEntry); documents.get(entryPath).setText(fieldsEntry);
+  await runtime.reload(folder.uri);
+  const declaration = (doc, offset) => doc.positionAt(offset);
+  const ballDeclaration = fieldsSource.indexOf('ball_x:f64');
+  const paddleDeclaration = fieldsSource.indexOf('paddle_x:f64');
+  const ballUse = fieldsSource.indexOf('state.ball_x') + 'state.'.length;
+  const paddleUse = fieldsSource.indexOf('state.paddle_x') + 'state.'.length;
+  const checkDefinition = async (doc, offset, expected) => {
+    const locations = await nav.locations(doc, declaration(doc, offset), 'definition');
+    assert.equal(locations.length, 1);
+    assert.equal(locations[0].uri.fsPath, fieldsPath);
+    assert.equal(fieldsDoc.offsetAt(locations[0].range.start), expected);
+  };
+  const beforeFieldLookup = traces();
+  await checkDefinition(fieldsDoc, ballUse, ballDeclaration);
+  await checkDefinition(fieldsDoc, paddleUse, paddleDeclaration);
+  assert.equal(traces(), beforeFieldLookup + 1);
+  for (const expression of ['state.ball_x', 'envelope.state.ball_x', 'rows[0].ball_x', 'allocated.ball_x', 'converted.ball_x']) {
+    await checkDefinition(fieldUsesDoc, fieldUses.indexOf(expression) + expression.lastIndexOf('.') + 1, ballDeclaration);
+  }
+  await checkDefinition(fieldUsesDoc, fieldUses.indexOf('other.ball_x') + 6, fieldsSource.indexOf('ball_x:f64', ballDeclaration + 1));
+  await checkDefinition(fieldUsesDoc, fieldUses.indexOf('tuple.ball_x') + 6, fieldsSource.indexOf('ball_x:f64', fieldsSource.indexOf('record Tuple')));
+  const ballRefs = await nav.locations(fieldsDoc, declaration(fieldsDoc, ballDeclaration), 'references', false);
+  assert.equal(ballRefs.length, 7);
+  assert.equal((await nav.locations(fieldsDoc, declaration(fieldsDoc, ballUse), 'references', false)).length, 7);
+  assert.equal((await nav.locations(fieldsDoc, declaration(fieldsDoc, paddleUse), 'references', false)).length, 2);
+  for (const location of ballRefs) {
+    const doc = documents.get(location.uri.fsPath);
+    assert.equal(doc.getText().slice(doc.offsetAt(location.range.start), doc.offsetAt(location.range.end)), 'ball_x');
+  }
+  assert.equal((await nav.rename(fieldsDoc, declaration(fieldsDoc, ballDeclaration), 'ball_position')).edits.length, 8);
+  await runtime.restart(folder.uri);
+  await checkDefinition(fieldsDoc, ballUse, ballDeclaration);
+  assert.equal((await nav.locations(fieldsDoc, declaration(fieldsDoc, ballUse), 'references', false)).length, 7);
   console.log('Navigation passed: shared traces, scoped queries, cached results, incremental edits/publication/removal/reopening, Unicode, rename, symbols, retained work after cancellation and restart.');
 })().catch(error => { console.error(error); process.exitCode = 1; }).finally(() => {
   nav.dispose(); runtime.dispose(); fs.rmSync(root, { recursive: true, force: true }); fs.rmSync(external, { recursive: true, force: true });

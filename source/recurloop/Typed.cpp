@@ -7,6 +7,7 @@
 #include <recurloop/Expressions.hpp>
 #include <recurloop/Functions.hpp>
 #include <recurloop/LanguageGrammar.hpp>
+#include <recurloop/Semantic.hpp>
 #include <recurloop/SyntaxCursor.hpp>
 #include <recurloop/TypeSyntax.hpp>
 
@@ -92,6 +93,13 @@ namespace recurloop {
       std::string take(std::string_view description) {
         if (done()) fail(cursor.current().offset, "expected " + std::string(description));
         return cursor.take().text;
+      }
+      std::string field(std::vector<std::pair<SourceLocation, SourceLocation>> &locations) {
+        const auto start = sourceLocationAt(origin, source, cursor.current().offset);
+        std::string name = take("a field name");
+        if (Semantic::active(context))
+          locations.emplace_back(start, sourceLocationAt(origin, source, cursor.consumedEnd()));
+        return name;
       }
       std::string qualified(std::string_view description) {
         std::string result = take(description);
@@ -313,7 +321,8 @@ namespace recurloop {
     }
 
     void defineTypedPhrase(context::Context &context, const compiler::TypeDescriptor &type,
-                           const std::string &declaredName) {
+                           const std::string &declaredName,
+                           const std::vector<std::pair<SourceLocation, SourceLocation>> &locations) {
       lexicon::Phrase root = context.lexicon.phrase();
       lexicon::Phrase owner = context.staging.dictionary;
       std::string localName = declaredName;
@@ -340,12 +349,17 @@ namespace recurloop {
                                       .enableSubdictionary()
                                       .save()
                                       .store(TypedPhraseData{type.id, type.size});
-      for (const compiler::TypeField &field : type.fields)
-        structure.append(field.name)
-            .make()
-            .setType(lexicon::phrase::type::getData(root))
-            .save()
-            .store(TypedFieldData{field.type, field.offset});
+      for (std::size_t index = 0; index < type.fields.size(); ++index) {
+        const auto &field = type.fields[index];
+        auto phrase = structure.append(field.name)
+                          .make()
+                          .setType(lexicon::phrase::type::getData(root))
+                          .save()
+                          .store(TypedFieldData{field.type, field.offset});
+        if (index < locations.size()) {
+          Semantic::recordDefinition(context, phrase, locations[index].first, locations[index].second);
+        }
+      }
     }
   } // namespace
 
@@ -426,6 +440,7 @@ namespace recurloop {
 
   void Typed::declareRecord(context::Context &context, lexicon::Phrase &) {
     std::vector<compiler::FieldDeclaration> fields;
+    std::vector<std::pair<SourceLocation, SourceLocation>> locations;
     std::string declaredName;
     bool packed = false;
     std::size_t alignment = 0;
@@ -453,13 +468,13 @@ namespace recurloop {
 
       Parser body(context, block.body, {block.path, block.line, block.position});
       while (!body.done()) {
-        const std::string field = body.take("a field name");
+        const std::string field = body.field(locations);
         body.expect(":");
         fields.push_back({field, body.type()});
         if (!body.done()) body.accept(",");
       }
       context.language().types.completeStructure(type, fields, packed, alignment);
-      defineTypedPhrase(context, context.language().types.get(type), declaredName);
+      defineTypedPhrase(context, context.language().types.get(type), declaredName, locations);
       return;
     } else {
       SourceLocation origin;
@@ -471,7 +486,7 @@ namespace recurloop {
       parser.expect("(");
       if (!parser.accept(")")) {
         while (true) {
-          const std::string field = parser.take("a field name");
+          const std::string field = parser.field(locations);
           parser.expect(":");
           fields.push_back({field, parser.type()});
           if (parser.accept(")")) break;
@@ -480,7 +495,7 @@ namespace recurloop {
       }
       options(parser);
       context.language().types.completeStructure(type, fields, packed, alignment);
-      defineTypedPhrase(context, context.language().types.get(type), declaredName);
+      defineTypedPhrase(context, context.language().types.get(type), declaredName, locations);
       return;
     }
   }

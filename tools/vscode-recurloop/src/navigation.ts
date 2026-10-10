@@ -124,7 +124,7 @@ export class NavigationController implements vscode.Disposable {
       // Keep the shared trace alive for the next cursor request, including when
       // navigation is its only consumer. Runtime timeout/reload still cancels it.
       const response = await this.runtime.inspect(doc, true, undefined, uri);
-      const trace = response.split(/\r?\n/).filter(line => /^[PREG]\t/.test(line)).join('\n');
+      const trace = response.split(/\r?\n/).filter(line => /^[PREGB]\t/.test(line)).join('\n');
       const fingerprint = createHash('sha256').update(trace).digest('hex');
       signal.throwIfAborted();
       if (this.runtime.revision(uri) !== revision || doc.version !== docVersion || doc.getText() !== source) throw new vscode.CancellationError();

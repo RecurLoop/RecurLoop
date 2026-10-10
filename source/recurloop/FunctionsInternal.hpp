@@ -168,7 +168,8 @@ namespace recurloop {
                                       std::size_t sourceLine = 1, std::size_t sourceColumn = 1);
     std::vector<Statement> parseBody(context::Context &context, std::string_view source, std::string scope = {},
                                      std::string sourcePath = {}, std::size_t sourceLine = 1,
-                                     std::size_t sourceColumn = 1, std::span<const std::string> parameterNames = {});
+                                     std::size_t sourceColumn = 1, std::span<const std::string> parameterNames = {},
+                                     std::span<const compiler::TypeId> parameterTypes = {});
     compiler::Module generateModule(context::Context &context, const FunctionDefinition &signature,
                                     const std::vector<Statement> &body);
     compiler::TypedFunction compileFunctionDefinition(context::Context &context, FunctionDefinition definition,
