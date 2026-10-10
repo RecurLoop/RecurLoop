@@ -80,6 +80,16 @@ namespace recurloop::LanguageGrammar {
     return match.isNull() ? lexicon::Phrase(dictionary.getLexicon()) : match.getPhrase();
   }
 
+  lexicon::Phrase findQualified(lexicon::Phrase dictionary, std::string_view name) {
+    while (!name.empty()) {
+      const auto end = name.find(':');
+      dictionary = find(dictionary, name.substr(0, end));
+      if (dictionary.isNull() || end == std::string_view::npos) return dictionary;
+      name.remove_prefix(end + 1);
+    }
+    return dictionary;
+  }
+
   lexicon::Phrase matchLongest(lexicon::Phrase dictionary, std::string_view source) {
     if (dictionary.isNull() || !dictionary.containsSubdictionary()) return lexicon::Phrase(dictionary.getLexicon());
     lexicon::Match match = dictionary.matchLongest(

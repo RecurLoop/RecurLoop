@@ -1,4 +1,5 @@
 #include <recurloop/EngineImage.hpp>
+#include <recurloop/Semantic.hpp>
 
 #include "CoreDefinition.hpp"
 
@@ -1793,6 +1794,7 @@ namespace recurloop {
         return found->second;
       };
 
+      Semantic::InspectionRelocation inspection(context);
       context.lexicon.clear();
       context.exec.valueScopes.clear();
 
@@ -1928,6 +1930,17 @@ namespace recurloop {
           }
         }
       }
+
+      // Only retained records keep their identity. Imported replacements and
+      // versions dropped by serialization keep the facts captured before clear.
+      std::unordered_map<Size, Size> relocated;
+      if (Semantic::active(context))
+        for (const Record &record : preserved)
+          relocated.emplace(record.sourceAddress, preservedPhrases.at(record.id).getAddress());
+      inspection.relocate([&](std::uint64_t address) {
+        const auto found = relocated.find(address);
+        return found == relocated.end() ? 0 : found->second;
+      });
 
       root.load();
       // The action registry is process-local kernel state and is intentionally

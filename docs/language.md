@@ -27,6 +27,27 @@ Subsequent snapshots use process CPU-time deltas over a monotonic wall-clock
 interval; sampling is immediate and does not sleep. The baseline belongs to
 the current context and is not serialized in engine images.
 
+## Library imports
+
+Load distributed library images by name:
+
+```rl
+import window
+import vulkan
+import "language-kit"
+```
+
+`import` uses the same search path as CLI `--library`: explicit
+`--library-path` directories, `RECURLOOP_LIBRARY_PATH`, the installed/build
+library directory, and the local `libraries/` directory. Dependencies load
+transitively; repeated imports of the same image are harmless. Missing libraries
+are reported with the directories searched. `engine import "path/to/image.rli"`
+continues to load an explicitly selected image file.
+
+Window and Vulkan bindings are included in the standard installation. Configure
+native dependency paths in the application after importing them; the bindings
+contain no project-specific GLFW paths.
+
 ## Values and expressions
 
 Runtime values are `null`, `bool`, `int`, `real`, and `string`.
@@ -40,7 +61,7 @@ var version = recurloop_version
 print version
 ```
 
-For a host built from release 0.2.9, this prints `0.2.9`.
+For a host built from release 0.2.10, this prints `0.2.10`.
 
 ```rl
 const project = "Recur" + "Loop"

@@ -30,6 +30,7 @@ namespace recurloop {
     static SourceBlock begin(context::Context &context);
     static SourceBlock capture(context::Context &context);
     static SourceBlock captureIndented(context::Context &context);
+    static std::string peekLine(context::Context &context);
     static std::string captureExpression(context::Context &context, SourceLocation *origin = nullptr);
     static bool consume(context::Context &context, std::string_view keyword);
     static void skip(context::Context &context);

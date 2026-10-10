@@ -140,7 +140,8 @@ The archive contains:
 
 ```text
 bin/recurloop
-share/recurloop/libraries/{language-kit,shell,inferred,http,gui,ide,project,embed}.rli
+share/recurloop/libraries/{language-kit,shell,inferred,http,gui,ide,project,embed,window,vulkan}.rli
+share/recurloop/standard-libraries.txt
 share/recurloop/BUILD-COMPATIBILITY.txt
 share/recurloop/RELEASE-METADATA.txt
 share/recurloop/PACKAGE-MANIFEST.sha256

@@ -15,7 +15,7 @@ link shared "dl"
 link shared "gtk-3"
 link shared "glib-2.0"
 
-let IDE = phrase { dictionary = true permanent = true }
+let IDE = phrase { docs = "Project runtime and IDE launcher helpers, including view lifecycle, reload configuration and source inspection." dictionary = true permanent = true }
 
 // libc / Linux filesystem. Common declarations come from language-kit.rli.
 extern realpath(path:u8*, resolved:u8*) -> u8* abi sysv-amd64
@@ -3399,6 +3399,27 @@ let IDE:run = fn (configure:fn (IDE:Config*) -> void) -> i64 {
     configure(app)
     return app.open()
 }
+
+set IDE:Config.docs = "Owned launcher configuration. Set workspace, source and view before open; release with Config:destroy or use IDE:run."
+set IDE:Config:new.docs = "Allocates a launcher configuration with hot reload enabled. Returns null on failure; release with Config:destroy."
+set IDE:Config:title.docs = "Copies the window title into the configuration and returns self for chaining."
+set IDE:Config:size.docs = "Sets positive initial window dimensions and returns self. Unsupported dimensions are ignored."
+set IDE:Config:maximized.docs = "Sets whether the launcher window starts maximized and returns self."
+set IDE:Config:workspace.docs = "Copies the workspace root path into the configuration and returns self."
+set IDE:Config:source.docs = "Copies the application source path into the configuration and returns self."
+set IDE:Config:cache.docs = "Copies the cache path into the configuration and returns self. Relative paths resolve against the workspace."
+set IDE:Config:watch.docs = "Copies the watched source path into the configuration and returns self. Relative paths resolve against the workspace."
+set IDE:Config:reload.docs = "Selects reload mode: hot, manual or off. Returns self; unknown modes leave the setting unchanged."
+set IDE:Config:view.docs = "Sets the view lifecycle callback and returns self. The callback receives a lifecycle action and the host pointer."
+set IDE:Config:open.docs = "Opens the configured IDE and runs its event loop. Returns 0 on success, 1 on setup failure. Workspace, source and view are required."
+set IDE:Config:destroy.docs = "Frees a launcher configuration and its copied strings. Accepts null."
+set IDE:run.docs = "Creates a fresh configuration, calls configure, opens the IDE and releases the configuration. Returns 0 on success, 1 on failure."
+set IDE:view_data.docs = "Returns the active view's application data pointer, or null when no data is attached."
+set IDE:view_reload_mode.docs = "Returns the active view's reload mode. Compare with IDE:Reload:Off(), Hot() or Manual()."
+set IDE:view_attach.docs = "Attaches view content and its application data to a host. Returns 1 on success, 0 on failure."
+set IDE:manual_reload.docs = "Requests a reload of the configured view when manual reload is enabled."
+set IDE:intelligence_refresh.docs = "Refreshes the source-inspection runtime against the current project environment. Returns 1 on success, 0 on failure."
+set IDE:intelligence_analyze.docs = "Inspects source for a path using the project's runtime environment. Returns an allocated protocol response; release with free."
 
 languagekit_native_end
 include "build/export.rl"

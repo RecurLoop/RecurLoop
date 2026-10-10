@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.25)
-project(RecurLoop VERSION 0.2.9 DESCRIPTION "An extensible programming language and runtime for source-defined language extensions"
+project(RecurLoop VERSION 0.2.10 DESCRIPTION "An extensible programming language and runtime for source-defined language extensions"
         LANGUAGES C CXX)
 
 set(RECURLOOP_BUILD_REVISION "unknown")
@@ -543,16 +543,17 @@ recurloop_add_language_library(embed
     "${CMAKE_CURRENT_SOURCE_DIR}/libraries/embed/library.rl"
     "${RECURLOOP_EMBED_IMAGE}")
 
-# Optional graphics libraries intentionally stay out of RecurloopLibraries.
-# They require system GLFW, Vulkan loader, and shaderc shared libraries, while
-# the standard library build must remain dependency-free beyond libc/pthread.
+# Window and Vulkan bindings are distributed with the standard libraries.
+# Loading their definitions does not require graphics drivers or open a window.
+# Shader compilation remains opt-in because it requires shaderc.
 recurloop_add_language_library(shaders
     "${CMAKE_CURRENT_SOURCE_DIR}/libraries/shaders/library.rl"
     "${RECURLOOP_SHADERS_IMAGE}"
     embed)
 recurloop_add_language_library(window
     "${CMAKE_CURRENT_SOURCE_DIR}/libraries/window/library.rl"
-    "${RECURLOOP_WINDOW_IMAGE}")
+    "${RECURLOOP_WINDOW_IMAGE}"
+    vulkan)
 recurloop_add_language_library(vulkan
     "${CMAKE_CURRENT_SOURCE_DIR}/libraries/vulkan/library.rl"
     "${RECURLOOP_VULKAN_IMAGE}")
@@ -564,30 +565,22 @@ add_custom_target(RecurloopGraphicsLibraries
         "${RECURLOOP_VULKAN_IMAGE}")
 set_target_properties(RecurloopGraphicsLibraries PROPERTIES FOLDER "Libraries")
 
-add_custom_target(RecurloopLibraries
-    DEPENDS
-        "${RECURLOOP_LANGUAGE_KIT_IMAGE}"
-        "${RECURLOOP_SHELL_IMAGE}"
-        "${RECURLOOP_INFERRED_IMAGE}"
-        "${RECURLOOP_HTTP_IMAGE}"
-        "${RECURLOOP_GUI_IMAGE}"
-        "${RECURLOOP_IDE_IMAGE}"
-        "${RECURLOOP_PROJECT_IMAGE}"
-        "${RECURLOOP_EMBED_IMAGE}")
+# One manifest owns the build, installation and release-library inventory.
+set(RECURLOOP_STANDARD_LIBRARY_MANIFEST "${CMAKE_CURRENT_SOURCE_DIR}/libraries/standard.txt")
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${RECURLOOP_STANDARD_LIBRARY_MANIFEST}")
+file(STRINGS "${RECURLOOP_STANDARD_LIBRARY_MANIFEST}" RECURLOOP_STANDARD_LIBRARIES)
+set(RECURLOOP_STANDARD_LIBRARY_IMAGES)
+foreach(library IN LISTS RECURLOOP_STANDARD_LIBRARIES)
+    list(APPEND RECURLOOP_STANDARD_LIBRARY_IMAGES "${RECURLOOP_LIBRARY_OUTPUT_DIR}/${library}.rli")
+endforeach()
+add_custom_target(RecurloopLibraries DEPENDS ${RECURLOOP_STANDARD_LIBRARY_IMAGES})
 set_target_properties(RecurloopLibraries PROPERTIES FOLDER "Libraries")
 
-
-install(FILES
-    "${RECURLOOP_LANGUAGE_KIT_IMAGE}"
-    "${RECURLOOP_SHELL_IMAGE}"
-    "${RECURLOOP_INFERRED_IMAGE}"
-    "${RECURLOOP_HTTP_IMAGE}"
-    "${RECURLOOP_GUI_IMAGE}"
-    "${RECURLOOP_IDE_IMAGE}"
-    "${RECURLOOP_PROJECT_IMAGE}"
-    "${RECURLOOP_EMBED_IMAGE}"
-    DESTINATION "${RECURLOOP_INSTALL_LIBRARY_DIR}"
-    COMPONENT Libraries)
+install(FILES ${RECURLOOP_STANDARD_LIBRARY_IMAGES}
+    DESTINATION "${RECURLOOP_INSTALL_LIBRARY_DIR}" COMPONENT Libraries)
+install(FILES "${RECURLOOP_STANDARD_LIBRARY_MANIFEST}"
+    DESTINATION "${CMAKE_INSTALL_DATADIR}/recurloop"
+    RENAME standard-libraries.txt COMPONENT Libraries)
 install(FILES LICENSE README.md TRADEMARKS.md THIRD-PARTY.md docs/releases.md
     DESTINATION "${CMAKE_INSTALL_DOCDIR}"
     COMPONENT Documentation)

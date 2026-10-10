@@ -102,6 +102,27 @@ fi
   sha256sum -c share/recurloop/PACKAGE-MANIFEST.sha256 >/dev/null
 )
 
+LIBRARY_MANIFEST="$STAGED/share/recurloop/standard-libraries.txt"
+if [ ! -s "$LIBRARY_MANIFEST" ]; then
+  # Older releases predate the inventory. Their verified integrity manifest
+  # still supplies the library list without a second hard-coded inventory.
+  LIBRARY_MANIFEST="$TMP_DIR/standard-libraries.txt"
+  awk '$2 ~ /^share\/recurloop\/libraries\/[^/]+\.rli$/ {
+    name = $2; sub(/^share\/recurloop\/libraries\//, "", name);
+    sub(/\.rli$/, "", name); print name
+  }' "$STAGED/share/recurloop/PACKAGE-MANIFEST.sha256" > "$LIBRARY_MANIFEST"
+fi
+if [ ! -s "$LIBRARY_MANIFEST" ]; then
+  echo "Installation failed: missing library inventory." >&2
+  exit 1
+fi
+while IFS= read -r library; do
+  if [ ! -s "$STAGED/share/recurloop/libraries/${library}.rli" ]; then
+    echo "Installation failed: missing ${library}.rli" >&2
+    exit 1
+  fi
+done < "$LIBRARY_MANIFEST"
+
 mkdir -p "$PREFIX"
 # Validate completely before touching the destination. The tar-to-tar copy
 # preserves the package's executable bits without depending on GNU cp.
@@ -116,12 +137,6 @@ if [ ! -x "$BINARY" ]; then
   echo "Installation failed: $BINARY was not installed." >&2
   exit 1
 fi
-for library in language-kit shell inferred http gui ide project embed; do
-  if [ ! -s "$PREFIX/share/recurloop/libraries/${library}.rli" ]; then
-    echo "Installation failed: missing ${library}.rli" >&2
-    exit 1
-  fi
-done
 "$BINARY" --version
 if command -v ldd >/dev/null 2>&1; then
   missing_runtime="$(ldd "$BINARY" 2>/dev/null | awk '/not found/ { print $1 }')"

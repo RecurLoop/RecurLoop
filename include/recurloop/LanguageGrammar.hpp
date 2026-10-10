@@ -24,6 +24,7 @@ namespace recurloop::LanguageGrammar {
   // each parser. The returned phrase is null when the dictionary has no such
   // entry.
   lexicon::Phrase find(lexicon::Phrase dictionary, std::string_view key);
+  lexicon::Phrase findQualified(lexicon::Phrase dictionary, std::string_view name);
 
   // Match the longest phrase at the beginning of source. Unlike find(), the
   // input may contain bytes after the matched phrase.

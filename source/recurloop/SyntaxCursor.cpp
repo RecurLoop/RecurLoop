@@ -53,16 +53,26 @@ namespace recurloop {
 
   SyntaxToken SyntaxCursor::take() {
     SyntaxToken result = token;
+    consumed = sourceOffset(cursor);
     if (semanticTracing && result.semanticPhrase != 0 && Semantic::active(context)) {
       lexicon::Phrase phrase(&context.lexicon, result.semanticPhrase);
       phrase.load();
-      const std::string_view original = rewrite ? rewrite->original : source;
-      const SourceLocation &semanticOrigin = rewrite ? rewrite->origin : origin;
-      semanticOwner = Semantic::recordMapped(context, phrase, semanticOrigin, original, result.offset, result.semanticEnd,
-                                             semanticOwner, false, &semanticGroup);
+      recordResolved(phrase, result.offset, result.semanticEnd);
     }
     advance();
     return result;
+  }
+
+  std::size_t SyntaxCursor::consumedEnd() const {
+    return consumed;
+  }
+
+  void SyntaxCursor::recordResolved(lexicon::Phrase phrase, std::size_t start, std::size_t end) {
+    if (!semanticTracing || phrase.isNull() || !Semantic::active(context)) return;
+    const std::string_view original = rewrite ? rewrite->original : source;
+    const SourceLocation &semanticOrigin = rewrite ? rewrite->origin : origin;
+    semanticOwner = Semantic::recordMapped(context, phrase, semanticOrigin, original, start, end, semanticOwner, false,
+                                           &semanticGroup);
   }
 
   bool SyntaxCursor::accept(std::string_view canonical) {

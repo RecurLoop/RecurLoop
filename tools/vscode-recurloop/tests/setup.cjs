@@ -80,17 +80,24 @@ function binary(file, runtimeVersion = version) {
   fs.writeFileSync(file, `#!/bin/sh\nprintf '%s\\n' 'Recurloop v${runtimeVersion}'\n`, { mode: 0o755 });
   return file;
 }
-function fixture(corruptManifest = false) {
+function fixture(corruptManifest = false, legacyInventory = false) {
   const name = `recurloop-${version}-linux-x86_64`;
   const staging = path.join(root, 'package', name);
   const binaryPath = binary(path.join(staging, 'bin/recurloop'));
   const entries = ['bin/recurloop'];
-  for (const library of ['language-kit', 'shell', 'inferred', 'http', 'gui', 'ide', 'project', 'embed']) {
+  const inventory = fs.readFileSync(path.join(extension, '../../libraries/standard.txt'), 'utf8');
+  for (const library of inventory.trim().split('\n')) {
     const relative = `share/recurloop/libraries/${library}.rli`;
     const file = path.join(staging, relative);
     fs.mkdirSync(path.dirname(file), { recursive: true });
     fs.writeFileSync(file, `fixture ${library}\n`);
     entries.push(relative);
+  }
+  const inventoryPath = 'share/recurloop/standard-libraries.txt';
+  if (legacyInventory) fs.rmSync(path.join(staging, inventoryPath), { force: true });
+  else {
+    fs.writeFileSync(path.join(staging, inventoryPath), inventory);
+    entries.push(inventoryPath);
   }
   const sha = file => crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex');
   fs.writeFileSync(path.join(staging, 'share/recurloop/PACKAGE-MANIFEST.sha256'),
@@ -162,6 +169,13 @@ esac
   assert.equal(await setup.ensureExecutable(folder.uri), path.join(folder.uri.fsPath, 'build/Release/bin/recurloop'));
   await assert.rejects(setup.ensureExecutable(folder.uri, '/missing/debug-override'), /debug launch override/);
 
+  // The maintained installer also supports releases predating the inventory.
+  fixture(false, true);
+  const legacyPrefix = path.join(root, 'legacy-install');
+  execFileSync('sh', [path.join(extension, 'out/install-runtime.sh')], {
+    env: { ...process.env, RECURLOOP_PREFIX: legacyPrefix, RECURLOOP_VERSION: version }, stdio: 'pipe'
+  });
+  assert.ok(fs.existsSync(path.join(legacyPrefix, 'share/recurloop/libraries/vulkan.rli')));
   selectedFile = fixture();
   choice = 'Choose Executable';
   await setup.install(folder.uri);

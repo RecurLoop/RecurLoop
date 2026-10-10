@@ -18,7 +18,7 @@ Run the same command again later to update to the newest release. For a normal u
 
 ```text
 ~/.local/bin/recurloop
-~/.local/share/recurloop/libraries/{language-kit,shell,inferred,http,gui,ide,project,embed}.rli
+~/.local/share/recurloop/libraries/{language-kit,shell,inferred,http,gui,ide,project,embed,window,vulkan}.rli
 ```
 
 If `~/.local/bin` is not already in your `PATH`:
@@ -66,7 +66,7 @@ that downloaded file, then reload the window. You can also install it from the
 command line (use the filename you downloaded):
 
 ```bash
-code --install-extension ./recurloop-vscode-0.2.9.vsix --force
+code --install-extension ./recurloop-vscode-0.2.10.vsix --force
 ```
 
 For a command-line download of the latest release with GitHub CLI:
@@ -422,7 +422,7 @@ The default system layout is:
 /usr/local/share/recurloop/libraries/shell.rli
 /usr/local/share/recurloop/libraries/inferred.rli
 /usr/local/share/recurloop/libraries/http.rli
-/usr/local/share/recurloop/libraries/{gui,ide,project,embed}.rli
+/usr/local/share/recurloop/libraries/{gui,ide,project,embed,window,vulkan}.rli
 /usr/local/share/doc/RecurLoop/{LICENSE,README.md,TRADEMARKS.md}
 ```
 
@@ -472,7 +472,7 @@ share/recurloop/libraries/language-kit.rli
 share/recurloop/libraries/shell.rli
 share/recurloop/libraries/inferred.rli
 share/recurloop/libraries/http.rli
-share/recurloop/libraries/{gui,ide,project,embed}.rli
+share/recurloop/libraries/{gui,ide,project,embed,window,vulkan}.rli
 share/recurloop/{BUILD-COMPATIBILITY.txt,RELEASE-METADATA.txt,PACKAGE-MANIFEST.sha256}
 share/doc/RecurLoop/...
 ```

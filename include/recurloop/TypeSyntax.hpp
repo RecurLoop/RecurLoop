@@ -11,11 +11,13 @@ namespace context {
 }
 
 namespace recurloop {
+  class SyntaxCursor;
   class TypeSyntax {
   public:
     class Cursor {
     public:
       virtual ~Cursor() = default;
+      virtual SyntaxCursor &typeSyntaxCursor() = 0;
       virtual std::string_view typeCurrent() const = 0;
       virtual bool typeAccept(std::string_view token) = 0;
       virtual void typeExpect(std::string_view token) = 0;

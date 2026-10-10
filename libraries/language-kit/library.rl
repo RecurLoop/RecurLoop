@@ -30,7 +30,7 @@ extern printf(format:u8*, ...) -> i64 abi sysv-amd64
 extern perror(prefix:u8*) -> void abi sysv-amd64
 extern close(fd:i32) -> i32 abi sysv-amd64
 
-let LanguageKit = phrase { dictionary = true permanent = true }
+let LanguageKit = phrase { docs = "Shared tools for source-defined languages: text buffers, readers, scoped values and cross-language bindings." dictionary = true permanent = true }
 let LanguageKit:Internal = phrase { dictionary = true serializable = false }
 // Live native state must never be mistaken for portable integer values.
 let LanguageKit:ProcessPointers = []
@@ -2942,6 +2942,77 @@ let LanguageKit:line_comment = phrase {
 // them. They coexist with language forms because longest-prefix lookup wins.
 let "--" = <LanguageKit:line_comment>
 let "%" = <LanguageKit:line_comment>
+
+// Concise public API documentation, retained in exported images.
+set LanguageKit:copy_bytes.docs = "Copies the specified byte range into a new null-terminated string. Returns null on failure; release with free."
+set LanguageKit:copy_text.docs = "Copies a null-terminated string. Returns null for null input or allocation failure; release with free."
+set LanguageKit:text_equal.docs = "Returns 1 when two non-null strings have identical bytes, otherwise 0."
+set LanguageKit:is_space.docs = "Tests an ASCII space, tab, carriage return or newline."
+set LanguageKit:is_hspace.docs = "Tests an ASCII space or tab, excluding line breaks."
+set LanguageKit:is_alpha.docs = "Tests an ASCII letter, excluding digits and underscore."
+set LanguageKit:is_digit.docs = "Tests an ASCII decimal digit."
+set LanguageKit:Text.docs = "Owned, growable null-terminated text buffer. Appends report success; take transfers its bytes and destroy releases remaining storage."
+set LanguageKit:Text:new.docs = "Allocates an empty text buffer, or returns null on failure. Release with Text:destroy."
+set LanguageKit:Text:reserve.docs = "Ensures capacity for the requested text size. Returns 1 on success, 0 on allocation failure."
+set LanguageKit:Text:append.docs = "Appends a null-terminated string. Returns 1 on success, 0 on failure."
+set LanguageKit:Text:append_byte.docs = "Appends one byte and maintains the trailing null terminator. Returns 1 on success, 0 on failure."
+set LanguageKit:Text:take.docs = "Transfers the buffer's allocated string to the caller and empties the buffer. Release the string with free and the wrapper with Text:destroy."
+set LanguageKit:Text:destroy.docs = "Frees a text buffer and any bytes not transferred with take. Accepts null."
+set LanguageKit:intern.docs = "Interns a name in the shared symbol dictionary and returns its phrase identifier."
+set LanguageKit:state_get.docs = "Reads a named integer from language state, returning 0 when absent."
+set LanguageKit:state_set.docs = "Stores a named integer in language state and returns its phrase identifier."
+set LanguageKit:Source:available.docs = "Requests source refill for the specified byte count and returns the available byte count. A nonpositive request reports currently buffered bytes."
+set LanguageKit:Source:eof.docs = "Returns 1 when the source cursor has reached the end, otherwise 0."
+set LanguageKit:Source:peek.docs = "Reads a byte relative to the source cursor without consuming it. Returns 0 outside the source bounds."
+set LanguageKit:Source:advance.docs = "Advances the source cursor and returns the number of consumed bytes. A nonpositive request consumes nothing."
+set LanguageKit:Source:match_text.docs = "Consumes text only when it matches at the current source cursor. Returns 1 on a match, otherwise 0."
+set LanguageKit:Source:skip_hspace.docs = "Consumes spaces and tabs at the source cursor, leaving line breaks in place. Returns the number of consumed bytes."
+set LanguageKit:Source:skip_space.docs = "Consumes whitespace at the source cursor, including line breaks. Returns the number of consumed bytes."
+set LanguageKit:Reader.docs = "Token reader over a runtime source cursor. Token text is borrowed until consumption unless transferred with take_text."
+set LanguageKit:Reader:new.docs = "Allocates a source reader with tokenization flags. Returns null on failure; release with Reader:destroy."
+set LanguageKit:Reader:destroy.docs = "Releases cached token text and the reader. Accepts null."
+set LanguageKit:Reader:kind_of.docs = "Returns the current token kind, scanning it if needed without consuming it."
+set LanguageKit:Reader:number_of.docs = "Returns the current token's parsed integer value without consuming it."
+set LanguageKit:Reader:text_of.docs = "Returns borrowed current-token text. It remains valid until the token is consumed or the reader is destroyed."
+set LanguageKit:Reader:symbol_of.docs = "Returns the current token's interned symbol identifier."
+set LanguageKit:Reader:consume.docs = "Consumes the current token and releases its cached text."
+set LanguageKit:Reader:match.docs = "Consumes the current token only if its text matches. Returns 1 on a match, otherwise 0."
+set LanguageKit:Reader:take_text.docs = "Consumes the current token and transfers its text to the caller. Release the returned string with free."
+set LanguageKit:Reader:take_identifier.docs = "Transfers and consumes an identifier token, or returns null for another token kind. Release returned text with free."
+set LanguageKit:Reader:expect.docs = "Consumes the expected token or reports the supplied diagnostic. Returns 1 on success, 0 on mismatch."
+set LanguageKit:SliceReader.docs = "Token reader over a borrowed byte slice, with an independent cursor. Keep source storage alive until the reader is destroyed."
+set LanguageKit:SliceReader:new.docs = "Allocates a reader over source and its byte length using tokenization flags. Borrows source; release with SliceReader:destroy."
+set LanguageKit:SliceReader:destroy.docs = "Releases cached token text and the slice reader, leaving the borrowed source untouched. Accepts null."
+set LanguageKit:SliceReader:peek.docs = "Reads a byte relative to the slice cursor without consuming it. Returns 0 outside the slice."
+set LanguageKit:SliceReader:text_of.docs = "Returns borrowed current-token text, valid until consumption or reader destruction."
+set LanguageKit:SliceReader:take_text.docs = "Consumes a token and transfers its text to the caller. Release the result with free."
+set LanguageKit:SliceReader:take_identifier.docs = "Consumes an identifier and transfers its text, or returns null for another token kind. Release the result with free."
+set LanguageKit:SliceReader:match.docs = "Consumes the token only when its text matches; returns 1 on a match, otherwise 0."
+set LanguageKit:Lifetime:enter.docs = "Enters a nested ownership scope. Pair with Lifetime:leave in reverse order; returns null on failure."
+set LanguageKit:Lifetime:leave.docs = "Leaves the current ownership scope and releases its strong references. Scopes must be left in reverse order."
+set LanguageKit:Lifetime:alloc.docs = "Allocates managed storage in the current scope with a cleanup callback and userdata. Returns null on failure; release through Lifetime helpers rather than free."
+set LanguageKit:Lifetime:alloc_raw.docs = "Allocates managed bytes with default free cleanup. Returns null on failure; the current scope owns the allocation."
+set LanguageKit:Lifetime:adopt.docs = "Transfers an existing allocation to the current managed scope with a cleanup callback. For a valid allocation, failure also runs cleanup; returns null on failure."
+set LanguageKit:Lifetime:retain.docs = "Adds a strong reference to a managed pointer in the current scope. Returns 1 on success, 0 on failure."
+set LanguageKit:Lifetime:release.docs = "Releases a current-scope strong reference, destroying the payload when the last reference is gone. Returns 1 on success, 0 when no reference can be released."
+set LanguageKit:Lifetime:move_to_parent.docs = "Transfers a current-scope reference to its parent scope. Returns 1 on success, 0 on failure."
+set LanguageKit:Lifetime:promote_root.docs = "Moves a managed reference to the root scope so it survives the current call. Returns 1 on success, 0 on failure."
+set LanguageKit:Lifetime:weak.docs = "Creates an explicit weak handle without keeping the payload alive. Returns null on failure; release with Lifetime:weak_destroy."
+set LanguageKit:Lifetime:weak_lock.docs = "Acquires a current-scope strong reference from a live weak handle. Returns null if expired or retaining fails."
+set LanguageKit:Lifetime:weak_destroy.docs = "Releases a weak handle without releasing any strong references acquired from it. Accepts null."
+set LanguageKit:Value.docs = "Managed cross-language value carrying an integer, text, symbol, children or opaque data. Release references with Value:release, not free."
+set LanguageKit:Value:new.docs = "Creates a managed value of a language-defined kind in the current scope. Returns null on failure."
+set LanguageKit:Value:integer.docs = "Creates a managed integer value in the current scope, or returns null on failure."
+set LanguageKit:Value:text_value.docs = "Creates a managed text value, copying the supplied string. The caller retains its original string."
+set LanguageKit:Value:symbol_value.docs = "Creates a managed symbol value, copying and interning its name."
+set LanguageKit:Value:set_item.docs = "Sets a value's child with managed ownership, rejecting cycles. Returns 1 on success, 0 on failure."
+set LanguageKit:Value:release.docs = "Releases a managed value reference from the current scope. Returns 1 on success, 0 when no reference can be released."
+set LanguageKit:publish.docs = "Publishes a value under a cross-language name, promoting managed ownership to the root scope. Returns the symbol identifier, or 0 on failure."
+set LanguageKit:publish_integer.docs = "Publishes an integer under a cross-language name. Returns its symbol identifier, or 0 on failure."
+set LanguageKit:publish_text.docs = "Copies and publishes text under a cross-language name. Returns its symbol identifier, or 0 on failure."
+set LanguageKit:publish_callable.docs = "Publishes a callback and userdata for cross-language calls. A negative arity allows any argument count. Returns a symbol identifier, or 0 on failure."
+set LanguageKit:invoke.docs = "Calls a published callback with cross-language values. Managed results move to the caller's scope; returns null for an unavailable or invalid call."
+set LanguageKit:value.docs = "Looks up a cross-language value by name, also exposing ordinary RecurLoop values. A zero-argument binding may be evaluated on first lookup."
 
 let languagekit_install_fallback = <LanguageKit:install_fallback>
 languagekit_install_fallback

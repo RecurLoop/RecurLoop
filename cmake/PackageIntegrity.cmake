@@ -1,11 +1,11 @@
 include_guard(GLOBAL)
 
-set(RECURLOOP_PACKAGE_LIBRARIES
-    language-kit shell inferred http gui ide project embed)
+file(STRINGS "${CMAKE_CURRENT_LIST_DIR}/../libraries/standard.txt" RECURLOOP_PACKAGE_LIBRARIES)
 
 function(recurloop_require_package_layout prefix)
     set(required_files
         "bin/recurloop"
+        "share/recurloop/standard-libraries.txt"
         "share/recurloop/BUILD-COMPATIBILITY.txt"
         "share/recurloop/RELEASE-METADATA.txt")
     foreach(library IN LISTS RECURLOOP_PACKAGE_LIBRARIES)

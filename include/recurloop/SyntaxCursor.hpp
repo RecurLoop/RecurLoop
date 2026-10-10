@@ -59,6 +59,8 @@ namespace recurloop {
     const SyntaxToken &current() const;
     SyntaxToken lookahead(std::size_t distance = 1) const;
     SyntaxToken take();
+    std::size_t consumedEnd() const;
+    void recordResolved(lexicon::Phrase phrase, std::size_t start, std::size_t end);
     bool accept(std::string_view canonical);
     void expect(std::string_view canonical);
     bool skipNewlines();
@@ -83,6 +85,7 @@ namespace recurloop {
     Error error;
     Options options;
     std::size_t cursor = 0;
+    std::size_t consumed = 0;
     SyntaxToken token;
     SourceLocation origin;
     std::uint64_t semanticOwner = 0;

@@ -73,6 +73,8 @@ def command(source):
 
 try:
     prompt()
+    assert b'status=' not in command(':target check')
+    assert b'42\r\n' in command('print 42')
     # Native calls must use this same socket/PTY as core print and Shell output.
     # The emitted machine code uses libc printf, exactly like quickstart Probe.
     assert b'status=' not in command('extern printf(format:u8*, ...) -> i64 abi sysv-amd64')

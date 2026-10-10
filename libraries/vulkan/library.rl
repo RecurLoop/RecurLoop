@@ -10,6 +10,9 @@ languagekit_native_begin
 link shared "c"
 link shared "vulkan"
 
+// Extern declarations are portable symbol contracts. Export them for clients;
+// the importing process resolves native addresses only when it links calls.
+
 // Instance / device / surface.
 extern vkCreateInstance(create_info:u8*, allocator:u8*, instance:u8**) -> i32 abi sysv-amd64
 extern vkDestroyInstance(instance:u8*, allocator:u8*) -> void abi sysv-amd64
@@ -53,6 +56,7 @@ extern vkResetCommandBuffer(buffer:u8*, flags:u32) -> i32 abi sysv-amd64
 extern vkBeginCommandBuffer(buffer:u8*, begin_info:u8*) -> i32 abi sysv-amd64
 extern vkEndCommandBuffer(buffer:u8*) -> i32 abi sysv-amd64
 extern vkCmdBeginRenderPass(buffer:u8*, begin_info:u8*, contents:i32) -> void abi sysv-amd64
+extern vkCmdClearAttachments(buffer:u8*, count:u32, attachments:u8*, rect_count:u32, rects:u8*) -> void abi sysv-amd64
 extern vkCmdEndRenderPass(buffer:u8*) -> void abi sysv-amd64
 extern vkCmdBindPipeline(buffer:u8*, bind_point:i32, pipeline:u64) -> void abi sysv-amd64
 extern vkCmdDraw(buffer:u8*, vertex_count:u32, instance_count:u32, first_vertex:u32, first_instance:u32) -> void abi sysv-amd64
@@ -64,7 +68,7 @@ extern vkWaitForFences(device:u8*, count:u32, fences:u64*, wait_all:u32, timeout
 extern vkResetFences(device:u8*, count:u32, fences:u64*) -> i32 abi sysv-amd64
 extern vkQueueSubmit(queue:u8*, count:u32, submits:u8*, fence:u64) -> i32 abi sysv-amd64
 
-let Vulkan = phrase { dictionary = true permanent = true }
+let Vulkan = phrase { docs = "Vulkan bindings and helpers for a single graphics/presentation queue and a triangle renderer. Release dependent resources before their device, surface and instance." dictionary = true permanent = true }
 let Vulkan:StructureType = phrase { dictionary = true permanent = true }
 let Vulkan:Result = phrase { dictionary = true permanent = true }
 
@@ -553,7 +557,9 @@ let Vulkan:pick_device = fn (instance:u8*, surface:u64) -> Vulkan:DeviceSelectio
 
 let Vulkan:create_device = fn (selection:Vulkan:DeviceSelection*) -> Vulkan:Device* {
     if !selection { return cast(Vulkan:Device*, 0) }
-    var priority:f32 = cast(f32, 1)
+    // IEEE-754 1.0f without a numeric conversion: supported by the source-debug
+    // backend as well as LLVM. Vulkan still receives its native f32 pointer.
+    var priority:u32 = 1065353216
     let queue_info = alloc(Vulkan:DeviceQueueCreateInfo)
     if !queue_info { return cast(Vulkan:Device*, 0) }
     defer free(cast(u8*, queue_info))
@@ -562,7 +568,7 @@ let Vulkan:create_device = fn (selection:Vulkan:DeviceSelection*) -> Vulkan:Devi
     queue_info.flags = 0
     queue_info.queueFamilyIndex = selection.queue_family
     queue_info.queueCount = 1
-    queue_info.pQueuePriorities = &priority
+    queue_info.pQueuePriorities = cast(f32*, &priority)
 
     var extension:u8* = "VK_KHR_swapchain"
     let create = alloc(Vulkan:DeviceCreateInfo)
@@ -1112,55 +1118,43 @@ let Vulkan:Device:destroy = fn (self:Vulkan:Device*) -> void {
     free(cast(u8*, self))
 }
 
-// External phrases contain process-local native addresses and must not be
-// serialized into a portable .rli image. Compiled RecurLoop functions retain
-// their stable external symbol contracts, exactly like the shell/http libs.
-set vkCreateInstance.serializable = false
-set vkDestroyInstance.serializable = false
-set vkEnumeratePhysicalDevices.serializable = false
-set vkGetPhysicalDeviceQueueFamilyProperties.serializable = false
-set vkGetPhysicalDeviceSurfaceSupportKHR.serializable = false
-set vkGetPhysicalDeviceSurfaceCapabilitiesKHR.serializable = false
-set vkGetPhysicalDeviceSurfaceFormatsKHR.serializable = false
-set vkCreateDevice.serializable = false
-set vkDestroyDevice.serializable = false
-set vkGetDeviceQueue.serializable = false
-set vkDestroySurfaceKHR.serializable = false
-set vkDeviceWaitIdle.serializable = false
-set vkCreateSwapchainKHR.serializable = false
-set vkDestroySwapchainKHR.serializable = false
-set vkGetSwapchainImagesKHR.serializable = false
-set vkAcquireNextImageKHR.serializable = false
-set vkQueuePresentKHR.serializable = false
-set vkCreateImageView.serializable = false
-set vkDestroyImageView.serializable = false
-set vkCreateShaderModule.serializable = false
-set vkDestroyShaderModule.serializable = false
-set vkCreateRenderPass.serializable = false
-set vkDestroyRenderPass.serializable = false
-set vkCreatePipelineLayout.serializable = false
-set vkDestroyPipelineLayout.serializable = false
-set vkCreateGraphicsPipelines.serializable = false
-set vkDestroyPipeline.serializable = false
-set vkCreateFramebuffer.serializable = false
-set vkDestroyFramebuffer.serializable = false
-set vkCreateCommandPool.serializable = false
-set vkDestroyCommandPool.serializable = false
-set vkAllocateCommandBuffers.serializable = false
-set vkResetCommandBuffer.serializable = false
-set vkBeginCommandBuffer.serializable = false
-set vkEndCommandBuffer.serializable = false
-set vkCmdBeginRenderPass.serializable = false
-set vkCmdEndRenderPass.serializable = false
-set vkCmdBindPipeline.serializable = false
-set vkCmdDraw.serializable = false
-set vkCreateSemaphore.serializable = false
-set vkDestroySemaphore.serializable = false
-set vkCreateFence.serializable = false
-set vkDestroyFence.serializable = false
-set vkWaitForFences.serializable = false
-set vkResetFences.serializable = false
-set vkQueueSubmit.serializable = false
+// Public hover documentation travels with the library image.
+set Vulkan:DeviceSelection.docs = "Physical device and queue family selected for graphics and presentation. This is a heap-allocated descriptor; free(cast(u8*, selection)) releases it without destroying the GPU."
+set Vulkan:Device.docs = "Owned logical device, with a borrowed physical device and queue handle. Release device resources before calling Device:destroy."
+set Vulkan:Swapchain.docs = "Owned presentation swapchain, image views and image-handle arrays, including its actual pixel extent and format. Release with Swapchain:destroy."
+set Vulkan:Pipeline.docs = "Owned graphics pipeline, layout, render pass and framebuffers for a particular swapchain. Release with Pipeline:destroy before that swapchain."
+set Vulkan:FrameResources.docs = "Command pool, command buffer, semaphores and fence for one frame in flight. Release with FrameResources:destroy after GPU work has completed."
+set Vulkan:create_instance.docs = "Creates a Vulkan 1.0 instance with the supplied extension names and count. Returns null on failure; release with Vulkan:destroy_instance."
+set Vulkan:pick_device.docs = "Selects the first physical device with a queue family supporting graphics and presentation to surface. Returns a heap-allocated selection or null; the caller frees the selection."
+set Vulkan:create_device.docs = "Creates a logical device and one queue, enabling VK_KHR_swapchain. Borrows the selection; returns null on failure. Release with Device:destroy."
+set Vulkan:create_swapchain.docs = "Creates a FIFO presentation swapchain and image views, adjusting the requested pixel extent to surface capabilities. Returns null on failure; release with Swapchain:destroy."
+set Vulkan:create_shader_module.docs = "Creates a shader module from SPIR-V words; bytes is the byte size, not the word count. Returns 0 on failure; release with Vulkan:destroy_shader_module."
+set Vulkan:create_render_pass.docs = "Creates a single-color render pass that clears the attachment and transitions it for presentation. Returns 0 on failure; release the handle with vkDestroyRenderPass."
+set Vulkan:create_graphics_pipeline.docs = "Creates a triangle pipeline and framebuffers for the swapchain extent, using the shaders' main entry points. Borrows shader modules; returns null on failure. Release with Pipeline:destroy."
+set Vulkan:create_frame_resources.docs = "Allocates command and synchronization resources for one frame in flight. Returns null on failure; release with FrameResources:destroy."
+set Vulkan:record_triangle.docs = "Resets and records a command buffer to clear and draw three vertices into the selected swapchain image. The buffer must be idle and image_index valid. Returns 1 on success, 0 on failure."
+set Vulkan:draw_triangle_frame.docs = "Waits for the preceding frame, acquires an image, records, submits and presents a triangle. Returns a Vulkan result code or -1 for a helper failure. Handle OutOfDate and Suboptimal by recreating swapchain resources."
+set Vulkan:wait_idle.docs = "Waits for all work on the logical device to finish. Returns a Vulkan result code, or -1 for a null device. Use before replacing or destroying active resources."
+set Vulkan:FrameResources:destroy.docs = "Destroys the frame's synchronization objects and command pool, then frees the wrapper. GPU work using them must have completed; accepts null."
+set Vulkan:Pipeline:destroy.docs = "Destroys framebuffers, pipeline, layout and render pass, then frees the wrapper. GPU work must have completed; accepts null."
+set Vulkan:Swapchain:destroy.docs = "Destroys image views and swapchain, then frees its arrays and wrapper. Release dependent framebuffers first and finish GPU work; accepts null."
+set Vulkan:Device:destroy.docs = "Destroys the logical device and frees its wrapper. Finish GPU work and release all device resources first; accepts null."
+set Vulkan:destroy_shader_module.docs = "Destroys a shader module on its owning device. Accepts a zero handle."
+set Vulkan:destroy_surface.docs = "Destroys a presentation surface on its owning instance. Release its swapchain first; accepts a zero handle."
+set Vulkan:destroy_instance.docs = "Destroys a Vulkan instance after its devices and surfaces have been released. Accepts null."
+set Vulkan:Result:Success.docs = "Vulkan result code indicating success (0)."
+set Vulkan:Result:Suboptimal.docs = "The swapchain remains usable but no longer matches the surface optimally. Recreate its resources when appropriate."
+set Vulkan:Result:OutOfDate.docs = "The swapchain no longer matches the surface. Recreate swapchain resources before rendering another frame."
+set Vulkan:has_flag.docs = "Tests a single power-of-two flag in an unsigned bit mask. Returns 0 for a zero flag."
+set Vulkan:clamp_u32.docs = "Clamps value to the inclusive range [minimum, maximum]. Requires minimum <= maximum."
+set Vulkan:choose_composite_alpha.docs = "Chooses the first supported composite-alpha bit, preferring opaque composition."
+set Vulkan:ClearValue.docs = "Four raw 32-bit words holding a Vulkan clear value. Floating-point colors use IEEE-754 bit patterns, not integer-to-float conversions."
+set vkCmdClearAttachments.docs = "Records clearing of attachments in the active render pass over the supplied rectangles. Counts describe native Vulkan attachment and rectangle arrays."
+set vkDeviceWaitIdle.docs = "Waits for all submitted work on a native device handle. Returns a Vulkan result code; 0 means success."
+set vkWaitForFences.docs = "Waits for the supplied device fences. wait_all selects all versus any; timeout is in nanoseconds. Returns a Vulkan result code."
+set vkAcquireNextImageKHR.docs = "Acquires a swapchain image and writes its index. Signals the supplied semaphore or fence; timeout is in nanoseconds. Check the Vulkan result before using the index."
+set vkQueueSubmit.docs = "Submits native Vulkan SubmitInfo structures to a queue and optionally signals a fence. Returns a Vulkan result code."
+set vkQueuePresentKHR.docs = "Presents images described by a native Vulkan PresentInfo structure. Check the result for OutOfDate or Suboptimal."
 
 languagekit_native_end
 include "../build/export.rl"

@@ -59,6 +59,7 @@ dictionary.whitespace
 engine.define
 engine.export
 engine.import
+library.import
 expressions.assert
 expressions.assign
 expressions.builtin.contains

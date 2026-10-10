@@ -164,6 +164,9 @@ namespace recurloop {
         return result;
       }
 
+      SyntaxCursor &typeSyntaxCursor() override {
+        return lexer;
+      }
       std::string_view typeCurrent() const override {
         return lexer.current().text;
       }
@@ -451,6 +454,14 @@ namespace recurloop {
       std::unique_ptr<Expression> postfix() {
         auto result = primary();
         while (true) {
+          if (Semantic::active(context) && result->kind == Expression::Kind::Variable &&
+              !findLocal(result->text) && !LanguageGrammar::matches(context, lexer.current().text, ":")) {
+            const auto functions = context.language().findFunctions(result->text, scope);
+            if (!functions.empty()) {
+              const auto phrase = LanguageGrammar::findQualified(context.lexicon.phrase(), functions.front().name);
+              lexer.recordResolved(phrase, result->offset, lexer.consumedEnd());
+            }
+          }
           lexicon::Phrase syntax = LanguageGrammar::resolve(context, postfixes, lexer.current().text);
           if (syntax.isNull()) return result;
           result = invokePostfix(syntax, lexer.take(), std::move(result));

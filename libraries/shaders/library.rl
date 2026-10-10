@@ -25,7 +25,7 @@ extern shaderc_result_get_bytes(result:u8*) -> u8* abi sysv-amd64
 extern shaderc_result_get_error_message(result:u8*) -> u8* abi sysv-amd64
 extern shaderc_result_release(result:u8*) -> void abi sysv-amd64
 
-let Shaders = phrase { dictionary = true permanent = true }
+let Shaders = phrase { docs = "GLSL/HLSL compilation to SPIR-V and a native SPIR-V instruction builder. Binary objects own their words and diagnostics." dictionary = true permanent = true }
 let Shaders:Language = phrase { dictionary = true permanent = true }
 let Shaders:Stage = phrase { dictionary = true permanent = true }
 let Shaders:Optimization = phrase { dictionary = true permanent = true }
@@ -806,6 +806,35 @@ set shaderc_result_get_length.serializable = false
 set shaderc_result_get_bytes.serializable = false
 set shaderc_result_get_error_message.serializable = false
 set shaderc_result_release.serializable = false
+
+set Shaders:Binary.docs = "Owned SPIR-V words, byte size and compilation diagnostics. Check Binary:ok before using the words; release with Binary:destroy."
+set Shaders:Binary:ok.docs = "Returns 1 when a non-null binary has successful status and a SPIR-V word buffer, otherwise 0."
+set Shaders:Binary:error_text.docs = "Returns binary-owned diagnostic text, or null when unavailable. Do not free it; it expires with Binary:destroy."
+set Shaders:Binary:word_data.docs = "Returns the binary's borrowed SPIR-V word pointer. Check Binary:ok first; do not free this pointer separately."
+set Shaders:Binary:byte_size.docs = "Returns the SPIR-V buffer size in bytes, or 0 for a null binary."
+set Shaders:Binary:destroy.docs = "Frees a binary, its word buffer and diagnostic text. Accepts null."
+set Shaders:compile.docs = "Compiles GLSL or HLSL to SPIR-V with an explicit stage, entry point and options. Returns an owned Binary containing words or diagnostics, or null on allocation failure; release with Binary:destroy."
+set Shaders:compile_glsl.docs = "Compiles GLSL for the selected stage using main and performance optimization. Check Binary:ok and release with Binary:destroy."
+set Shaders:compile_hlsl.docs = "Compiles HLSL for the selected stage using main and performance optimization. Check Binary:ok and release with Binary:destroy."
+set Shaders:glsl_vertex.docs = "Compiles a GLSL vertex shader. Returns an owned Binary; check ok and release with destroy."
+set Shaders:glsl_fragment.docs = "Compiles a GLSL fragment shader. Returns an owned Binary; check ok and release with destroy."
+set Shaders:hlsl_vertex.docs = "Compiles an HLSL vertex shader. Returns an owned Binary; check ok and release with destroy."
+set Shaders:hlsl_fragment.docs = "Compiles an HLSL fragment shader. Returns an owned Binary; check ok and release with destroy."
+set Shaders:Spirv:Builder.docs = "Owned SPIR-V 1.0 word builder. Emit instructions in valid SPIR-V order; finish copies the words into an independent Binary."
+set Shaders:Spirv:Builder:new.docs = "Creates a SPIR-V builder with an initial word capacity and module header. Returns null on failure; release with Builder:destroy."
+set Shaders:Spirv:Builder:id.docs = "Allocates the next result identifier and updates the module's identifier bound."
+set Shaders:Spirv:Builder:push.docs = "Appends one raw word. Returns 1 on success, 0 on allocation failure."
+set Shaders:Spirv:Builder:instruction.docs = "Appends an opcode and operand_count words, encoding the instruction length. Borrows operands for this call; returns 1 on success, 0 on failure."
+set Shaders:Spirv:Builder:emit0.docs = "Appends an instruction with no operands. Returns 1 on success, 0 on failure."
+set Shaders:Spirv:Builder:emit1.docs = "Appends an instruction with one operand. Returns 1 on success, 0 on failure."
+set Shaders:Spirv:Builder:emit2.docs = "Appends an instruction with two operands. Returns 1 on success, 0 on failure."
+set Shaders:Spirv:Builder:emit3.docs = "Appends an instruction with three operands. Returns 1 on success, 0 on failure."
+set Shaders:Spirv:Builder:emit4.docs = "Appends an instruction with four operands. Returns 1 on success, 0 on failure."
+set Shaders:Spirv:Builder:finish.docs = "Copies the module words into an independent owned Binary. Check Binary:ok; release the Binary and builder separately. This does not validate SPIR-V semantics."
+set Shaders:Spirv:Builder:destroy.docs = "Frees the builder and its word storage. Previously finished binaries remain valid; accepts null."
+set Shaders:Source:expand_glsl.docs = "Expands a GLSL source slice through the GLSL phrase dictionary. Returns an allocated string, or null on failure; release with free."
+set Shaders:Source:emit.docs = "Appends text from a phrase action to the active shader-source expansion. Returns 1 on success, 0 on failure."
+set Shaders:Source:take_identifier.docs = "Consumes and returns an identifier during shader-source expansion. Returns owned text or null on failure; release with free."
 
 languagekit_native_end
 include "../build/export.rl"

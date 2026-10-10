@@ -4,6 +4,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <functional>
 #include <string>
 #include <string_view>
 
@@ -34,6 +35,21 @@ namespace recurloop {
     // phrase metadata. Mark the active trace so it refreshes lazily only when a
     // later matched phrase actually needs metadata that was not present before.
     static void markInspectionMetadataDirty(context::Context &context);
+
+    // Keep inspection identities alive across a complete lexicon replacement.
+    // Removed phrases retain their last facts; preserved phrases are relocated
+    // so later metadata edits still apply to their earlier occurrences.
+    class InspectionRelocation {
+    public:
+      explicit InspectionRelocation(context::Context &context);
+      ~InspectionRelocation();
+      InspectionRelocation(const InspectionRelocation &) = delete;
+      InspectionRelocation &operator=(const InspectionRelocation &) = delete;
+      void relocate(const std::function<std::uint64_t(std::uint64_t)> &address);
+
+    private:
+      void *state_ = nullptr;
+    };
 
     // Apply/clear phrase-definition metadata accumulated before the staged
     // phrase receives its final lexicon address.

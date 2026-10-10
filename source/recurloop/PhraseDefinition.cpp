@@ -17,6 +17,7 @@
 namespace recurloop {
   namespace {
     constexpr std::string_view FieldGrammarName{"\0phrase-fields", 14};
+    constexpr std::string_view ExpressionGrammarName{"\0expressions", 12};
 
     [[noreturn]] void mutationSyntaxError(const context::Context &context, std::size_t offset,
                                           const std::string &message) {
@@ -548,22 +549,22 @@ namespace recurloop {
   // restoring a radix allocation checkpoint. Transactional compiler code must
   // not silently rely on checkpoint rollback around this operation.
   bool PhraseDefinition::mutate(context::Context &context) {
-    const std::size_t offset = context.source.buffer.offset / Byte::length;
-    const std::size_t bytes = context.source.buffer.bits / Byte::length;
-    if (offset > context.source.buffer.str.size() || bytes > context.source.buffer.str.size() - offset) return false;
-    std::string source = context.source.buffer.str.substr(offset, bytes);
-    const std::size_t newline = source.find_first_of("\r\n");
-    if (newline != std::string::npos) source.resize(newline);
+    const std::string source = Blocks::peekLine(context);
 
     lexicon::Phrase root = context.lexicon.phrase();
-    SyntaxCursor cursor(context, source, {root}, mutationSyntaxError, {.bareWords = true});
+    lexicon::Phrase expressions = LanguageGrammar::find(root, ExpressionGrammarName);
+    SyntaxCursor cursor(context, source,
+                        {LanguageGrammar::find(expressions, "postfix"), LanguageGrammar::find(expressions, "assignments")},
+                        mutationSyntaxError, {.bareWords = true});
     if (cursor.current().kind == SyntaxTokenKind::End) return false;
 
+    const std::size_t nameStart = cursor.current().offset;
     std::string path = cursor.take().text;
     while (cursor.accept(":")) {
       if (cursor.current().kind == SyntaxTokenKind::End) return false;
       path += ':' + cursor.take().text;
     }
+    const std::size_t nameEnd = cursor.consumedEnd();
     if (!cursor.accept(".")) return false;
     if (cursor.current().kind == SyntaxTokenKind::End) return false;
     const std::string field = cursor.take().text;
@@ -583,6 +584,7 @@ namespace recurloop {
     }
 
     lexicon::Phrase phrase = reference(context, '<' + path + '>');
+    cursor.recordResolved(phrase, nameStart, nameEnd);
     if (phrase.isPermanent()) {
       const SourceLocation location{context.source.path, context.source.line, context.source.position};
       THROW_AT(location, "Cannot modify permanent phrase '" << phrase.getKeyEscaped() << "'.")

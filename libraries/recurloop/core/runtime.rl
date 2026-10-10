@@ -1868,6 +1868,14 @@ phrase engine_export = "export" in engine {
   action host "engine.export"
 }
 
+phrase library_import = "import" in root {
+  kind "keyword"
+  color "#C586C0"
+  docs "```recurloop\nimport window\nimport vulkan\n```\n\nLoads an installed library by name using the same search path as --library. Imports its dependencies automatically."
+  type phrase_types_callable
+  action host "library.import"
+}
+
 phrase engine_import = "import" in engine {
   kind "keyword"
   color "#C586C0"

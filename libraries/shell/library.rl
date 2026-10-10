@@ -95,7 +95,7 @@ extern getenv(name:u8*) -> u8* abi sysv-amd64
 extern setenv(name:u8*, value:u8*, overwrite:i32) -> i32 abi sysv-amd64
 extern unsetenv(name:u8*) -> i32 abi sysv-amd64
 
-let Shell = phrase { dictionary = true permanent = true }
+let Shell = phrase { docs = "Shell commands, pipelines, captured output and scoped environment helpers. Pipeline and invocation objects have explicit ownership." dictionary = true permanent = true }
 let Shell:Internal = phrase { dictionary = true serializable = false }
 let Shell:Hooks = phrase { dictionary = true permanent = true }
 
@@ -2308,6 +2308,41 @@ set getenv.serializable = false
 set setenv.serializable = false
 set unsetenv.serializable = false
 set install_shell_assignments.serializable = false
+set Shell:Command.docs = "Owned command argument vector. Build with Command:add; adding the command to a pipeline transfers ownership."
+set Shell:Command:new.docs = "Allocates an empty command. Returns null on failure; release with Command:destroy unless a pipeline owns it."
+set Shell:Command:add.docs = "Copies one argument into the command, including the program name as the first argument. Returns 1 on success, 0 on failure."
+set Shell:Command:add_owned.docs = "Appends an already allocated argument without copying. Transfers ownership on success; returns 0 on failure."
+set Shell:Command:destroy.docs = "Frees a command and its owned argument strings. Accepts null."
+set Shell:Pipeline.docs = "Owned sequence of command or function stages, optionally linked to conditional pipelines. Release with Pipeline:destroy."
+set Shell:Pipeline:new.docs = "Allocates an empty pipeline, or returns null on failure. Release with Pipeline:destroy."
+set Shell:Pipeline:add.docs = "Adds a command stage, taking ownership on success. Returns 1 on success, 0 on failure."
+set Shell:Pipeline:add_function.docs = "Adds a text-transforming function stage from a callback or Function wrapper. Returns 1 on success, 0 on failure; a supplied wrapper transfers ownership on success."
+set Shell:Pipeline:add_command.docs = "Adds a program with an optional single argument as a new pipeline stage. Returns 1 on success, 0 on failure."
+set Shell:Pipeline:destroy.docs = "Frees the pipeline, its command and function stages, and linked conditional pipelines. Accepts null."
+set Shell:FunctionPrototype.docs = "Pipeline callback receiving borrowed text from standard input and returning text to print to standard output. The input is valid only during invocation."
+set Shell:Function:new.docs = "Allocates a wrapper for a pipeline callback. Returns null on failure; release with Function:destroy unless a pipeline owns it."
+set Shell:Function:destroy.docs = "Frees a pipeline function wrapper. Accepts null."
+set Shell:Invocation.docs = "Running pipeline and optional captured output. Accessors wait for completion; release with Invocation:destroy."
+set Shell:Invocation:start.docs = "Starts a pipeline, optionally capturing stdout. A single pipeline is asynchronous; conditional lists wait between pipelines. Returns null on failure; release with Invocation:destroy."
+set Shell:Invocation:await.docs = "Waits for completion and returns the first failing stage's exit code, or 0 when all succeed. Repeated calls return the stored result."
+set Shell:Invocation:wait.docs = "Waits for the invocation and returns its exit code. Equivalent to Invocation:await."
+set Shell:Invocation:exit_code.docs = "Waits for completion and returns the invocation's exit code."
+set Shell:Invocation:stdout.docs = "Waits for completion and returns invocation-owned captured stdout. Do not free it; it remains valid until Invocation:destroy."
+set Shell:Invocation:destroy.docs = "Waits for completion, then frees the invocation and captured output. Accepts null."
+set Shell:Capture.docs = "Owned captured output and exit code. Release both with Capture:destroy."
+set Shell:Capture:destroy.docs = "Frees captured output and its wrapper. Accepts null."
+set Shell:run_pipeline.docs = "Runs a pipeline synchronously and returns its exit code, or 126 when starting fails. The caller retains ownership of the pipeline."
+set Shell:capture_pipeline.docs = "Runs a pipeline synchronously and returns owned stdout and exit code, or null on failure. Release with Capture:destroy; the caller retains the pipeline."
+set Shell:cwd_enter.docs = "Changes the working directory and returns a guard for the previous directory, or null on failure. Restore and release with Shell:cwd_leave."
+set Shell:cwd_leave.docs = "Restores the directory saved by Shell:cwd_enter and frees the guard. Accepts null."
+set Shell:env_enter.docs = "Temporarily sets an environment variable and returns a guard, or null on failure. Restore and release with Shell:env_leave."
+set Shell:env_leave.docs = "Restores the variable's previous value, or unsets it if previously absent, then frees the guard. Accepts null."
+set Shell:Parallel:new.docs = "Allocates a group of parallel pipeline jobs, or returns null on failure. Release with Parallel:destroy."
+set Shell:Parallel:spawn.docs = "Starts a pipeline in a child process and adds it to the group. Returns 1 on success, 0 on failure."
+set Shell:Parallel:wait.docs = "Waits for all jobs and returns the first nonzero exit code, or 0 when all succeed. Clears the group's pending jobs."
+set Shell:Parallel:destroy.docs = "Waits for outstanding jobs and frees the group. Accepts null."
+set Shell:stringify.docs = "Returns an allocated text representation of an integer, or a copy of a text argument. Release the returned string with free."
+
 languagekit_native_end
 include "../build/export.rl"
 __recurloop_export_library

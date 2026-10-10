@@ -21,9 +21,10 @@ fi
   sha256sum -c share/recurloop/PACKAGE-MANIFEST.sha256 >/dev/null
 )
 
-for library in language-kit shell inferred http gui ide project embed; do
+test -s "$prefix/share/recurloop/standard-libraries.txt"
+while IFS= read -r library; do
   test -s "$prefix/share/recurloop/libraries/${library}.rli"
-done
+done < "$prefix/share/recurloop/standard-libraries.txt"
 
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT HUP INT TERM
@@ -32,6 +33,11 @@ PATH="$prefix/bin:$PATH"
 export PATH
 recurloop --version
 recurloop --library shell --library inferred --string 'assert 6 * 7 == 42'
+recurloop --string 'import window
+import vulkan
+import window
+assert 6 * 7 == 42'
+
 cat > native.rl <<'RL'
 fn add(a:i64, b:i64) -> i64 { return a + b }
 assert add(20, 22) == 42

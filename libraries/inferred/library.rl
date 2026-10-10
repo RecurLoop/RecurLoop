@@ -11,7 +11,7 @@
 languagekit_native_begin
 link shared "c"
 
-let Inferred = phrase { dictionary = true permanent = true }
+let Inferred = phrase { docs = "Source-defined syntax with inferred function parameters and result types. Use infer to select it explicitly; calls create specializations for argument kinds." dictionary = true permanent = true }
 let Inferred:Internal = phrase { dictionary = true serializable = false }
 let Inferred:Symbols = phrase { dictionary = true permanent = true }
 let Inferred:Functions = phrase { dictionary = true permanent = true }
@@ -1120,6 +1120,9 @@ let Inferred:explicit_form = phrase {
 let "infer " = <Inferred:explicit_form>
 let LanguageKit:Selectors:"infer " = <Inferred:explicit_form>
 let LanguageKit:Overrides:Inferred = <LanguageKit:Forms:Inferred>
+
+set Inferred:print_specializations.docs = "Prints the recorded argument-kind specializations of an inferred function selected by name."
+set Inferred:execute_source.docs = "Evaluates source using the inferred-language environment and reports diagnostics through the supplied context."
 
 languagekit_native_end
 include "../build/export.rl"

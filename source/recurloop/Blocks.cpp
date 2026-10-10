@@ -207,6 +207,10 @@ namespace recurloop {
     }
   } // namespace
 
+  std::string Blocks::peekLine(context::Context &context) {
+    return inspectLine(context).text;
+  }
+
   bool Blocks::hasOpeningBrace(context::Context &context, bool followingLine) {
     char quote = '\0';
     bool escaped = false;

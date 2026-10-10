@@ -295,6 +295,7 @@ namespace recurloop {
   void Expressions::assign(context::Context &context, lexicon::Phrase &) {
     if (PhraseDefinition::mutate(context)) return;
     const internal::Assignment statement = internal::assignment(context, false);
+    internal::recordBinding(context, statement);
     if (Semantic::active(context)) {
       (void)evaluate(context, statement.expression, statement.expressionOrigin);
       return;

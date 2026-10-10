@@ -45,7 +45,80 @@ namespace {
     }
     return colors;
   }
+  std::map<std::size_t, std::string> inspectionDocs(const std::string &output, std::string_view name) {
+    std::map<std::size_t, std::string> descriptions;
+    std::istringstream rows(output);
+    for (std::string row; std::getline(rows, row);) {
+      std::istringstream fields(row);
+      std::string tag, key, kind, docs;
+      std::size_t version = 0;
+      if (fields >> tag >> version >> key >> kind >> docs && tag == "P" && key == name)
+        descriptions.emplace(version, docs);
+    }
+    return descriptions;
+  }
 } // namespace
+
+TEST(RecurloopGeneration, PhraseDocsAcceptIdentifiersContainingGrammarSpellingsAcrossInputChunks) {
+  char program[] = "recurloop-test";
+  char *argv[] = {program};
+  auto runtime = std::make_unique<recurloop::Recurloop>();
+  runtime->initialize(1, argv);
+  runtime->getContext().config.source.buffer.size = 16;
+  auto state = recurloop::Project::create(runtime->getContext(), {program});
+  auto session = state->openSession();
+  const std::string source = R"(
+let Library = phrase { dictionary = true }
+let Library:text_equal = fn () -> i64 { return 42 }
+let Library:publish = <Library:text_equal>
+set Library:text_equal.docs = "Compares text without splitting identifiers into grammar phrases."
+set Library:publish.docs = "A qualified name independent of the :publish session command."
+set Library:text_equal.color = "#FF8800"
+print Library:text_equal()
+)";
+  const auto evaluated = session->evaluate(source);
+  ASSERT_EQ(evaluated.status, 0) << evaluated.error;
+  EXPECT_EQ(evaluated.output, "42\n");
+  const auto inspected = session->inspect(source, "/tmp/library-docs.rl", true, true);
+  ASSERT_EQ(inspected.output.find("E\t"), std::string::npos) << inspected.output;
+  EXPECT_NE(inspected.output.find("436f6d70617265732074657874"), std::string::npos) << inspected.output;
+  EXPECT_NE(inspected.output.find("23464638383030"), std::string::npos) << inspected.output;
+}
+
+TEST(RecurloopGeneration, FunctionDocsResolveQualifiedAndScopedCallsWithoutConfusingSameNamedFunctions) {
+  auto session = project()->openSession();
+  const auto definitions = session->evaluate(R"(
+let First = phrase { dictionary = true }
+let Second = phrase { dictionary = true }
+let First:new = fn () -> i64 { return 1 }
+set First:new.docs = "First constructor."
+let Second:new = fn () -> i64 { return 2 }
+set Second:new.docs = "Second constructor."
+)");
+  ASSERT_EQ(definitions.status, 0) << definitions.error;
+  const std::string source = R"(
+fn First:probe() -> i64 {
+    let first = First:new()
+    let second = Second:new()
+    return first + second + new()
+}
+)";
+  const auto inspected = session->inspect(source, "/tmp/qualified-function-docs.rl", true);
+  ASSERT_EQ(inspected.output.find("E\t"), std::string::npos) << inspected.output;
+  std::map<std::size_t, std::string> references;
+  std::istringstream rows(inspected.output);
+  for (std::string row; std::getline(rows, row);) {
+    std::istringstream fields(row);
+    std::string tag, name;
+    std::size_t start = 0, end = 0, line = 0, version = 0;
+    if (fields >> tag >> start >> end >> line >> version >> name && tag == "R") references[start] = name;
+  }
+  EXPECT_EQ(references[source.find("First:new()")], "46697273743a6e6577");
+  EXPECT_EQ(references[source.find("Second:new()")], "5365636f6e643a6e6577");
+  EXPECT_EQ(references[source.find("new()", source.find("return first"))], "46697273743a6e6577");
+  EXPECT_NE(inspected.output.find("466972737420636f6e7374727563746f722e"), std::string::npos);
+  EXPECT_NE(inspected.output.find("5365636f6e6420636f6e7374727563746f722e"), std::string::npos);
+}
 
 TEST(RecurloopGeneration, NativeCallsAreStatementsAndStreamOutputToTheCallingSession) {
   auto state = project();
@@ -585,17 +658,9 @@ let metadata_entry = phrase { color = "#008800" docs = "new" }
     const auto inspected = inspect(false);
     ASSERT_EQ(inspected.output.find("E\t"), std::string::npos) << inspected.output;
     const auto colors = inspectionColors(inspected.output);
-    std::map<std::size_t, std::string> descriptions;
-    std::istringstream rows(inspected.output);
-    for (std::string row; std::getline(rows, row);) {
-      std::istringstream fields(row);
-      std::string tag, name, kind, docs;
-      std::size_t version = 0;
-      if (fields >> tag >> version >> name >> kind >> docs && tag == "P" && name == "6d657461646174615f656e747279")
-        descriptions.emplace(version, docs);
-    }
-    EXPECT_EQ(descriptions[0], "6166746572");
-    EXPECT_EQ(descriptions[1], "6e6577");
+    const auto descriptions = inspectionDocs(inspected.output, "6d657461646174615f656e747279");
+    EXPECT_EQ(descriptions.at(0), "6166746572");
+    EXPECT_EQ(descriptions.at(1), "6e6577");
     const auto cleared = inspect(true);
     ASSERT_EQ(cleared.output.find("E\t"), std::string::npos) << cleared.output;
     const auto clearedColors = inspectionColors(cleared.output);
@@ -612,6 +677,50 @@ let metadata_entry = phrase { color = "#008800" docs = "new" }
   }
 }
 
+TEST(RecurloopGeneration, InspectionKeepsMetadataIdentitiesAcrossEngineImports) {
+  namespace fs = std::filesystem;
+  const fs::path root = fs::temp_directory_path() / "recurloop-inspection-image-identities";
+  fs::remove_all(root);
+  fs::create_directories(root);
+  const fs::path image = root / "language.rli";
+  auto exporter = project()->openSession();
+  ASSERT_EQ(exporter->evaluate("engine export \"" + image.string() + "\"").status, 0);
+  const std::string source = "let style = phrase { color = \"#008800\" docs = \"original\" }\n"
+                             "let earlier = <style>\n"
+                             "let earlier = phrase { color = \"#123456\" docs = \"replacement\" }\n"
+                             "let retained = fn () -> i64 { return 1 }\n"
+                             "retained()\n"
+                             "engine import \"" +
+                             image.string() +
+                             "\"\n"
+                             "set retained.color = \"#FF8800\"\n"
+                             "set retained.docs = \"after import\"\n"
+                             "retained()\n";
+  auto session = project()->openSession();
+  for (int repeat = 0; repeat < 2; ++repeat) {
+    const auto inspected = session->inspect(source, (root / "edited.rl").string(), true, true);
+    ASSERT_EQ(inspected.output.find("E\t"), std::string::npos) << inspected.output;
+    const auto colors = inspectionColors(inspected.output);
+    std::size_t offset = 0;
+    while ((offset = source.find("retained", offset)) != std::string::npos) {
+      ASSERT_TRUE(colors.contains({offset, offset + 8})) << offset;
+      EXPECT_EQ(colors.at({offset, offset + 8}), "23464638383030");
+      offset += 8;
+    }
+    const auto first = source.find("earlier");
+    const auto second = source.find("earlier", first + 7);
+    EXPECT_EQ(colors.at({first, first + 7}), "23303038383030");
+    EXPECT_EQ(colors.at({second, second + 7}), "23313233343536");
+    // The first alias has no own metadata and need not survive serialization.
+    const auto descriptions = inspectionDocs(inspected.output, "6561726c696572");
+    EXPECT_EQ(descriptions.at(0), "6f726967696e616c");
+    EXPECT_EQ(descriptions.at(1), "7265706c6163656d656e74");
+    EXPECT_NE(inspected.output.find("616674657220696d706f7274"), std::string::npos);
+    EXPECT_EQ(session->evaluate("print 42").output, "42\n");
+  }
+  fs::remove_all(root);
+}
+
 TEST(RecurloopGeneration, ProjectInspectionReplaysSourceEntryAndKeepsTheSessionState) {
   namespace fs = std::filesystem;
   const fs::path root = fs::temp_directory_path() / "recurloop-source-entry-inspection-test";
@@ -622,7 +731,12 @@ TEST(RecurloopGeneration, ProjectInspectionReplaysSourceEntryAndKeepsTheSessionS
   {
     std::ofstream out(entry);
     out << "let TraceNamespace = phrase { dictionary = true permanent = true }\n"
-           "include \"module.rl\"\n";
+           "let cached_color = fn () -> i64 { return 1 }\n"
+           "cached_color()\n"
+           "include \"module.rl\"\n"
+           "set cached_color.color = \"#FF8800\"\n"
+           "set cached_color.docs = \"cached color documentation\"\n"
+           "cached_color()\n";
   }
   {
     std::ofstream out(module);
@@ -636,7 +750,19 @@ TEST(RecurloopGeneration, ProjectInspectionReplaysSourceEntryAndKeepsTheSessionS
   ASSERT_EQ(loaded.status, 0) << loaded.error;
   session->publish();
   const auto generation = session->generations().project;
+  std::ifstream entryInput(entry);
+  const std::string entrySource((std::istreambuf_iterator<char>(entryInput)), {});
   for (int repeat = 0; repeat < 2; ++repeat) {
+    const auto rootInspection = session->inspect(entrySource, entry.string(), true, true);
+    ASSERT_EQ(rootInspection.output.find("E\t"), std::string::npos) << rootInspection.output;
+    const auto colors = inspectionColors(rootInspection.output);
+    std::size_t offset = 0;
+    while ((offset = entrySource.find("cached_color", offset)) != std::string::npos) {
+      ASSERT_TRUE(colors.contains({offset, offset + 12})) << offset;
+      EXPECT_EQ(colors.at({offset, offset + 12}), "23464638383030");
+      offset += 12;
+    }
+    EXPECT_NE(rootInspection.output.find("63616368656420636f6c6f7220646f63756d656e746174696f6e"), std::string::npos);
     const auto inspected =
         session->inspect("let TraceNamespace:value = fn () -> i64 { return 23 }\n", module.string(), true);
     EXPECT_EQ(inspected.output.find("E\t"), std::string::npos) << inspected.output;

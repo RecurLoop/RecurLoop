@@ -22,7 +22,7 @@ languagekit_native_begin
 link shared "c"
 link shared "pthread"
 
-let Http = phrase { dictionary = true permanent = true }
+let Http = phrase { docs = "HTTP server, request and response helpers. Handlers borrow their request and response for the duration of the call." dictionary = true permanent = true }
 let Http:Internal = phrase { dictionary = true serializable = false }
 let Http:ThreadMain = fn (argument:u8*) -> u8*
 let Http:TopLevelMain = fn () -> i64
@@ -1921,6 +1921,31 @@ let http = phrase {
     }
 }
 
+
+set Http:Handler.docs = "Route callback receiving a borrowed request and response. Send a response before returning; do not destroy these handler arguments."
+set Http:Request.docs = "Parsed HTTP request, including method, path, query, headers and body. In a handler, its storage remains owned by the server."
+set Http:Request:header.docs = "Finds a request header by a case-insensitive name. Returns request-owned text or null when absent; do not free it."
+set Http:Request:param.docs = "Returns a percent-decoded query parameter or null when absent. The text belongs to the request and is valid until the handler returns."
+set Http:Request:destroy.docs = "Frees a request and its headers, body and decoded parameters. The server calls this for handler arguments."
+set Http:Response.docs = "Response writer for one client connection. Configure headers before sending; a response can be sent only once."
+set Http:Response:header.docs = "Adds a response header before sending. Borrows name and value; keep both valid until the response is sent."
+set Http:Response:send.docs = "Sends status, content type and body_length bytes from body. Borrows the body for this call; subsequent sends are ignored."
+set Http:Response:text.docs = "Sends a null-terminated body as text/plain with UTF-8 encoding."
+set Http:Response:html.docs = "Sends a null-terminated body as text/html with UTF-8 encoding."
+set Http:Response:json.docs = "Sends a null-terminated body as application/json. The caller supplies valid JSON."
+set Http:Response:empty.docs = "Sends a status with an empty body."
+set Http:Limits.docs = "Request-size, timeout, worker-pool and queue limits. Start with Limits:defaults and configure before creating a server."
+set Http:Limits:defaults.docs = "Allocates default HTTP limits, or returns null on failure. Server:new_on_with_limits takes ownership; otherwise free the record yourself."
+set Http:Limits:valid.docs = "Returns 1 when all HTTP limits form a supported configuration, otherwise 0."
+set Http:Server.docs = "Owned listening socket, routes and limits for an IPv4 HTTP server. Release with Server:destroy when no serving workers are active."
+set Http:Server:new.docs = "Creates a server listening on all IPv4 interfaces at port with default limits. Returns null on failure; release with Server:destroy."
+set Http:Server:new_on.docs = "Creates a server on an IPv4 address and port with default limits. Returns null on failure; release with Server:destroy."
+set Http:Server:new_on_with_limits.docs = "Creates a server on an IPv4 address and port using custom limits. Takes ownership of limits even on failure. Returns null on failure."
+set Http:Server:route.docs = "Registers a method and path handler, copying both strings. Supports an exact path or a trailing * prefix match; returns 1 on success, 0 on failure."
+set Http:Server:on_not_found.docs = "Sets the fallback handler used when no registered route matches."
+set Http:Server:serve_once.docs = "Accepts and serves one connection synchronously, then closes it. Returns 1 on success, 0 on failure."
+set Http:Server:run.docs = "Runs the accept loop with a bounded worker pool and queue. Blocks while serving; returns 0 if startup or the accept loop fails."
+set Http:Server:destroy.docs = "Closes server sockets and frees routes, limits and queue storage. Serving workers must have stopped before destruction; accepts null."
 
 languagekit_native_end
 include "../build/export.rl"

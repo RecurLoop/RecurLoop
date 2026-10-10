@@ -111,6 +111,16 @@ namespace recurloop {
       std::unordered_map<std::size_t, std::pair<SourceLocation, SourceLocation>> definitions;
       struct Anchor { Size phrase; std::size_t end; };
       std::vector<Anchor> anchors;
+      struct Symbol {
+        Size address = 0;
+        std::string name, key, prototype, type;
+        std::size_t version = 0;
+        SemanticMetadata metadata;
+        bool docsSpecified = false;
+        Size docsOwner = 0;
+      };
+      std::vector<Symbol> symbols;
+      std::unordered_map<Size, Size> symbolIds;
       std::unordered_map<Size, std::string> names;
       bool namesDirty = false;
     };
@@ -401,6 +411,57 @@ namespace recurloop {
       return lexicon::Phrase(&trace.context->lexicon, address).load();
     }
 
+    Size symbolId(TraceState &trace, lexicon::Phrase phrase) {
+      if (phrase.isNull()) return 0;
+      const Size address = phrase.getAddress();
+      if (const auto found = trace.symbolIds.find(address); found != trace.symbolIds.end()) return found->second;
+      if (trace.namesDirty || !trace.names.contains(address)) {
+        trace.names = phrasePaths(*trace.context);
+        trace.namesDirty = false;
+        trace.names.try_emplace(address, phrase.getKey());
+      }
+      TraceState::Symbol symbol;
+      symbol.address = address;
+      symbol.name = phrasePath(trace.names, phrase);
+      symbol.key = phrase.getKey();
+      symbol.version = phraseVersion(phrase);
+      symbol.prototype = phrase.containsPrototype() ? phrasePath(trace.names, phrase.getPrototype()) : "";
+      symbol.type = phrase.containsType() ? phrasePath(trace.names, phrase.getType()) : "";
+      trace.symbols.push_back(std::move(symbol));
+      const Size id = trace.symbols.size();
+      trace.symbolIds.emplace(address, id);
+      return id;
+    }
+
+    TraceState::Symbol symbolFact(TraceState &trace, Size id) {
+      if (id == 0) return {};
+      TraceState::Symbol symbol = trace.symbols.at(id - 1);
+      if (symbol.address == 0) return symbol;
+      if (trace.namesDirty) {
+        trace.names = phrasePaths(*trace.context);
+        trace.namesDirty = false;
+      }
+      // Incomplete elaboration can roll back temporary phrases and reuse their
+      // arena space. Only refresh symbols still present in the phrase graph;
+      // unreachable matches retain the facts captured while they were valid.
+      const auto name = trace.names.find(symbol.address);
+      if (name == trace.names.end() || name->second != symbol.name) return symbol;
+      lexicon::Phrase phrase = phraseAt(trace, symbol.address);
+      symbol.prototype = phrase.containsPrototype() ? phrasePath(trace.names, phrase.getPrototype()) : "";
+      symbol.type = phrase.containsType() ? phrasePath(trace.names, phrase.getType()) : "";
+      symbol.metadata = resolvedTrace(trace, phrase);
+      const DocsAnchor anchor = docsAnchor(trace, phrase);
+      symbol.docsSpecified = anchor.specified;
+      symbol.docsOwner = symbolId(trace, phraseAt(trace, anchor.owner));
+      trace.symbols.at(id - 1) = symbol;
+      return symbol;
+    }
+
+    struct InspectionRelocationState {
+      TraceState *trace;
+      std::vector<Size> addresses;
+    };
+
     void appendStyle(TraceState &trace, std::size_t startByte, std::size_t endByte,
                      std::string_view color, std::string_view kind, std::string_view docs = {},
                      std::string_view ownerKey = {}, std::uint64_t group = 0) {
@@ -660,6 +721,35 @@ namespace recurloop {
     }
   }
 
+  Semantic::InspectionRelocation::InspectionRelocation(context::Context &context) {
+    if (!Semantic::active(context)) return;
+    auto state = std::make_unique<InspectionRelocationState>();
+    state->trace = currentTrace;
+    // Resolving a fact may register its documentation owner as another symbol.
+    for (Size id = 1; id <= currentTrace->symbols.size(); ++id) symbolFact(*currentTrace, id);
+    for (auto &symbol : currentTrace->symbols) {
+      state->addresses.push_back(symbol.address);
+      symbol.address = 0;
+    }
+    currentTrace->symbolIds.clear();
+    state_ = state.release();
+  }
+
+  Semantic::InspectionRelocation::~InspectionRelocation() {
+    delete static_cast<InspectionRelocationState *>(state_);
+  }
+
+  void Semantic::InspectionRelocation::relocate(const std::function<std::uint64_t(std::uint64_t)> &address) {
+    if (state_ == nullptr) return;
+    auto &state = *static_cast<InspectionRelocationState *>(state_);
+    for (std::size_t index = 0; index < state.addresses.size(); ++index) {
+      const Size relocated = state.addresses[index] == 0 ? 0 : address(state.addresses[index]);
+      state.trace->symbols[index].address = relocated;
+      if (relocated != 0) state.trace->symbolIds.emplace(relocated, index + 1);
+    }
+    Semantic::markInspectionMetadataDirty(*state.trace->context);
+  }
+
   void Semantic::applyPending(context::Context &context, lexicon::Phrase phrase) {
     if (context.exec.hasPendingPhraseKind) setKind(context, phrase, context.exec.pendingPhraseKind);
     if (context.exec.hasPendingPhraseColor) setColor(context, phrase, context.exec.pendingPhraseColor);
@@ -735,10 +825,12 @@ namespace recurloop {
     // elaborated state. Declarations and earlier reads follow the same rule as
     // later uses; shadowed bindings retain their own identities.
     if (state.metadataDirty) refreshTraceCatalog(state);
-    std::unordered_map<Size, SemanticMetadata> phraseMetadata;
-    const auto metadataFor = [&](Size address) -> const SemanticMetadata & {
-      auto [entry, inserted] = phraseMetadata.try_emplace(address);
-      if (inserted) entry->second = resolvedTrace(state, phraseAt(state, address));
+    state.names = phrasePaths(*state.context);
+    state.namesDirty = false;
+    std::unordered_map<Size, TraceState::Symbol> phraseMetadata;
+    const auto metadataFor = [&](Size id) -> const TraceState::Symbol & {
+      auto [entry, inserted] = phraseMetadata.try_emplace(id);
+      if (inserted) entry->second = symbolFact(state, id);
       return entry->second;
     };
     std::uint64_t nextGroup = state.nextGroup;
@@ -754,13 +846,14 @@ namespace recurloop {
         span.ownerKey = local.name;
         localRanges.emplace(span.start, span.end);
       } else {
-        style = metadataFor(span.symbol);
-        const DocsAnchor anchor = docsAnchor(state, phraseAt(state, span.symbol));
-        const Size owner = anchor.specified ? anchor.owner : span.docsOwner;
+        const auto &symbol = metadataFor(span.symbol);
+        style = symbol.metadata;
+        const Size owner = symbol.docsSpecified ? symbol.docsOwner : span.docsOwner;
         if (owner != span.docsOwner) span.group = owner == 0 ? 0 : nextGroup++;
         if (owner != 0) {
-          hover = metadataFor(owner);
-          span.ownerKey = phraseAt(state, owner).getKey();
+          const auto &ownerFact = metadataFor(owner);
+          hover = ownerFact.metadata;
+          span.ownerKey = ownerFact.key;
         }
         if (hover.hasKind) span.kind = hover.kind;
       }
@@ -855,17 +948,16 @@ namespace recurloop {
     std::vector<Candidate> candidates;
     std::unordered_set<Size> visited;
     std::unordered_set<Size> exported;
-    const auto exportFact = [&](lexicon::Phrase phrase) {
-      const std::string name = phrasePath(names, phrase);
-      const SemanticMetadata style = resolved(metadata, phrase);
+    const auto exportFact = [&](Size id) {
+      const auto fact = symbolFact(state, id);
+      const std::string &name = fact.name;
+      const SemanticMetadata &style = fact.metadata;
       std::string kind = style.hasKind ? style.kind : "phrase";
       if (types.contains(name)) kind = "type";
       if (signatures.contains(name)) kind = "function";
-      if (exported.insert(phrase.getAddress()).second) {
-        const std::string prototype = phrase.containsPrototype() ? phrasePath(names, phrase.getPrototype()) : "";
-        const std::string type = phrase.containsType() ? phrasePath(names, phrase.getType()) : "";
-        output << "P\t" << phraseVersion(phrase) << '\t' << hex(name) << '\t' << hex(kind) << '\t' << hex(style.docs)
-               << '\t' << hex(prototype) << '\t' << hex(type) << '\t' << hex(signatures[name]) << '\n';
+      if (exported.insert(id).second) {
+        output << "P\t" << fact.version << '\t' << hex(name) << '\t' << hex(kind) << '\t' << hex(style.docs) << '\t'
+               << hex(fact.prototype) << '\t' << hex(fact.type) << '\t' << hex(signatures[name]) << '\n';
       }
       return kind;
     };
@@ -880,7 +972,7 @@ namespace recurloop {
         const std::string key = phrase.getKey();
         if (key.empty() || static_cast<unsigned char>(key.front()) < 32) continue;
         const std::string name = phrasePath(names, phrase);
-        const std::string kind = exportFact(phrase);
+        const std::string kind = exportFact(symbolId(state, phrase));
         candidates.push_back({phrase, name, kind});
         auto descriptor = assistance.descriptor(phrase);
         auto pattern = Assistance::child(descriptor, "pattern").isNull()
@@ -914,23 +1006,28 @@ namespace recurloop {
     // Earlier occurrences can refer to a version hidden by a later declaration.
     // Export those exact facts as well, without adding obsolete completions.
     for (const Span &span : state.spans)
-      if (span.source == Span::Source::Phrase && !exported.contains(span.symbol))
-        exportFact(phraseAt(state, span.symbol));
+      if (span.source == Span::Source::Phrase && !exported.contains(span.symbol)) exportFact(span.symbol);
     // Anchors come from actual phrase matches. Only the innermost matching
     // usage that reaches the cursor supplies argument expectations.
     std::size_t closest = 0;
     std::string expectations;
     for (const auto &anchor : state.anchors) {
-      if (anchor.end < closest || anchor.end > state.source.size() || !patterns.contains(anchor.phrase)) continue;
+      const Size address = state.symbols.at(anchor.phrase - 1).address;
+      if (address == 0 || anchor.end < closest || anchor.end > state.source.size() || !patterns.contains(address))
+        continue;
       std::vector<SyntaxPattern::Expectation> expected;
-      try { expected = SyntaxPattern::expect(patterns[anchor.phrase], std::string_view(state.source).substr(anchor.end)); }
-      catch (...) { continue; } // Incomplete comments and edited contracts are ordinary inspection input.
+      try {
+        expected = SyntaxPattern::expect(patterns[address], std::string_view(state.source).substr(anchor.end));
+      } catch (...) {
+        continue;
+      } // Incomplete comments and edited contracts are ordinary inspection input.
       if (expected.empty()) continue;
       if (anchor.end > closest) { expectations.clear(); closest = anchor.end; }
-      auto phrase = phraseAt(state, anchor.phrase);
+      auto phrase = phraseAt(state, address);
       std::ostringstream rows;
       for (const auto &item : expected) {
-        const auto insertion = SyntaxPattern::insertion(patterns[anchor.phrase], std::string_view(state.source).substr(anchor.end), item);
+        const auto insertion =
+            SyntaxPattern::insertion(patterns[address], std::string_view(state.source).substr(anchor.end), item);
         rows << "X\t" << phraseVersion(phrase) << '\t' << hex(phrasePath(names, phrase)) << '\t'
              << characterOffset(state, anchor.end + item.start) << '\t' << hex(item.name) << '\t'
              << hex(item.matcher) << '\t' << hex(item.literal) << '\t' << hex(insertion) << '\n';
@@ -1070,16 +1167,10 @@ namespace recurloop {
     const std::optional<std::size_t> endByte = sourceOffset(trace, end);
     if (!startByte || !endByte || *endByte <= *startByte) return fallbackOwner;
 
-    // A lexical path plus its chronological version identifies the matched
-    // phrase independently of arena addresses or later shadow definitions.
-    if (trace.namesDirty || !trace.names.contains(phrase.getAddress())) {
-      trace.names = phrasePaths(context);
-      trace.namesDirty = false;
-      trace.names.try_emplace(phrase.getAddress(), phrase.getKey());
-    }
-    trace.matches.push_back(
-        matchRecord(trace, *startByte, *endByte, start.line, phraseVersion(phrase), phrasePath(trace.names, phrase)));
-    trace.anchors.push_back({phrase.getAddress(), *endByte});
+    const Size id = symbolId(trace, phrase);
+    const auto fact = symbolFact(trace, id);
+    trace.matches.push_back(matchRecord(trace, *startByte, *endByte, start.line, fact.version, fact.name));
+    trace.anchors.push_back({id, *endByte});
     const auto key = phrase.getKey();
     if (!key.empty() && std::ranges::all_of(key, [](unsigned char byte) { return std::isspace(byte); }))
       trace.completionStart = *endByte;
@@ -1096,13 +1187,10 @@ namespace recurloop {
       fallbackGroup = trace.activeGroup;
     }
 
-    // Restored images can introduce metadata needed to track construct ownership.
-    if (trace.metadataDirty) refreshTraceCatalog(trace);
-    const DocsAnchor anchor = docsAnchor(trace, phrase);
     Size selectedOwner = fallback;
     std::uint64_t selectedGroup = fallbackGroup;
-    if (anchor.specified) {
-      selectedOwner = anchor.owner;
+    if (fact.docsSpecified) {
+      selectedOwner = fact.docsOwner;
       selectedGroup = selectedOwner == 0 ? 0 : trace.nextGroup++;
     }
 
@@ -1119,7 +1207,7 @@ namespace recurloop {
     span.end = characterOffset(trace, *endByte);
     span.group = selectedGroup;
     span.source = Span::Source::Phrase;
-    span.symbol = phrase.getAddress();
+    span.symbol = id;
     span.docsOwner = selectedOwner;
     trace.spans.push_back(std::move(span));
     return selectedOwner;

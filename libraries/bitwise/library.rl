@@ -2,7 +2,7 @@
 
 extern strcmp(left:u8*, right:u8*) -> i32 abi sysv-amd64
 
-let Bitwise = phrase { dictionary = true }
+let Bitwise = phrase { docs = "Bitwise operations on 64-bit integers. All shift counts must be in the range 0..63." dictionary = true }
 
 let bitwise_and_u64 = asm {
     mov rax, rdi
@@ -103,6 +103,19 @@ let Bitwise:shl = fn (value:i64, count:i64) -> i64 {
 let Bitwise:shr = fn (value:i64, count:i64) -> i64 {
     return bitwise_sar_i64(value, count)
 }
+
+set Bitwise:and_u64.docs = "Returns the bitwise AND of two unsigned 64-bit values."
+set Bitwise:or_u64.docs = "Returns the bitwise OR of two unsigned 64-bit values."
+set Bitwise:xor_u64.docs = "Returns the bitwise exclusive OR of two unsigned 64-bit values."
+set Bitwise:not_u64.docs = "Inverts every bit of an unsigned 64-bit value."
+set Bitwise:shl_u64.docs = "Shifts left by count bits, discarding overflow. Count must be in 0..63."
+set Bitwise:shr_u64.docs = "Shifts right by count bits, filling with zeros. Count must be in 0..63."
+set Bitwise:and.docs = "Returns the bitwise AND of the 64-bit representations of two signed integers."
+set Bitwise:or.docs = "Returns the bitwise OR of the 64-bit representations of two signed integers."
+set Bitwise:xor.docs = "Returns the bitwise exclusive OR of the 64-bit representations of two signed integers."
+set Bitwise:not.docs = "Inverts every bit of a signed 64-bit integer."
+set Bitwise:shl.docs = "Shifts a signed integer's bit pattern left, discarding overflow. Count must be in 0..63."
+set Bitwise:shr.docs = "Shifts a signed integer right, preserving its sign bit. Count must be in 0..63."
 
 include "../build/export.rl"
 __recurloop_export_library

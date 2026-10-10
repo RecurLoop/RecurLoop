@@ -4,6 +4,7 @@
 #include <lexicon/Lexicon.hpp>
 #include <recurloop/Functions.hpp>
 #include <recurloop/LanguageGrammar.hpp>
+#include <recurloop/SyntaxCursor.hpp>
 
 #include <utility>
 #include <vector>
@@ -172,7 +173,12 @@ namespace recurloop {
       cursor.typeAccept(first);
       result = invoke(context, cursor, scope, constructor);
     } else {
+      auto &tokens = cursor.typeSyntaxCursor();
+      const auto start = tokens.current().offset;
       result = resolve(context, cursor, qualified(cursor), scope);
+      const auto phrase =
+          LanguageGrammar::findQualified(context.lexicon.phrase(), context.language().types.get(result).name);
+      tokens.recordResolved(phrase, start, tokens.consumedEnd());
     }
 
     while (true) {

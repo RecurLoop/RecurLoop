@@ -9,7 +9,7 @@
 
 languagekit_native_begin
 
-let Embed = phrase { dictionary = true permanent = true }
+let Embed = phrase { docs = "Embeds binary literals during elaboration and exposes their runtime data without a separate asset loader." dictionary = true permanent = true }
 
 let Embed:bit = fn (value:u8, index:u64) -> u8 {
     var divisor:u64 = 128
@@ -65,6 +65,12 @@ let Embed:bytes = fn (blob:BitString*) -> u64 {
     if !blob { return 0 }
     return (blob.bits + 7) / 8
 }
+
+set Embed:emit_bits.docs = "Emits a native binary literal from data in a syntax action, most-significant bit first. The bits parameter is the exact bit count. Returns 1 on success or 0 on failure."
+set Embed:emit_bytes.docs = "Emits a native binary literal from data in a syntax action. The bytes parameter is the byte count. Returns 1 on success or 0 on failure."
+set Embed:data.docs = "Returns a borrowed pointer to an embedded literal's bytes, or null for a null blob. Storage belongs to the executable or JIT module; do not free it."
+set Embed:bits.docs = "Returns the exact bit length of an embedded literal, or 0 for a null blob."
+set Embed:bytes.docs = "Returns the bit length rounded up to whole bytes, or 0 for a null blob. The final byte may contain padding bits."
 
 languagekit_native_end
 include "../build/export.rl"

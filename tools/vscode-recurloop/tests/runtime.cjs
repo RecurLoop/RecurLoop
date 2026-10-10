@@ -65,6 +65,16 @@ target cycle depends [cycle] {}
   const trace = await runtime.inspect({ uri: { fsPath: path.join(root, 'main.rl') }, getText: () => 'greeting 42\n' });
   assert.ok(trace.includes(Buffer.from('greeting').toString('hex')), trace);
   assert.ok(!trace.includes(Buffer.from('undefined phrase').toString('hex')), trace);
+  // Root inspection replays cached includes and replaces the lexicon graph.
+  // Analysis must preserve the shared server and its console connections.
+  const rootDocument = { uri: { fsPath: path.join(root, 'recurloop.project.rl') },
+    getText: () => fs.readFileSync(path.join(root, 'recurloop.project.rl'), 'utf8') };
+  for (let repeat = 0; repeat < 2; ++repeat) {
+    const rootTrace = await runtime.inspect(rootDocument);
+    assert.ok(rootTrace.includes('P\t'), rootTrace);
+    assert.ok(!rootTrace.includes('E\t'), rootTrace);
+    assert.equal((await runtime.execute(folder.uri, ['print 42'])).trim(), '42');
+  }
   const terminal = await runtime.terminalOptions(folder.uri);
   assert.equal(terminal.shellArgs[0], '--connect');
   assert.ok(fs.existsSync(terminal.shellArgs[1]));

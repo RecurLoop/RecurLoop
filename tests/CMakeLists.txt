@@ -245,6 +245,12 @@ if(ENABLE_TESTS_FEATURE)
         DEPENDS ${RECURLOOP_CHECK_COMMON_FILES})
     recurloop_add_feature_test(recurloop/language/image_native_state.cmake
         DEPENDS ${RECURLOOP_CHECK_COMMON_FILES} ${RECURLOOP_CHECK_LANGUAGE_KIT_FILES})
+    recurloop_add_feature_test(recurloop/language/library_imports.cmake
+        DEPENDS "${RECURLOOP_WINDOW_IMAGE}" "${RECURLOOP_VULKAN_IMAGE}"
+                "${CMAKE_SOURCE_DIR}/libraries/standard.txt")
+    if(TARGET RecurloopUnitTests)
+        add_dependencies(RecurloopUnitTests RecurloopLibraries)
+    endif()
     recurloop_add_feature_test(recurloop/language/image_dependencies.cmake
         DEPENDS ${RECURLOOP_CHECK_COMMON_FILES})
     recurloop_add_feature_test(recurloop/language/debug_stats.cmake

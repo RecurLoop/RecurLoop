@@ -42,8 +42,8 @@ cmake --build --preset debug --target Recurloop
 
 Production verification uses `RECURLOOP_LLVM_PROVIDER=ARCHIVE`, exact LLVM
 22.1.8 release URL/SHA-256 and native-only backend linking. `make package`
-stages and tests the Linux x86-64 glibc artifact. Graphics extras remain
-opt-in. See `docs/releases.md` for platform contracts and container strategy.
+stages and tests the Linux x86-64 glibc artifact. Shader compilation remains
+opt-in; window and Vulkan bindings are included in the standard distribution. See `docs/releases.md` for platform contracts and container strategy.
 
 | Change | Verification |
 |---|---|
@@ -53,7 +53,7 @@ opt-in. See `docs/releases.md` for platform contracts and container strategy.
 | standard-library images only | `make libraries` |
 
 `make libraries` produces `language-kit`, `shell`, `inferred`, `http`, `gui`,
-`ide`, `project`, and `embed`. `make install` installs the host and those images;
+`ide`, `project`, `embed`, `window`, and `vulkan`. `make install` installs the host and those images;
 Clang/LLD are not bundled. The linked LLVM JIT/backend is in-process; native object/executable file output
 intentionally uses host LLD/Clang rather than bundling a platform toolchain.
 

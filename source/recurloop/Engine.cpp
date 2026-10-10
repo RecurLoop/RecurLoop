@@ -3,6 +3,8 @@
 #include <context/Context.hpp>
 #include <recurloop/Blocks.hpp>
 #include <recurloop/EngineImage.hpp>
+#include <recurloop/Library.hpp>
+#include <recurloop/SyntaxCursor.hpp>
 #include <recurloop/Execution.hpp>
 #include <recurloop/Expressions.hpp>
 #include <recurloop/Semantic.hpp>
@@ -61,11 +63,30 @@ namespace recurloop {
       context.lookup = {};
       context::Lookup::in(context, root);
     }
+    void importImagePath(context::Context &context, const std::string &imagePath) {
+      // Project module caches treat imports exactly like linked-library
+      // dependencies. Notify the active cache on both sides of the load so it can
+      // keep source-owned state separate from dependency-owned state.
+      observeImageDependency(context, imagePath, false);
+      // The restore replaces the lexicon that owns the currently invoked phrase.
+      context.exec.invoked = nullptr;
+      EngineImage::load(context, imagePath);
+      Semantic::markInspectionMetadataDirty(context);
+      observeImageDependency(context, imagePath, true);
+
+      // Loading a new image resets lookup to the restored root. Loading an image
+      // that is already present is intentionally a no-op, however, and therefore
+      // used to leave source execution inside the `engine` dictionary entered by
+      // the `engine import` phrase. Make duplicate imports observationally match
+      // real imports: the next top-level form always resumes from root.
+      resumeRoot(context);
+    }
   } // namespace
 
   void Engine::registerActions(context::Context &context) {
     context.actions().define("engine.export", exportImage);
     context.actions().define("engine.import", importImage);
+    context.actions().define("library.import", importLibrary);
     context.actions().define("engine.define", define);
     context.actions().define("source.include", includeSource);
   }
@@ -101,26 +122,24 @@ namespace recurloop {
     // semantic worker elaborate a different language state than the compiler
     // (including root files that import their language before includes).
     const std::string imagePath = path(context, "engine import");
-    // Project module caches treat imports exactly like linked-library
-    // dependencies. Notify the active cache on both sides of the load so it can
-    // keep source-owned state separate from dependency-owned state.
-    observeImageDependency(context, imagePath, false);
-    // The restore replaces the lexicon that owns the currently invoked phrase.
-    context.exec.invoked = nullptr;
-    EngineImage::load(context, imagePath);
-    Semantic::markInspectionMetadataDirty(context);
-    observeImageDependency(context, imagePath, true);
+    importImagePath(context, imagePath);
+  }
 
-    // Loading a new image resets lookup to the restored root. Loading an image
-    // that is already present is intentionally a no-op, however, and therefore
-    // used to leave source execution inside the `engine` dictionary entered by
-    // the `engine import` phrase. Make duplicate imports observationally match
-    // real imports: the next top-level form always resumes from root.
-    lexicon::Phrase root = context.lexicon.phrase();
-    if (context::Lookup::current(context).getAddress() != root.getAddress()) {
-      context.lookup = {};
-      context::Lookup::in(context, root);
-    }
+  void Engine::importLibrary(context::Context &context, lexicon::Phrase &) {
+    const std::string source = readLine(context);
+    SyntaxCursor::Options options;
+    options.bareWords = true;
+    options.semanticTracing = false;
+    SyntaxCursor cursor(
+        context, source, {},
+        [](const context::Context &, std::size_t, const std::string &error) { THROW(, "import: " << error) }, options);
+    const auto name = cursor.take();
+    if (name.kind != SyntaxTokenKind::Identifier && name.kind != SyntaxTokenKind::Word &&
+        name.kind != SyntaxTokenKind::String)
+      THROW(, "import requires a library name or quoted name")
+    if (cursor.current().kind != SyntaxTokenKind::End)
+      THROW(, "import expects one library name; quote names containing whitespace")
+    importImagePath(context, Library::resolve(context, name.text).string());
   }
 
   void Engine::define(context::Context &context, lexicon::Phrase &) {

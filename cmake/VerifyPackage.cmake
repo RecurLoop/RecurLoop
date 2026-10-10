@@ -34,6 +34,7 @@ endfunction()
 
 run("${program}" --version)
 run("${program}" --library shell --library inferred --string "assert 6 * 7 == 42")
+run("${program}" --string "import window\nimport vulkan\nimport window\nassert 6 * 7 == 42")
 
 # LLVM code generation is linked into RecurLoop. Native file output still uses
 # host LLD (and Clang for executables); the release builder supplies those tools

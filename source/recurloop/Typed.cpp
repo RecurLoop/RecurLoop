@@ -82,7 +82,7 @@ namespace recurloop {
                 [this](const context::Context &, std::size_t offset, const std::string &message) {
                   this->fail(offset, message);
                 },
-                {.bareWords = true}) {}
+                {.bareWords = true}, this->origin) {}
       bool done() const {
         return cursor.current().kind == SyntaxTokenKind::End;
       }
@@ -127,6 +127,9 @@ namespace recurloop {
         return TypeSyntax::parse(context, *this, Assembler::dictionarySymbol(context));
       }
 
+      SyntaxCursor &typeSyntaxCursor() override {
+        return cursor;
+      }
       std::string_view typeCurrent() const override {
         return done() ? std::string_view{} : std::string_view(cursor.current().text);
       }
@@ -287,18 +290,6 @@ namespace recurloop {
 
     void externalUnavailable(context::Context &, lexicon::Phrase &invoked){
         THROW(, "external typed phrase '" << invoked.getKeyEscaped() << "' requires a native linker")}
-
-    lexicon::Phrase qualifiedExact(lexicon::Phrase dictionary, const std::string &name) {
-      std::size_t begin = 0;
-      while (begin < name.size()) {
-        const std::size_t end = name.find(':', begin);
-        const std::string segment = name.substr(begin, end - begin);
-        dictionary = LanguageGrammar::find(dictionary, segment);
-        if (dictionary.isNull() || end == std::string::npos) return dictionary;
-        begin = end + 1;
-      }
-      return dictionary;
-    }
 
     void instantiateTyped(context::Context &context, lexicon::Phrase &invoked) {
       SourceLocation origin;
@@ -511,7 +502,7 @@ namespace recurloop {
     context.language().types.addMethod(structure, methodName, function.signature);
     context.language().declareFunction(function);
     lexicon::Phrase root = context.lexicon.phrase();
-    lexicon::Phrase owner = qualifiedExact(root, structureName);
+    lexicon::Phrase owner = LanguageGrammar::findQualified(root, structureName);
     if (owner.isNull()) THROW(, "typed declaration: structure phrase is unavailable: '" << structureName << "'")
     lexicon::Phrase overloads = LanguageGrammar::find(owner, methodName);
     if (overloads.isNull())
@@ -542,7 +533,7 @@ namespace recurloop {
     while (context.language().types.get(pointee).kind == compiler::TypeKind::Pointer)
       pointee = context.language().types.get(pointee).element;
     lexicon::Phrase root = context.lexicon.phrase();
-    lexicon::Phrase prototype = qualifiedExact(root, context.language().types.get(pointee).name);
+    lexicon::Phrase prototype = LanguageGrammar::findQualified(root, context.language().types.get(pointee).name);
     if (prototype.isNull()) prototype = root;
     lexicon::Phrase instance = root.append(name)
                                    .make()

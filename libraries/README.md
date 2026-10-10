@@ -3,6 +3,12 @@
 Reusable RecurLoop source belongs here. The `examples/` tree demonstrates how
 these libraries are imported and combined; it is not their source of truth.
 
+Public functions and types carry concise `.docs` metadata for editor hovers.
+Describe what a function does, notable return values, and ownership of returned
+resources; avoid repeating the signature. Set metadata before exporting the
+library image and, in language extensions, before `languagekit_native_end`.
+Permanent namespace phrases declare their documentation inside `phrase { ... }`.
+
 - `recurloop/` — semantic core used to build the embedded `core.rli`.
 - `language-kit/` — shared source-level language construction helpers.
 - `shell/` — shell language library built on LanguageKit.
@@ -13,8 +19,8 @@ these libraries are imported and combined; it is not their source of truth.
 - `embed/` — generic compile-time binary embedding built on native `bits` literals.
 - `bitwise/` — optional 64-bit bitwise functions implemented with RecurLoop `asm`.
 - `shaders/` — optional GLSL/HLSL -> SPIR-V + native SPIR-V builder.
-- `window/` — optional GLFW window/Vulkan-surface binding.
-- `vulkan/` — optional Vulkan subset used by the hello-triangle workflow.
+- `window/` — GLFW window/Vulkan-surface binding.
+- `vulkan/` — Vulkan subset used by the hello-triangle workflow.
 - `build/export.rl` — shared transient build helper used by `library.rl` files.
 
 Build the distributable library images with:
@@ -45,15 +51,24 @@ build/Release/bin/recurloop \
 ```
 
 
-## Optional graphics libraries
+## Graphics libraries
 
-The graphics libraries are separate from the standard `make libraries` target
-because they deliberately depend on system shared libraries. Build them with:
+`make libraries`, `make install`, and release packages include `window.rli` and
+`vulkan.rli`. Import the bindings in project source:
+
+```rl
+import window
+import vulkan
+```
+
+Definitions load without opening a window. Running graphics code requires GLFW
+and a Vulkan loader/driver on the application machine. A project may configure
+its own GLFW build with `link path "path/to/glfw/lib"` after the imports.
+
+Shader compilation remains optional:
 
 ```bash
 make graphics-libraries
 ```
 
-This writes `shaders.rli`, `window.rli`, and `vulkan.rli` beside the standard
-images and builds the dependency-free `embed.rli` automatically when needed,
-without making GLFW/Vulkan/shaderc mandatory for normal RecurLoop builds or CI.
+This additionally builds `shaders.rli`, which uses the system shaderc library.

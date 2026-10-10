@@ -141,6 +141,40 @@ const at = (doc, text, occurrence = 0) => {
   assert.ok(count('recurloop languagekit_analysis_request\tremove') > 0);
   await runtime.restart(folder.uri);
   assert.equal((await nav.locations(defs, at(defs, 'add'), 'references', false)).length, 0);
+  // Types consumed by the compiler carry exact references, including qualified
+  // names in intrinsics, signatures and record fields from included files.
+  const typesPath = path.join(root, 'types.rl');
+  const usesPath = path.join(root, 'type-uses.rl');
+  const typesSource = 'let Game = phrase { dictionary = true }\nrecord Game:State { value:i64 }\nrecord Holder { state:Game:State* }\n';
+  const usesSource = 'let make = fn (input:Game:State*) -> Game:State* {\n' +
+    '    let state = alloc(Game:State)\n' +
+    '    let bytes = sizeof(Game:State)\n' +
+    '    let converted = cast(Game:State*, input)\n' +
+    '    return state\n}\n';
+  fs.writeFileSync(typesPath, typesSource); fs.writeFileSync(usesPath, usesSource);
+  const typesDoc = document(typesPath), usesDoc = document(usesPath);
+  const typeEntry = 'include "types.rl"\ninclude "type-uses.rl"\n';
+  fs.writeFileSync(entryPath, typeEntry); documents.get(entryPath).setText(typeEntry);
+  await runtime.reload(folder.uri);
+  for (const intrinsic of ['alloc', 'sizeof', 'cast']) {
+    const offset = usesSource.indexOf(`${intrinsic}(Game:State`) + intrinsic.length + 1;
+    for (const component of [0, 5]) {
+      const definitions = await nav.locations(usesDoc, usesDoc.positionAt(offset + component), 'definition');
+      assert.equal(definitions.length, 1);
+      assert.equal(definitions[0].uri.fsPath, typesPath);
+      assert.equal(definitions[0].range.start.line, 1);
+      assert.equal(definitions[0].range.start.character, 'record '.length);
+      assert.equal(definitions[0].range.end.character, 'record Game:State'.length);
+    }
+  }
+  const typeRefs = await nav.locations(typesDoc, at(typesDoc, 'Game:State'), 'references', false);
+  assert.equal(typeRefs.length, 6);
+  const allocType = usesDoc.positionAt(usesSource.indexOf('alloc(Game:State') + 'alloc('.length + 5);
+  assert.equal((await nav.locations(usesDoc, allocType, 'references', false)).length, typeRefs.length);
+  for (const location of typeRefs) {
+    const doc = documents.get(location.uri.fsPath);
+    assert.equal(doc.getText().slice(doc.offsetAt(location.range.start), doc.offsetAt(location.range.end)), 'Game:State');
+  }
   console.log('Navigation passed: shared traces, scoped queries, warm reuse, incremental edits/publication/removal, Unicode, rename, symbols, cancellation and restart.');
 })().catch(error => { console.error(error); process.exitCode = 1; }).finally(() => {
   nav.dispose(); runtime.dispose(); fs.rmSync(root, { recursive: true, force: true }); fs.rmSync(external, { recursive: true, force: true });

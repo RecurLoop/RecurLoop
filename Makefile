@@ -21,7 +21,7 @@ help:
 	@echo '  make llvm         Download/verify the official LLVM archive into .cache/deps'
 	@echo '  make libraries    Build standard .rli libraries'
 	@echo '  make vscode-extension  Build the VS Code extension (.vsix; Node.js 22+)'
-	@echo '  make graphics-libraries  Build optional shader/window/Vulkan .rli libraries'
+	@echo '  make graphics-libraries  Build optional shader compiler plus window/Vulkan images'
 	@echo '  make clean        Remove build directories'
 	@echo
 	@echo 'Test:'
@@ -94,7 +94,7 @@ libraries: $(RELEASE_BUILD_FILE)
 	@echo '[libraries] ready'
 
 graphics-libraries: $(RELEASE_BUILD_FILE)
-	@echo '[graphics-libraries] build optional shader/window/Vulkan images'
+	@echo '[graphics-libraries] build optional shader compiler and graphics images'
 	@cmake --build --preset release --target RecurloopGraphicsLibraries
 	@echo '[graphics-libraries] ready'
 

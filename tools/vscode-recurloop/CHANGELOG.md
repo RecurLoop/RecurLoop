@@ -1,6 +1,17 @@
 # Changelog
 
-## Unreleased
+## 0.2.10
+
+- Navigate to type declarations and references from allocation, casts, size
+  queries, function signatures and record fields, including qualified names.
+
+- Add source-level library imports (`import window`, `import vulkan`) backed by
+  the CLI library resolver. Include both binding images in installed runtimes
+  and release packages; graphics libraries no longer need project-local copies.
+
+- Preserve semantic inspection identities across engine imports and cached
+  includes. Inspecting the project entry no longer crashes the shared runtime
+  and closes its terminals, including while using `:target run`.
 
 - Resolve colors and documentation from the final elaborated binding for both
   local and dictionary symbols. Link `let` declarations to their saved phrases,
