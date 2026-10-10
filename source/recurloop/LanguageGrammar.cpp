@@ -82,7 +82,7 @@ namespace recurloop::LanguageGrammar {
 
   lexicon::Phrase findQualified(lexicon::Phrase dictionary, std::string_view name) {
     while (!name.empty()) {
-      const auto direct = find(dictionary, name);
+      auto direct = find(dictionary, name);
       if (!direct.isNull()) return direct;
       const auto end = name.find(':');
       dictionary = find(dictionary, name.substr(0, end));
