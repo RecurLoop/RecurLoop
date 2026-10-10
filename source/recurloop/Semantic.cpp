@@ -33,6 +33,13 @@ namespace recurloop {
     // Local versions occupy a separate, exactly representable inspection namespace.
     constexpr std::uint64_t LocalVersionBase = std::uint64_t{1} << 32;
     constexpr std::uint32_t MetadataMagic = 0x53454d31; // SEM1
+    constexpr auto OriginsName = Semantic::OriginsRegistryName;
+
+    struct Origin {
+      std::string source;
+      std::string image;
+      Size record = 0;
+    };
 
     enum MetadataFlags : std::uint8_t {
       KindPresent = 1 << 0,
@@ -88,6 +95,7 @@ namespace recurloop {
       std::string source;
       std::string path;
       std::unordered_map<Size, OwnMetadata> metadata;
+      std::unordered_map<Size, Origin> origins;
       bool metadataDirty = false;
       std::vector<Span> spans;
       std::vector<std::size_t> lineStarts;
@@ -117,6 +125,7 @@ namespace recurloop {
         std::string name, key, prototype, type;
         std::size_t version = 0;
         SemanticMetadata metadata;
+        Origin origin;
         bool docsSpecified = false;
         Size docsOwner = 0;
       };
@@ -174,6 +183,84 @@ namespace recurloop {
                                                 return !lexicon::Dictionary(*candidate).getPhrase().isNull();
                                               });
       return match.isNull() ? lexicon::Phrase(owner.getLexicon()) : match.getPhrase();
+    }
+
+    std::unordered_map<Size, Origin> origins(context::Context &context) {
+      std::unordered_map<Size, Origin> result;
+      auto registry = exact(context.lexicon.phrase(), OriginsName);
+      if (registry.isNull() || !registry.containsSubdictionary()) return result;
+      const auto names = phrasePaths(context);
+      auto populated = [](radix::Node *, radix::Node *candidate) { return !candidate->isEmpty(); };
+      for (auto node = registry.fore(populated); !node.isNull(); node = node.next(populated)) {
+        auto entry = node.getPhrase();
+        if (!entry.containsSuccessor() || entry.payloadSize() == 0) continue;
+        const std::string payload(reinterpret_cast<const char *>(entry.content(0, entry.payloadSize()).toPtr()),
+                                  entry.payloadSize());
+        const auto separator = payload.find('\0');
+        if (separator == std::string::npos) continue;
+        const Size target = entry.getSuccessor().getAddress();
+        const auto name = names.find(target);
+        if (name == names.end()) continue;
+        // Compiler rebasing and rollback can remove/reuse a phrase slot.
+        // Provenance is an optional fact, not ownership of the old phrase.
+        const std::string key = entry.getKey();
+        const auto version = key.rfind('\0');
+        // Images may flatten unreferenced history, changing the ordinal. The
+        // relocated successor still identifies the exact surviving phrase.
+        if (version == std::string::npos || !std::string_view(key).substr(0, version).ends_with('\0' + name->second))
+          continue;
+        auto &origin = result[target];
+        if (entry.getAddress() > origin.record)
+          origin = {payload.substr(0, separator), payload.substr(separator + 1), entry.getAddress()};
+      }
+      return result;
+    }
+
+    void rememberOrigins(context::Context &context, Size since, std::string_view path, bool image,
+                         const std::unordered_set<Size> *selected = nullptr) {
+      if (path.empty() || path.front() == '<') return;
+      const auto names = phrasePaths(context);
+      const auto existing = origins(context);
+      std::vector<std::pair<Size, Origin>> pending;
+      for (const auto &[address, name] : names) {
+        if (address < since || name.empty() || static_cast<unsigned char>(name.front()) < 32) continue;
+        if (selected != nullptr && !selected->contains(address)) continue;
+        if (!lexicon::Phrase(&context.lexicon, address).load().isSerializable()) continue;
+        const auto found = existing.find(address);
+        Origin origin = found == existing.end() ? Origin{} : found->second;
+        // Includes and image dependencies already own their phrases. An outer
+        // source/image must not relabel them with its own provenance.
+        if (image ? !origin.image.empty() : !origin.source.empty() || !origin.image.empty()) continue;
+        if (image)
+          origin.image = path;
+        else
+          origin.source = path;
+        pending.emplace_back(address, std::move(origin));
+      }
+      if (pending.empty()) return;
+      // Stable ordering also keeps bootstrap and engine-image output deterministic.
+      std::sort(pending.begin(), pending.end(),
+                [](const auto &left, const auto &right) { return left.first < right.first; });
+      auto root = context.lexicon.phrase();
+      auto registry = exact(root, OriginsName);
+      if (registry.isNull())
+        registry = root.append(std::string(OriginsName))
+                       .make()
+                       .enableSubdictionary()
+                       .setType(lexicon::phrase::type::getData(root))
+                       .save();
+      for (const auto &[address, origin] : pending) {
+        auto phrase = lexicon::Phrase(&context.lexicon, address).load();
+        const auto &name = names.at(address);
+        const std::string key =
+            origin.source + '\0' + origin.image + '\0' + name + '\0' + std::to_string(phraseVersion(phrase));
+        auto entry =
+            registry.append(key).make().setType(lexicon::phrase::type::getData(root)).setSuccessor(phrase).save();
+        const std::string payload = origin.source + '\0' + origin.image;
+        std::memcpy(entry.allocate(payload.size()).toPtr(), payload.data(), payload.size());
+        entry.save();
+      }
+      Semantic::markInspectionMetadataDirty(context);
     }
 
     lexicon::Phrase schema(context::Context &context, bool create) {
@@ -251,6 +338,7 @@ namespace recurloop {
 
     void refreshTraceCatalog(TraceState &trace) {
       trace.metadata = catalog(*trace.context);
+      trace.origins = origins(*trace.context);
       trace.metadataDirty = false;
     }
 
@@ -451,6 +539,8 @@ namespace recurloop {
       symbol.prototype = phrase.containsPrototype() ? phrasePath(trace.names, phrase.getPrototype()) : "";
       symbol.type = phrase.containsType() ? phrasePath(trace.names, phrase.getType()) : "";
       symbol.metadata = resolvedTrace(trace, phrase);
+      if (const auto origin = trace.origins.find(symbol.address); origin != trace.origins.end())
+        symbol.origin = origin->second;
       const DocsAnchor anchor = docsAnchor(trace, phrase);
       symbol.docsSpecified = anchor.specified;
       symbol.docsOwner = symbolId(trace, phraseAt(trace, anchor.owner));
@@ -785,6 +875,20 @@ namespace recurloop {
     definitions.erase(found);
   }
 
+  void Semantic::rememberSource(context::Context &context, std::uint64_t since, std::string_view path) {
+    rememberOrigins(context, since, path, false);
+  }
+
+  void Semantic::rememberImage(context::Context &context, std::uint64_t since, std::string_view path) {
+    rememberOrigins(context, since, path, true);
+  }
+
+  void Semantic::rememberImage(context::Context &context, std::span<const std::uint64_t> phrases,
+                               std::string_view path) {
+    const std::unordered_set<Size> selected(phrases.begin(), phrases.end());
+    rememberOrigins(context, 0, path, true, &selected);
+  }
+
   Semantic::InspectionScope::InspectionScope(context::Context &context, std::string_view source, std::string_view path) {
     auto *state = new TraceState;
     state->context = &context;
@@ -801,6 +905,7 @@ namespace recurloop {
     }
     state->characterOffsets[state->source.size()] = characters;
     state->metadata = catalog(context);
+    state->origins = origins(context);
     state->names = phrasePaths(context);
     // Source grammars legitimately use empty transition phrases, so the budget
     // is deliberately generous and scales with the inspected buffer.  It is a
@@ -900,9 +1005,11 @@ namespace recurloop {
     return output.str();
   }
 
-  std::string Semantic::InspectionScope::trace() const {
+  std::string Semantic::InspectionScope::trace(std::span<const std::string> projectSources) const {
     auto &state = *static_cast<TraceState *>(state_);
     context::Context &context = *state.context;
+    state.origins = origins(context);
+    const std::unordered_set<std::string> sources(projectSources.begin(), projectSources.end());
     std::ostringstream output;
     // Local resolution takes precedence over a same-spelled root phrase.
     for (const std::string &match : state.localMatches) output << match;
@@ -959,6 +1066,15 @@ namespace recurloop {
       if (exported.insert(id).second) {
         output << "P\t" << fact.version << '\t' << hex(name) << '\t' << hex(kind) << '\t' << hex(style.docs) << '\t'
                << hex(fact.prototype) << '\t' << hex(fact.type) << '\t' << hex(signatures[name]) << '\n';
+        if (!fact.origin.source.empty() || !fact.origin.image.empty()) {
+          output << "G\t" << fact.version << '\t' << hex(name) << '\t' << hex(fact.origin.source) << '\t'
+                 << hex(fact.origin.image) << '\t';
+          if (fact.origin.image.empty())
+            output << -1;
+          else
+            output << (fact.origin.source == state.path || sources.contains(fact.origin.source) ? 1 : 0);
+          output << '\n';
+        }
       }
       return kind;
     };

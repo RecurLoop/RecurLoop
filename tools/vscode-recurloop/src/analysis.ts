@@ -1,4 +1,5 @@
 import * as vscode from 'vscode';
+import * as path from 'path';
 import { RecurLoopRuntime } from './runtime';
 import { NavigationController } from './navigation';
 import { assistanceItems, helpMarkdown, HelpFact, ArgumentFact, ExpectedFact, ValueFact } from './assistance';
@@ -29,6 +30,9 @@ export interface SymbolFact {
   prototype: string;
   type: string;
   signature: string;
+  source?: string;
+  image?: string;
+  definitionAvailable?: boolean;
 }
 
 export interface Occurrence {
@@ -68,6 +72,7 @@ export function parseInspection(document: Pick<vscode.TextDocument, 'getText' | 
   const arguments_: ArgumentFact[] = [];
   const expected: ExpectedFact[] = [];
   const values: ValueFact[] = [];
+  const origins = new Map<string, { source: string; image: string; definitionAvailable?: boolean }>();
   let dictionary = '';
   let completionStart: number | undefined;
   let diagnostic: string | undefined;
@@ -76,6 +81,12 @@ export function parseInspection(document: Pick<vscode.TextDocument, 'getText' | 
     if (!rawLine) continue;
     const fields = rawLine.split('\t');
     switch (fields[0]) {
+      case 'G':
+        if (fields.length >= 6) origins.set(JSON.stringify([number(fields[1]), hexDecode(fields[2])]), {
+          source: hexDecode(fields[3]), image: hexDecode(fields[4]),
+          definitionAvailable: fields[5] === '0' ? false : fields[5] === '1' ? true : undefined
+        });
+        break;
       case 'H':
         if (fields.length >= 8) help.push({ version: number(fields[1]), name: hexDecode(fields[2]),
           pattern: hexDecode(fields[3]), snippet: hexDecode(fields[4]), example: hexDecode(fields[5]),
@@ -141,6 +152,7 @@ export function parseInspection(document: Pick<vscode.TextDocument, 'getText' | 
   }
 
   const source = document.getText();
+  for (const symbol of symbols) Object.assign(symbol, origins.get(JSON.stringify([symbol.version, symbol.name])));
   return {
     version: document.version,
     source,
@@ -360,6 +372,11 @@ export class AnalysisController implements vscode.Disposable {
     } else if (span) {
       if (span.kind) markdown.appendMarkdown(`*${span.kind}*\n\n`);
       markdown.appendMarkdown(span.docs);
+    }
+    if (fact?.image && fact.definitionAvailable === false) {
+      markdown.appendMarkdown('\n\n*');
+      markdown.appendText(`From library ${path.basename(fact.image)}. Source definition unavailable in this project.`);
+      markdown.appendMarkdown('*');
     }
     const range = occurrence
       ? new vscode.Range(positionFromCodePoint(document, result.mapping, occurrence.start), positionFromCodePoint(document, result.mapping, occurrence.end))

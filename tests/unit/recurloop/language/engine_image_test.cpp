@@ -1,10 +1,12 @@
 #include <gtest/gtest.h>
 
 #include <compiler/LanguageState.hpp>
+#include <compiler/RegistrySchema.hpp>
 #include <recurloop/EngineImage.hpp>
 #include <recurloop/Execution.hpp>
 #include <recurloop/Functions.hpp>
 #include <recurloop/Recurloop.hpp>
+#include <recurloop/Semantic.hpp>
 #include <recurloop/TranslationUnits.hpp>
 
 #include <filesystem>
@@ -331,6 +333,41 @@ TEST_F(EngineImageTesting, OmitsUnserializablePhrasesUnlessTheyAreReferenced) {
       .setType(lexicon::phrase::type::getData(root))
       .save();
   EXPECT_ANY_THROW(recurloop::EngineImage::encode(context));
+}
+
+TEST_F(EngineImageTesting, ProvenanceSurvivesFlatteningWithoutRetainingObsoleteOrTransientPhrases) {
+  initializeWith("");
+  const std::string path = "/fixture/library.rl";
+  recurloop::executeSource(
+      context, "let shadowed = <debug:stats>\nlet shadowed = <debug:ping>\nlet transient = phrase {}\n", path, 1);
+  ASSERT_FALSE(rootPhrase("shadowed").older().isNull());
+  rootPhrase("transient").setSerializable(false).save();
+  const auto image = recurloop::EngineImage::encode(context);
+  recurloop::EngineImage::decode(context, image);
+  EXPECT_TRUE(rootPhrase("shadowed").older().isNull());
+  EXPECT_TRUE(rootPhrase("transient").isNull());
+  recurloop::Semantic::InspectionScope inspection(context, "shadowed\n", path);
+  recurloop::executeSource(context, "shadowed\n", path, 1);
+  const std::string trace = inspection.trace();
+  EXPECT_NE(trace.find("G\t0\t736861646f776564\t2f666978747572652f6c6962726172792e726c\t\t-1\n"), std::string::npos);
+}
+
+TEST_F(EngineImageTesting, ImportsTypeDescriptorsWhoseNamesAreNotExported) {
+  initializeWith("");
+  auto language = compiler::LanguageState::locate(context.lexicon);
+  const auto id = language.types.defineInteger("private-integer", 64, true);
+  auto names = compiler::RegistrySchema::registry(
+      context.lexicon, compiler::RegistrySchema::language(context.lexicon).getAddress(), compiler::RegistryRole::Types);
+  const std::string key = "private-integer";
+  names.matchExact(Byte(const_cast<char *>(key.data())), 0, key.size() * Byte::length)
+      .getPhrase()
+      .setSerializable(false)
+      .save();
+  const auto path = std::filesystem::temp_directory_path() / "recurloop-private-type-image.rli";
+  recurloop::EngineImage::saveFull(context, path.string());
+  EXPECT_NO_THROW(recurloop::EngineImage::load(context, path.string()));
+  EXPECT_EQ(compiler::LanguageState::locate(context.lexicon).types.get(id).name, key);
+  std::filesystem::remove(path);
 }
 
 TEST_F(EngineImageTesting, PreservesPermanentAndRewritablePhraseProperties) {

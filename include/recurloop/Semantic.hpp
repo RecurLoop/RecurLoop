@@ -8,6 +8,7 @@
 #include <functional>
 #include <string>
 #include <string_view>
+#include <span>
 
 namespace context { class Context; }
 namespace lexicon { class Phrase; }
@@ -25,6 +26,7 @@ namespace recurloop {
   class Semantic {
   public:
     Semantic() = delete;
+    static constexpr std::string_view OriginsRegistryName{"\0semantic-origins", 17};
 
     // Source-level phrase metadata. Values are stored in a serializable hidden
     // lexicon registry whose phrase reference is relocated by EngineImage.
@@ -61,6 +63,11 @@ namespace recurloop {
     static void stageDefinition(context::Context &context, const SourceLocation &start, const SourceLocation &end);
     static void recordDefinition(context::Context &context, lexicon::Phrase phrase);
 
+    // Portable provenance uses phrase references, never arena addresses in payloads.
+    static void rememberSource(context::Context &context, std::uint64_t since, std::string_view path);
+    static void rememberImage(context::Context &context, std::uint64_t since, std::string_view path);
+    static void rememberImage(context::Context &context, std::span<const std::uint64_t> phrases, std::string_view path);
+
     // Reusable console palette: resolve language metadata once, then scan only
     // the edited text. Recreate after the owning session's language changes.
     class ConsoleHighlighter {
@@ -85,7 +92,7 @@ namespace recurloop {
       std::string encode(std::string_view diagnostic = {}) const;
       // Export actual phrase matches and the current dictionary/type/function
       // catalog. This contains language state only; clients interpret it.
-      std::string trace() const;
+      std::string trace(std::span<const std::string> projectSources = {}) const;
 
     private:
       void *state_ = nullptr;

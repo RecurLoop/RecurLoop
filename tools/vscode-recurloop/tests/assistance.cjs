@@ -4,6 +4,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const Module = require('node:module');
+const { execFileSync } = require('node:child_process');
 const repo = path.resolve(__dirname, '../../..');
 const root = fs.mkdtempSync(path.join(os.tmpdir(), 'rl-assistance-test-'));
 process.env.RECURLOOP_LIBRARY_PATH = process.env.RECURLOOP_TEST_LIBRARIES || path.join(repo, 'build/Release/libraries');
@@ -14,6 +15,7 @@ class MarkdownString {
   constructor(value = '') { this.value = value; }
   appendMarkdown(value) { this.value += value; return this; }
   appendCodeblock(value) { this.value += `\n\n${value}`; return this; }
+  appendText(value) { this.value += value.replace(/[\\`*_{}[\]()<>#+.!|~-]/g, '\\$&'); return this; }
 }
 class SnippetString {
   constructor(value = '') { this.value = value; }
@@ -66,6 +68,11 @@ const labels = items => items.map(item => item.label);
   const definitions = fs.readFileSync(path.join(repo, 'examples/03-phrases-and-syntax/editor-help/main.rl'), 'utf8');
   fs.writeFileSync(path.join(root, 'main.rl'), definitions);
   fs.writeFileSync(path.join(root, 'recurloop.project.rl'), 'include "main.rl"\n');
+  const builtinDoc = document(definitions + '\nprint 1\n');
+  const builtinHover = await providers.registerHoverProvider.provideHover(builtinDoc,
+    builtinDoc.positionAt(definitions.length + 1));
+  assert.match(builtinHover.contents.value, /From library core\\\.rli/);
+  assert.match(builtinHover.contents.value, /Source definition unavailable in this project/);
   // The source's selector controls the result, including an inherited alias.
   for (const phrase of ['show', 'display']) {
     const items = await complete(definitions + `\n${phrase} `);
@@ -349,6 +356,26 @@ exampleFn()
   assert.deepEqual(rendered('#123456'), []);
   assert.deepEqual(rendered('#FF8800'), expectedGlobalRanges);
   assert.deepEqual(rendered('#008800'), expectedFunctionRanges);
+  // Imported phrases retain their docs and get only an italic footer. Local
+  // aliases/shadows own their definitions and must not inherit the footer.
+  const imagePath = path.join(root, 'binary_[demo].rli');
+  const buildSource = path.join(root, 'binary-source.rl');
+  fs.writeFileSync(buildSource, 'syntax borrowed <value:expr> => print ${value}\n' +
+    `set borrowed.docs = "Library documentation."\nengine export ${JSON.stringify(imagePath)}\n`);
+  execFileSync(executable, ['--file', buildSource], { stdio: 'pipe' });
+  const importedSource = `engine import ${JSON.stringify(imagePath)}\nborrowed 42\nlet local_alias = <borrowed>\nlocal_alias 43\n`;
+  fs.writeFileSync(path.join(root, 'main.rl'), importedSource);
+  await runtime.reload(folder.uri); analysis.invalidate();
+  const importedDoc = document(importedSource);
+  const importedHover = await providers.registerHoverProvider.provideHover(importedDoc,
+    importedDoc.positionAt(importedSource.indexOf('borrowed 42')));
+  assert.match(importedHover.contents.value, /Library documentation/);
+  assert.ok(importedHover.contents.value.includes('binary\\_\\[demo\\]\\.rli'));
+  assert.match(importedHover.contents.value, /Source definition unavailable in this project/);
+  const aliasHover = await providers.registerHoverProvider.provideHover(importedDoc,
+    importedDoc.positionAt(importedSource.indexOf('local_alias 43')));
+  assert.match(aliasHover.contents.value, /Library documentation/);
+  assert.ok(!aliasHover.contents.value.includes('Source definition unavailable'));
   console.log('Assistance passed: source-owned help, selectors, aliases, choices, cursor visibility, Unicode, signature, discovery and variable documentation hovers.');
 })().catch(error => { console.error(error); process.exitCode = 1; })
   .finally(() => { analysis.dispose(); runtime.dispose(); fs.rmSync(root, { recursive: true, force: true }); });

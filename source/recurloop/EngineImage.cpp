@@ -441,6 +441,12 @@ namespace recurloop {
       lexicon::Phrase types = exact(root, "phrase-types");
       lexicon::Phrase dataType = types.isNull() ? lexicon::Phrase(&context.lexicon) : exact(types, "data");
       lexicon::Phrase dependencyMetadata = imageDependencies(context, false);
+      const Size originMetadata = exact(root, std::string(Semantic::OriginsRegistryName)).getAddress();
+      const auto serializable = [&](lexicon::Phrase phrase, lexicon::Phrase owner) {
+        // Capture provenance after the semantic graph. These optional references
+        // must never retain obsolete compiler signatures or private helpers.
+        return phrase.isSerializable() && owner.getAddress() != originMetadata;
+      };
       const std::unordered_set<Size> behaviorTypes =
           types.isNull()
               ? std::unordered_set<Size>{}
@@ -533,7 +539,7 @@ namespace recurloop {
           auto populated = [](radix::Node *, radix::Node *candidate) { return !candidate->isEmpty(); };
           for (lexicon::Dictionary child = owner.fore(populated); !child.isNull(); child = child.next(populated)) {
             lexicon::Phrase candidate = child.getPhrase();
-            if (!candidate.isSerializable()) continue;
+            if (!serializable(candidate, owner)) continue;
             if (candidate.getAddress() >= since || compilerTypeMetadata(phrasePayload(candidate), phrasePayload(owner)))
               ensure(candidate.getAddress(), ensure);
             if (candidate.containsSubdictionary()) dictionaries.push_back(candidate);
@@ -547,7 +553,7 @@ namespace recurloop {
           auto filter = [](radix::Node *, radix::Node *candidate) { return !candidate->isEmpty(); };
           for (lexicon::Dictionary child = phrase.fore(filter); !child.isNull(); child = child.next(filter)) {
             lexicon::Phrase candidate = child.getPhrase();
-            if (!candidate.isSerializable()) continue;
+            if (!serializable(candidate, phrase)) continue;
             const bool dependencyTree = !dependencyMetadata.isNull() &&
                                         (phrase.getAddress() == dependencyMetadata.getAddress() ||
                                          candidate.getAddress() == dependencyMetadata.getAddress());
@@ -560,6 +566,19 @@ namespace recurloop {
         if (phrase.containsSuccessor()) ensure(phrase.getSuccessor().getAddress(), ensure);
         if (phrase.containsAction()) ensure(phrase.getActionImplementation().getAddress(), ensure);
         for (Size target : payloadTargets(phrase)) ensure(target, ensure);
+      }
+
+      if (originMetadata != 0) {
+        auto registry = all.at(originMetadata);
+        auto populated = [](radix::Node *, radix::Node *candidate) { return !candidate->isEmpty(); };
+        for (auto child = registry.fore(populated); !child.isNull(); child = child.next(populated)) {
+          auto entry = child.getPhrase();
+          if (!entry.isSerializable() || !entry.containsSuccessor() || (since != 0 && entry.getAddress() < since) ||
+              !indices.contains(entry.getSuccessor().getAddress()))
+            continue;
+          ensure(originMetadata, ensure);
+          add(entry, originMetadata);
+        }
       }
 
       std::unordered_map<Size, std::size_t> depths{{root.getAddress(), 0}};
@@ -865,6 +884,7 @@ namespace recurloop {
       };
       struct Plan {
         compiler::TypeIdRemapping mapping;
+        std::unordered_map<std::string, compiler::TypeId> names;
         std::unordered_map<std::string, compiler::TypeDescriptor> previous;
         std::uint64_t next = 1;
         lexicon::Phrase language;
@@ -911,6 +931,7 @@ namespace recurloop {
         } else
           plan.next = std::max(plan.next, std::uint64_t{type.id} + 1);
         if (!plan.mapping.emplace(type.id, id).second) THROW(, "engine image contains duplicate compiler type IDs")
+        plan.names.emplace(type.name, id);
       }
       if (plans.empty()) return;
       const auto planForRegistry = [&](std::uint64_t id) -> Plan * {
@@ -924,6 +945,33 @@ namespace recurloop {
         const auto found = languagePlans.find(lexicalParent(external(id)).getAddress());
         return found == languagePlans.end() ? nullptr : &plans.at(found->second);
       };
+      // Function types can retain an ID without a visible name entry. Full
+      // imports and cached modules must rebase those descriptors too, including
+      // aliases of named types that functions may still refer to.
+      for (const Record &record : records) {
+        const auto owner = registry(record.parent);
+        if (!owner || owner->role != compiler::RegistryRole::TypeIds) continue;
+        Plan *plan = planForRegistry(record.parent);
+        if (!plan) continue;
+        const auto type = compiler::TypeRegistry::deserialize(record.payload);
+        if (plan->mapping.contains(type.id)) continue;
+        const auto named = plan->names.find(type.name);
+        compiler::TypeId id = type.id;
+        if (named != plan->names.end())
+          id = named->second;
+        else if (!plan->language.isNull()) {
+          const auto previous = plan->previous.find(type.name);
+          if (previous != plan->previous.end())
+            id = previous->second.id;
+          else {
+            if (plan->next >= std::numeric_limits<compiler::TypeId>::max()) THROW(, "type registry is full")
+            id = static_cast<compiler::TypeId>(plan->next++);
+          }
+        } else
+          plan->next = std::max(plan->next, std::uint64_t{type.id} + 1);
+        plan->mapping.emplace(type.id, id);
+        plan->names.emplace(type.name, id);
+      }
       Plan *defaultPlan = nullptr;
       for (auto &[id, plan] : plans) {
         if ((external && !plan.language.isNull() &&
@@ -1927,7 +1975,8 @@ namespace recurloop {
       }
     }
 
-    void restore(context::Context &context, Snapshot snapshot, bool initializeSemanticDefaults, bool preserveExisting) {
+    void restore(context::Context &context, Snapshot snapshot, bool initializeSemanticDefaults, bool preserveExisting,
+                 std::string_view originImage = {}) {
       if (preserveExisting) rebaseTypes(context, snapshot.phrases);
       const std::vector<Record> &records = snapshot.phrases;
       // Normal image imports are composable overlays and therefore need a
@@ -2163,6 +2212,12 @@ namespace recurloop {
       context::Lookup::in(context, root);
       context::Staging::push(context, root);
       context::Reference::in(context, root);
+      if (!originImage.empty()) {
+        std::vector<std::uint64_t> imported;
+        imported.reserve(phrases.size());
+        for (auto &[id, phrase] : phrases) imported.push_back(phrase.getAddress());
+        Semantic::rememberImage(context, imported, originImage);
+      }
     }
 
     void loadImage(context::Context &context, const std::filesystem::path &path,
@@ -2201,8 +2256,13 @@ namespace recurloop {
           loadImage(context, dependencyPath, loading, &resolvedDependencies.back().first.identity);
         }
 
-        if (linked) applyLinked(context, linkedSnapshot);
-        else restore(context, snapshot, true, true);
+        const Size originCheckpoint = context.lexicon.checkpoint().getAddress();
+        if (linked) {
+          applyLinked(context, linkedSnapshot);
+          Semantic::rememberImage(context, originCheckpoint, resolved.string());
+        } else {
+          restore(context, snapshot, true, true, resolved.string());
+        }
         for (const auto &[dependency, dependencyPath] : resolvedDependencies)
           rememberImageDependency(context, dependency.identity, dependencyPath);
         rememberImageDependency(context, identity, resolved);

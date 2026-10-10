@@ -5,6 +5,7 @@ const os = require('node:os');
 const path = require('node:path');
 const Module = require('node:module');
 const net = require('node:net');
+const { execFileSync } = require('node:child_process');
 const repo = path.resolve(__dirname, '../../..');
 const root = fs.mkdtempSync(path.join(os.tmpdir(), 'rl-navigation-test-'));
 const external = fs.mkdtempSync(path.join(os.tmpdir(), 'rl-navigation-dependency-'));
@@ -66,17 +67,26 @@ const at = (doc, text, occurrence = 0) => {
 };
 (async () => {
   const externalPath = path.join(external, 'functions.rl');
+  const imagePath = path.join(external, 'binary.rli');
+  const imageSource = path.join(external, 'binary.rl');
+  fs.writeFileSync(imageSource, `let imported_value = fn (value:i64) -> i64 { return value + 10 }\nengine export ${JSON.stringify(imagePath)}\n`);
+  execFileSync(testProgram, ['--file', imageSource], { stdio: 'pipe' });
   fs.writeFileSync(externalPath, 'let multiply = fn (value:i64) -> i64 { return value * 2 }\n');
   const defsPath = path.join(root, 'definitions.rl');
   const callsPath = path.join(root, 'calls.rl');
   const entryPath = path.join(root, 'recurloop.project.rl');
   const definitions = 'record Box { value:i64 }\nlet add = fn (value:i64) -> i64 { let result = value + 1; return result }\nlet shadow = fn (value:i64) -> i64 { let result = value; if value > 0 { var result = value + 2; result += 1 }; return result }\n';
-  const calls = '// add in comment\nlet caller = fn () -> i64 { let marker:u8* = "😀"; return add(42) }\nlet use_box = fn (box:Box*) -> i64 { return box.value }\nlet external_caller = fn () -> i64 { return multiply(2) }\n';
+  const calls = '// add in comment\nlet caller = fn () -> i64 { let marker:u8* = "😀"; return add(42) }\nlet use_box = fn (box:Box*) -> i64 { return box.value }\nlet external_caller = fn () -> i64 { return multiply(2) }\nlet library_caller = fn () -> i64 { return imported_value(2) }\n';
   fs.writeFileSync(defsPath, definitions); fs.writeFileSync(callsPath, calls);
-  fs.writeFileSync(entryPath, `include ${JSON.stringify(externalPath)}\ninclude "definitions.rl"\ninclude "calls.rl"\n`);
+  fs.writeFileSync(entryPath, `engine import ${JSON.stringify(imagePath)}\ninclude ${JSON.stringify(externalPath)}\ninclude "definitions.rl"\ninclude "calls.rl"\n`);
   const defs = document(defsPath), caller = document(callsPath);
   // Document/local operations inspect only the current file, even in a cold project.
   assert.ok((await nav.symbols(defs)).some(symbol => symbol.name === 'add'));
+  assert.equal(traces(), 1); assert.equal(updates(), 1); assert.equal(count(':cache-dependencies'), 0);
+  // Built-in/image-only phrases have no definition in the source graph. Cold
+  // Ctrl+click must not inspect unrelated files, even if the library's build
+  // source happens to still be present on disk.
+  assert.equal((await nav.locations(defs, at(defs, 'i64'), 'definition')).length, 0);
   assert.equal(traces(), 1); assert.equal(updates(), 1); assert.equal(count(':cache-dependencies'), 0);
   const local = await nav.locations(defs, at(defs, 'result', 1), 'definition');
   assert.equal(local.length, 1); assert.equal(local[0].range.start.character, definitions.split('\n')[1].indexOf('result'));
@@ -85,6 +95,15 @@ const at = (doc, text, occurrence = 0) => {
   assert.equal(inner.length, 1); assert.equal(inner[0].range.start.line, 2);
   const outer = await nav.locations(defs, at(defs, 'result', 2), 'references', false);
   assert.equal(outer.length, 1); assert.equal(outer[0].range.start.character, definitions.split('\n')[2].lastIndexOf('result'));
+  assert.equal((await nav.locations(caller, at(caller, 'imported_value'), 'definition')).length, 0);
+  assert.equal(traces(), 2); assert.equal(updates(), 2); assert.equal(count(':cache-dependencies'), 0);
+  const binaryTrace = await runtime.inspect(caller);
+  assert.ok(!binaryTrace.includes('E\t'), binaryTrace);
+  const binaryOrigin = binaryTrace.split('\n').map(row => row.split('\t'))
+    .find(fields => fields[0] === 'G' && Buffer.from(fields[2], 'hex').toString() === 'imported_value');
+  assert.equal(Buffer.from(binaryOrigin[4], 'hex').toString(), imagePath);
+  assert.equal(binaryOrigin[5], '0');
+  assert.equal((await nav.locations(caller, at(caller, 'imported_value'), 'references', false)).length, 1);
   const refs = await nav.locations(defs, at(defs, 'add'), 'references', false);
   assert.equal(refs.length, 1); assert.equal(refs[0].uri.fsPath, callsPath); assert.equal(refs[0].range.start.line, 1); assert.equal(refs[0].range.start.character, calls.split('\n')[1].indexOf('add'));
   assert.ok((await nav.locations(caller, at(caller, 'box:Box'), 'type-definition')).some(item => item.uri.fsPath === defsPath && item.range.start.line === 0));

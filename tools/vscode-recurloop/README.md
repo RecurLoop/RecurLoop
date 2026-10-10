@@ -177,6 +177,11 @@ The first navigation across files builds a project index. Repeated Ctrl+click
 and reference queries reuse results until a document or the project changes.
 Moving the cursor cancels the caller immediately while retaining completed
 index work and letting the current analysis step finish for the next query.
+For a phrase supplied by an `.rli` library without a definition source in the
+project, Ctrl+click returns immediately after inspecting the current document.
+The hover shows a quiet italic note naming the library; Find All References
+still searches its uses in the project. Source module caches keep navigation
+to their original definitions.
 
 The native debugger supports source/function breakpoints, conditions, hit counts,
 logpoints, stepping, pause, restart, call stacks, frame-local values and assignment.

@@ -209,6 +209,7 @@ record LanguageKit:Analysis:Symbol {
     prototype:u8*
     type:u8*
     signature:u8*
+    no_source:i64
     next:LanguageKit:Analysis:Symbol*
 }
 
@@ -513,9 +514,25 @@ let LanguageKit:Analysis:parse_trace = fn (file:LanguageKit:Analysis:File*, resp
                 item.prototype = LanguageKit:Analysis:decode_hex(response, f4 + 1, f5)
                 item.type = LanguageKit:Analysis:decode_hex(response, f5 + 1, f6)
                 item.signature = LanguageKit:Analysis:decode_hex(response, f6 + 1, end)
+                item.no_source = 0
                 item.next = file.symbols; file.symbols = item
                 LanguageKit:Analysis:table_add(&file.symbols_by_name, item.name, 0, cast(u8*, item))
                 LanguageKit:Analysis:table_add(&file.symbols_by_name, item.key, 0, cast(u8*, item))
+            }
+        } else if response[at] == 71 && response[at + 1] == 9 {
+            let f1 = LanguageKit:Analysis:find_byte(response, at + 2, 9)
+            let f2 = LanguageKit:Analysis:find_byte(response, f1 + 1, 9)
+            let f3 = LanguageKit:Analysis:find_byte(response, f2 + 1, 9)
+            let f4 = LanguageKit:Analysis:find_byte(response, f3 + 1, 9)
+            if f4 < end {
+                let version = cast(u64, LanguageKit:Analysis:parse_decimal(response, at + 2, f1))
+                let name = LanguageKit:Analysis:decode_hex(response, f1 + 1, f2)
+                if name {
+                    let key = LanguageKit:Analysis:key(name, version)
+                    let symbol = LanguageKit:Analysis:symbol(file, key)
+                    if symbol { symbol.no_source = end == f4 + 2 && response[f4 + 1] == 48 }
+                    free(key); free(name)
+                }
             }
         } else if response[at] == 82 && response[at + 1] == 9 {
             let f1 = LanguageKit:Analysis:find_byte(response, at + 2, 9)
@@ -911,6 +928,11 @@ let LanguageKit:Analysis:query_index = fn (index:LanguageKit:Analysis:Index*, cu
             let item = cast(LanguageKit:Analysis:Occurrence*, own.value)
             if item.role == 2 { file_only = 1 }
             own = LanguageKit:Analysis:table_next(own)
+        }
+        let symbol = LanguageKit:Analysis:symbol(current, selected.target)
+        if file_only == 0 && symbol && symbol.no_source != 0 {
+            if LanguageKit:Analysis:equal(operation, "scope") { out.append("Q\tno-source\n") }
+            return out.take()
         }
     }
     if LanguageKit:Analysis:equal(operation, "scope") {

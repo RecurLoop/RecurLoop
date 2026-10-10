@@ -375,6 +375,7 @@ namespace recurloop {
 
   void executeSource(context::Context &context, std::string_view source, std::string_view path, Size line,
                      Size position) {
+    const Size originCheckpoint = context.lexicon.checkpoint().getAddress();
     const context::Source outerSource = context.source;
     std::istream *const outerInput = context.io.in;
 
@@ -384,6 +385,7 @@ namespace recurloop {
     Debugger::sourceEnter(context);
     try {
       processSourceBuffer(context);
+      Semantic::rememberSource(context, originCheckpoint, path);
     } catch (...) {
       Debugger::sourceLeave(context);
       context.source = outerSource;
@@ -396,6 +398,7 @@ namespace recurloop {
   }
 
   void executeStream(context::Context &context, std::istream &source, std::string_view path, Size line, Size position) {
+    const Size originCheckpoint = context.lexicon.checkpoint().getAddress();
     const context::Source outerSource = context.source;
     std::istream *const outerInput = context.io.in;
     const int outerArgumentIndex = context.exec.args.index;
@@ -410,6 +413,7 @@ namespace recurloop {
     Debugger::sourceEnter(context);
     try {
       processSourceBuffer(context);
+      Semantic::rememberSource(context, originCheckpoint, path);
     } catch (...) {
       Debugger::sourceLeave(context);
       context.source = outerSource;
@@ -541,6 +545,7 @@ namespace recurloop {
     HostAbi::registerActions(context);
     hostActions = context.actions().snapshot();
     EngineImage::decode(context, coreImage);
+    Semantic::rememberImage(context, 0, "core.rli");
 
     // Host functions are process-local addresses and are intentionally not
     // serialized in .rli. Rebind them against the restored typed language.

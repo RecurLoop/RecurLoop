@@ -464,7 +464,7 @@ namespace recurloop {
       response.output = "O\t\nE\t" + hexText(message) + "\n";
     } else {
       response.output = replay.inspection->encode(replay.diagnostic);
-      if (trace) response.output += replay.inspection->trace();
+      if (trace) response.output += replay.inspection->trace(project_->processingSources());
     }
     replay.inspection.reset();
     request.rollback();
