@@ -5,6 +5,7 @@
 #include <recurloop/Functions.hpp>
 #include <recurloop/LanguageGrammar.hpp>
 #include <recurloop/SyntaxCursor.hpp>
+#include <recurloop/Semantic.hpp>
 
 #include <utility>
 #include <vector>
@@ -122,7 +123,22 @@ namespace recurloop {
 
     void parseArray(context::Context &, lexicon::Phrase &) {
       ParseFrame &current = frame();
-      const std::size_t count = current.cursor->typeNumber("an array length");
+      auto &tokens = current.cursor->typeSyntaxCursor();
+      std::size_t count;
+      if (tokens.current().kind == SyntaxTokenKind::Integer) {
+        count = current.cursor->typeNumber("an array length");
+      } else {
+        const auto start = tokens.current().offset;
+        const auto name = qualified(*current.cursor);
+        const auto binding =
+            current.context->values().find(name, current.scope, Semantic::valueBindings(*current.context));
+        if (!binding || binding->mutableValue || !binding->knownValue || !binding->value.isInteger() ||
+            binding->value.asInteger() < 0)
+          current.cursor->typeError("array length requires a non-negative integer constant: '" + name + "'");
+        count = static_cast<std::size_t>(binding->value.asInteger());
+        tokens.recordResolved(LanguageGrammar::findQualified(current.context->lexicon.phrase(), binding->name), start,
+                              tokens.consumedEnd());
+      }
       current.cursor->typeExpect("]");
       current.result = current.context->language().types.arrayOf(current.result, count);
     }

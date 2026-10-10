@@ -29,6 +29,9 @@ namespace recurloop {
     static void setup(context::Context &context);
     static context::Value evaluate(context::Context &context, std::string_view source);
     static context::Value evaluate(context::Context &context, std::string_view source, SourceLocation origin);
+    // Fold only built-in operators, literals and immutable bindings; never call user code.
+    static std::optional<context::Value> evaluateConstant(context::Context &context, std::string_view source,
+                                                          SourceLocation origin);
     static bool isBuiltin(context::Context &context, std::string_view name);
     // Parse a candidate without evaluation, source consumption or semantic tracing.
     static bool recognizes(context::Context &context, std::string_view source);

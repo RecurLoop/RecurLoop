@@ -150,6 +150,11 @@ Function types are structural: parameter types, result, calling convention,
 and variadic state determine identity. A named signature phrase can be reused
 as both a definition template and a type.
 
+Array lengths may be non-negative integer constants, including qualified names
+such as `u8[Layout:BrickCount]`. Compiled functions read `const` bindings in their
+lexical dictionary scope and embed their values in native code; local variables
+and parameters take precedence. Mutable interpreter bindings are not captured.
+
 ```rl
 let Unary = fn (value:i64) -> i64
 
@@ -278,6 +283,10 @@ compiler implementation hooks do not need independent usage documentation.
 `record` defines physical native layout, including field offsets, alignment,
 arrays, nested records, packed layout, and recursive pointer fields.
 
+Array fields support direct indexing (`state.bricks[index]`) and nested access
+(`state.rows[row].cells[column]`), including assignment and taking an element's
+address. A pointer cast is unnecessary.
+
 ```rl
 record Point {
     x:i64
@@ -389,6 +398,9 @@ The `debug` form retains symbols and exact statement/local-layout metadata while
 retaining the security properties. LLVM-enabled hosts use the built-in debug
 generator for the entry and reachable source functions, linked by the configured
 Clang/LLD toolchain. See [projects.md](projects.md) for native debugging.
+The built-in generator supports `f32` and `f64` arithmetic, numeric casts,
+compound assignments, and scalar System V arguments and results. Variadic calls
+promote `f32` to `f64` and narrow integers to `i32` in both backends.
 Hand-written `asm` remains responsible for valid indirect-branch landing
 pads inside the user-controlled instruction stream.
 

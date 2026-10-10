@@ -17,6 +17,7 @@
 #include <utilities/Exception.hpp>
 
 #include <algorithm>
+#include <charconv>
 #include <cctype>
 #include <cstring>
 #include <deque>
@@ -29,6 +30,43 @@
 
 namespace recurloop {
   namespace function_internal {
+    std::optional<Expression> constantLiteral(context::Context &context, std::string_view name, std::string_view scope,
+                                              std::size_t offset) {
+      const auto binding = context.values().find(name, scope, Semantic::valueBindings(context));
+      if (!binding || binding->mutableValue || !binding->knownValue) return std::nullopt;
+      Expression result;
+      result.offset = offset;
+      const auto &value = binding->value;
+      if (value.isNull()) {
+        result.kind = Expression::Kind::Unary;
+        result.text = "cast";
+        result.syntax =
+            exact(exact(exact(context.lexicon.phrase(), FunctionGrammarName), IntrinsicDictionaryName), "cast");
+        result.declaredType = context.language().types.pointerTo(context.language().types.find("u8"));
+        auto zero = std::make_unique<Expression>();
+        zero->kind = Expression::Kind::Integer;
+        zero->text = "0";
+        zero->offset = offset;
+        result.children.push_back(std::move(zero));
+      } else if (value.isReal()) {
+        result.kind = Expression::Kind::Real;
+        char buffer[64];
+        const auto [end, error] = std::to_chars(buffer, buffer + sizeof(buffer), value.asReal(),
+                                                std::chars_format::general, std::numeric_limits<double>::max_digits10);
+        if (error != std::errc{}) fail({}, offset, "cannot encode real constant");
+        result.text.assign(buffer, end);
+      } else if (value.isString()) {
+        result.kind = Expression::Kind::String;
+        result.text = value.asString();
+      } else {
+        result.kind = Expression::Kind::Integer;
+        result.text = value.isInteger() ? std::to_string(static_cast<std::uint64_t>(value.asInteger()))
+                      : value.isBoolean() && value.asBoolean() ? "1"
+                                                               : "0";
+      }
+      return result;
+    }
+
     std::string stableActionSymbol(std::string_view scope, SourceLocation origin, std::string_view signature,
                                    std::string_view body, std::size_t discriminator) {
       // FNV-1a over source identity. Unlike the old lexicon-checkpoint based
@@ -273,8 +311,8 @@ namespace recurloop {
         dependency.sourceText = source->body;
         dependency.sourceLine = source->line;
         dependency.sourceColumn = source->column;
-        const auto statements = function_internal::parseBody(
-            context, source->body, source->scope, source->path, source->line, source->column);
+        const auto statements = function_internal::parseBody(context, source->body, source->scope, source->path,
+                                                             source->line, source->column, source->parameterNames);
         const std::string previousOverride = context.exec.definitionSymbolOverride;
         context.exec.definitionSymbolOverride = symbol;
         compiler::Module generated;
@@ -389,8 +427,8 @@ namespace recurloop {
     function_internal::FunctionDefinition definition = function_internal::parseSignature(
         context, signatureSource, hint, false, signatureOrigin.path, signatureOrigin.line, signatureOrigin.column);
     definition.scope = scope;
-    std::vector<function_internal::Statement> statements =
-        function_internal::parseBody(context, bodySource, scope, bodyOrigin.path, bodyOrigin.line, bodyOrigin.column);
+    std::vector<function_internal::Statement> statements = function_internal::parseBody(
+        context, bodySource, scope, bodyOrigin.path, bodyOrigin.line, bodyOrigin.column, definition.names);
     definition.sourcePath = bodyOrigin.path;
     definition.sourceText = std::string(bodySource);
     definition.sourceLine = bodyOrigin.line;
@@ -466,7 +504,8 @@ namespace recurloop {
     // parseBody() drives SyntaxCursor and therefore emits phrase-backed spans;
     // stop before declaring/code-generating runtime state.
     if (Semantic::active(context)) {
-      (void)function_internal::parseBody(context, block.body, symbol, block.path, block.line, block.position);
+      (void)function_internal::parseBody(context, block.body, symbol, block.path, block.line, block.position,
+                                         signature.names);
       if (stagedByLet) {
         context::Lookup::leave(context, invoked);
       } else {
@@ -492,8 +531,8 @@ namespace recurloop {
         context.language().types.addMethod(receiver.id, method, signature.function.signature);
     }
 
-    std::vector<function_internal::Statement> statements =
-        function_internal::parseBody(context, block.body, symbol, block.path, block.line, block.position);
+    std::vector<function_internal::Statement> statements = function_internal::parseBody(
+        context, block.body, symbol, block.path, block.line, block.position, signature.names);
     rememberFunctionSource(context, signature);
     context.exec.definitionSymbolOverride = signature.function.signature.symbol;
     compiler::Module module;

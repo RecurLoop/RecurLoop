@@ -1295,3 +1295,27 @@ TEST(RecurloopGeneration, ConsolePaletteUpdatesAfterRequestsAndRefresh) {
   session->refresh();
   EXPECT_EQ(session->highlight("ConsolePaletteType"), original);
 }
+
+TEST(RecurloopGeneration, InspectionFoldsConstantArrayLengthsWithoutExecutingUserFunctions) {
+  auto state = project();
+  auto session = state->openSession();
+  const std::string source = R"(
+const columns = 5
+const rows = 2
+const count = columns * rows
+record Grid { cells:u8[count] }
+let read = fn (grid:Grid*) -> u8 { return grid.cells[count - 1] }
+let grid_size = fn () -> i64 { return sizeof(Grid) }
+extern puts(text:u8*) -> i32 abi sysv-amd64
+let side_effect = fn () -> i64 { puts("constant-side-effect"); return 7 }
+const dynamic_value = side_effect()
+)";
+  const auto inspected = session->inspect(source, "<constant-array-inspection>", true, true);
+  ASSERT_EQ(inspected.status, 0) << inspected.error;
+  EXPECT_EQ(inspected.output.find("constant-side-effect"), std::string::npos);
+  EXPECT_NE(session->evaluate("print count").status, 0);
+  const auto defined = session->evaluate(source);
+  ASSERT_EQ(defined.status, 0) << defined.error;
+  EXPECT_EQ(defined.output, "constant-side-effect\n");
+  EXPECT_EQ(session->evaluate("print grid_size()").output, "10\n");
+}

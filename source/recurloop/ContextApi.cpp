@@ -1711,8 +1711,8 @@ namespace recurloop {
         definition.sourceLine = origin.line;
         definition.sourceColumn = origin.column;
 
-        const std::vector<function_internal::Statement> statements =
-            function_internal::parseBody(value, bodySource, functionSymbol, origin.path, origin.line, origin.column);
+        const std::vector<function_internal::Statement> statements = function_internal::parseBody(
+            value, bodySource, functionSymbol, origin.path, origin.line, origin.column, definition.names);
         function_internal::compileFunctionDefinition(value, std::move(definition), statements, functionSymbol);
 
         const std::optional<compiler::Module> module = value.language().findModule(functionSymbol);

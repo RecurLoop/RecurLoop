@@ -29,18 +29,6 @@ namespace recurloop {
       return LanguageGrammar::find(dictionary, key);
     }
 
-    lexicon::Phrase findNamedPhrase(lexicon::Phrase dictionary, std::string_view name) {
-      auto direct = findPhrase(dictionary, name);
-      if (!direct.isNull()) return direct;
-      while (!name.empty()) {
-        const auto separator = name.find(':');
-        dictionary = findPhrase(dictionary, name.substr(0, separator));
-        if (dictionary.isNull() || separator == std::string_view::npos) break;
-        name.remove_prefix(separator + 1);
-      }
-      return dictionary;
-    }
-
     [[noreturn]] void expressionFail(const context::Context &context, std::size_t offset, const std::string &message) {
       const SourceLocation origin = currentExpressionDiagnostic == nullptr
                                         ? SourceLocation{context.source.path, context.source.line, context.source.position}
@@ -178,16 +166,19 @@ namespace recurloop {
       return frame.result;
     }
 
+    struct NotConstant {};
+
     class Parser {
     public:
-      Parser(context::Context &context, std::string_view source, bool probing = false)
-          : context(context), probing(probing), grammar(findPhrase(context.lexicon.phrase(), ExpressionDictionaryName)),
+      Parser(context::Context &context, std::string_view source, bool probing = false, bool constantOnly = false)
+          : context(context), probing(probing), constantOnly(constantOnly),
+            grammar(findPhrase(context.lexicon.phrase(), ExpressionDictionaryName)),
             prefixOperators(findPhrase(grammar, "prefix")), infixOperators(findPhrase(grammar, "infix")),
             primaries(findPhrase(grammar, "primary")), postfixes(findPhrase(grammar, "postfix")),
             symbols(findPhrase(grammar, "symbols")), builtins(findPhrase(grammar, "builtins")),
             dynamicBuiltins(findPhrase(grammar, "dynamic")), literals(findPhrase(grammar, "literals")),
             lexer(context, source, {symbols, prefixOperators, infixOperators, primaries, postfixes}, expressionFail,
-                  {.semanticTracing = !probing},
+                  {.semanticTracing = !probing && !constantOnly},
                   currentExpressionDiagnostic == nullptr ? SourceLocation{} : currentExpressionDiagnostic->origin) {
         if (grammar.isNull()) THROW(, "expression phrase grammar is not installed")
         if (prefixOperators.isNull() || infixOperators.isNull() || primaries.isNull() || postfixes.isNull() ||
@@ -224,7 +215,10 @@ namespace recurloop {
           if (active && (definition.flags & ExpressionOperator::SkipRightWhenTrue)) rightActive = !left.asBoolean();
           if (active && (definition.flags & ExpressionOperator::SkipRightWhenFalse)) rightActive = left.asBoolean();
           const context::Value right = expression(definition.precedence + 1, rightActive);
-          if (active) left = invokeOperator(context, phrase, token, left, right);
+          if (active) {
+            requireConstantAction(phrase, "expressions.operator.");
+            left = invokeOperator(context, phrase, token, left, right);
+          }
         }
         return left;
       }
@@ -236,6 +230,7 @@ namespace recurloop {
         const Token token = lexer.take();
         context::Value value = prefix(active);
         if (!active) return {};
+        requireConstantAction(phrase, "expressions.operator.");
         return invokeOperator(context, phrase, token, value);
       }
 
@@ -250,6 +245,7 @@ namespace recurloop {
       }
 
       ParsedExpression invokePrimary(lexicon::Phrase syntax, Token start, bool active) {
+        requireConstantAction(syntax, "expressions.primary.");
         PrimaryParseFrame frame{this, std::move(start), active, {}, false};
         PrimaryParseFrame *previous = currentPrimaryParse;
         currentPrimaryParse = &frame;
@@ -266,6 +262,7 @@ namespace recurloop {
       }
 
       ParsedExpression invokePostfix(lexicon::Phrase syntax, Token operation, ParsedExpression base, bool active) {
+        requireConstantAction(syntax, "expressions.postfix.");
         PostfixParseFrame frame{this, std::move(operation), active, std::move(base), false};
         PostfixParseFrame *previous = currentPostfixParse;
         currentPostfixParse = &frame;
@@ -282,8 +279,8 @@ namespace recurloop {
       }
 
       void recordName(const ParsedExpression &parsed) {
-        if (probing || !Semantic::active(context) || currentExpressionDiagnostic == nullptr) return;
-        auto phrase = findNamedPhrase(context.lexicon.phrase(), parsed.token.text);
+        if (probing || constantOnly || !Semantic::active(context) || currentExpressionDiagnostic == nullptr) return;
+        auto phrase = LanguageGrammar::findQualified(context.lexicon.phrase(), parsed.token.text);
         if (phrase.isNull()) return;
         const auto &diagnostic = *currentExpressionDiagnostic;
         Semantic::recordMapped(context, phrase, diagnostic.origin, diagnostic.source, parsed.token.offset, parsed.end);
@@ -295,11 +292,16 @@ namespace recurloop {
           expressionFail(context, parsed.token.offset, "expression phrase produced an unresolved value");
         lexicon::Phrase literal = LanguageGrammar::resolve(context, literals, parsed.token.text);
         if (!literal.isNull()) {
+          requireConstantAction(literal, "expressions.literal.");
           parsed.value = active ? invokeBuiltin(context, literal, parsed.token) : context::Value();
+        } else if (active && constantOnly) {
+          const auto binding = context.values().find(parsed.token.text, {}, Semantic::valueBindings(context));
+          if (!binding || binding->mutableValue || !binding->knownValue) throw NotConstant{};
+          parsed.value = binding->value;
         } else if (probing || (!active && Semantic::active(context))) {
-          const bool known =
-              context.values().contains(parsed.token.text) ||
-              (Semantic::active(context) && !findNamedPhrase(context.lexicon.phrase(), parsed.token.text).isNull());
+          const bool known = context.values().contains(parsed.token.text) ||
+                             (Semantic::active(context) &&
+                              !LanguageGrammar::findQualified(context.lexicon.phrase(), parsed.token.text).isNull());
           if (probing)
             recognized = recognized && known;
           else if (!known)
@@ -368,7 +370,7 @@ namespace recurloop {
               expressionFail(context, name.offset, "cannot resolve imported function '" + std::string(name.text) + "'");
             }
           } else {
-            lexicon::Phrase phrase = findNamedPhrase(context.lexicon.phrase(), name.text);
+            lexicon::Phrase phrase = LanguageGrammar::findQualified(context.lexicon.phrase(), name.text);
             if (phrase.isNull()) expressionFail(context, name.offset, "unknown function '" + name.text + "'");
             const std::string key =
                 context.language().functionKey(function->parameterTypes, function->signature.variadic);
@@ -439,6 +441,7 @@ namespace recurloop {
       }
 
       context::Value builtin(const Token &name, std::vector<context::Value> values) {
+        if (constantOnly) throw NotConstant{};
         try {
           lexicon::Phrase phrase = LanguageGrammar::resolve(context, builtins, name.text);
           if (!phrase.isNull()) return invokeBuiltin(context, phrase, name, values);
@@ -570,8 +573,15 @@ namespace recurloop {
         return resolve(result, active);
       }
 
+      void requireConstantAction(lexicon::Phrase phrase, std::string_view prefix) {
+        if (constantOnly &&
+            (!phrase.containsAction() || !context.actions().name(phrase.getAction()).starts_with(prefix)))
+          throw NotConstant{};
+      }
+
       context::Context &context;
       bool probing = false;
+      bool constantOnly = false;
       bool recognized = true;
       bool committed = false;
       lexicon::Phrase grammar;
@@ -625,21 +635,36 @@ namespace recurloop {
     return evaluate(context, source, {context.source.path, context.source.line, context.source.position});
   }
 
+  namespace {
+    context::Value evaluateSource(context::Context &context, std::string_view source, SourceLocation origin,
+                                  bool constantOnly) {
+      internal::ExpressionDiagnostic diagnostic{source, std::move(origin)};
+      auto *previous = internal::currentExpressionDiagnostic;
+      internal::currentExpressionDiagnostic = &diagnostic;
+      try {
+        // Ordinary inspection parses without execution. Constant folding permits only
+        // built-in arithmetic and literals, rejecting native calls and custom actions.
+        auto result =
+            internal::Parser(context, source, false, constantOnly).parse(constantOnly || !Semantic::active(context));
+        internal::currentExpressionDiagnostic = previous;
+        return result;
+      } catch (...) {
+        internal::currentExpressionDiagnostic = previous;
+        throw;
+      }
+    }
+  } // namespace
+
   context::Value Expressions::evaluate(context::Context &context, std::string_view source, SourceLocation origin) {
-    internal::ExpressionDiagnostic diagnostic{source, std::move(origin)};
-    internal::ExpressionDiagnostic *previous = internal::currentExpressionDiagnostic;
-    internal::currentExpressionDiagnostic = &diagnostic;
+    return evaluateSource(context, source, std::move(origin), false);
+  }
+
+  std::optional<context::Value> Expressions::evaluateConstant(context::Context &context, std::string_view source,
+                                                              SourceLocation origin) {
     try {
-      // Semantic inspection must elaborate/parse source without invoking user
-      // functions, builtins or operators. Parser already carries an `active`
-      // bit through every expression branch, so reuse that mechanism rather
-      // than inventing a second expression parser.
-      context::Value result = internal::Parser(context, source).parse(!Semantic::active(context));
-      internal::currentExpressionDiagnostic = previous;
-      return result;
-    } catch (...) {
-      internal::currentExpressionDiagnostic = previous;
-      throw;
+      return evaluateSource(context, source, std::move(origin), true);
+    } catch (const internal::NotConstant &) {
+      return std::nullopt;
     }
   }
 

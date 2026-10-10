@@ -83,6 +83,7 @@ namespace recurloop {
     };
 
     struct TraceState {
+      context::Values::Bindings valueBindings;
       context::Context *context = nullptr;
       std::string source;
       std::string path;
@@ -1088,6 +1089,10 @@ namespace recurloop {
       state->activeOwner = previous_;
       state->activeGroup = previousGroup_;
     }
+  }
+
+  context::Values::Bindings *Semantic::valueBindings(context::Context &context) {
+    return active(context) ? &currentTrace->valueBindings : nullptr;
   }
 
   bool Semantic::active(context::Context &context) {

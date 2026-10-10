@@ -92,31 +92,30 @@ namespace recurloop {
         emit("mov", slot(canarySlot) + ", rax");
 
         scopes.emplace_back();
-        static constexpr std::string_view registers[] = {"rdi", "rsi", "rdx", "rcx", "r8", "r9"};
+        const auto locations = compiler::Abi::lowerArguments(signature.function.signature);
         for (std::size_t index = 0; index < signature.names.size(); ++index) {
-          const compiler::TypeDescriptor parameter =
-              context.language().types.get(signature.function.parameterTypes[index]);
-          if (parameter.kind == compiler::TypeKind::FloatingPoint || parameter.size > 8)
-            fail({}, 0, "fn parameters currently require integer, pointer, or scalar types up to 64 bits");
-          Local local{signature.function.parameterTypes[index], allocate(), true};
+          const auto type = signature.function.parameterTypes[index];
+          const auto parameter = scalarType(type, 0);
+          Local local{type, allocate(), true};
           scopes.back().emplace(signature.names[index], local);
-          if (index < std::size(registers))
-            emit("mov", slot(local.offset) + ", " + std::string(registers[index]));
-          else {
-            emit("mov", "rax, qword [rbp + " + std::to_string(16 + (index - std::size(registers)) * 8) + "]");
-            emit("mov", slot(local.offset) + ", rax");
+          const auto &location = locations[index];
+          if (location.kind == compiler::ArgumentLocationKind::Stack) {
+            emit("mov", "rax, qword [rbp + " + std::to_string(16 + location.stackOffset) + "]");
+          } else if (parameter.kind == compiler::TypeKind::FloatingPoint) {
+            floatingFromRegister(floatingRegisterIndex(location.registerName), parameter.size);
+          } else {
+            emit("mov", "rax, " + location.registerName);
           }
-          if (parameter.kind == compiler::TypeKind::Integer && parameter.size < 8) {
-            emit("mov", "rax, " + slot(local.offset));
-            normalizeBitwise(parameter);
-            emit("mov", slot(local.offset) + ", rax");
-          }
+          if (parameter.kind == compiler::TypeKind::Integer) normalizeBitwise(parameter);
+          emit("mov", slot(local.offset) + ", rax");
         }
 
         pendingGuard();
         statements(body);
         emit("xor", "eax, eax");
         const std::size_t epilogue = code.size();
+        const auto resultType = context.language().types.get(signature.function.resultType);
+        if (resultType.kind == compiler::TypeKind::FloatingPoint) floatingToRegister("rax", 0, resultType.size);
         emit("mov", "rdx, " + slot(canarySlot));
         emitBytes({0x64, 0x48, 0x33, 0x14, 0x25, 0x28, 0x00, 0x00, 0x00}); // xor rdx, fs:0x28
         const std::size_t canaryValid = jump({0x0f, 0x84});
@@ -162,9 +161,8 @@ namespace recurloop {
         const compiler::TypeId type = expression(*value.children[0]);
         const compiler::TypeDescriptor descriptor = context.language().types.get(type);
         if (descriptor.kind == compiler::TypeKind::FloatingPoint) {
-          if (descriptor.size != sizeof(double)) fail({}, value.offset, "fn currently supports f64 expressions");
           if (instruction == "neg") {
-            emit("mov", "rdx, " + std::to_string(std::uint64_t{1} << 63));
+            emit("mov", "rdx, " + std::to_string(std::uint64_t{1} << (descriptor.size * 8 - 1)));
             emit("xor", "rax, rdx");
           } else if (!instruction.empty()) {
             fail({}, value.offset, "unsupported floating prefix operator");
@@ -176,8 +174,21 @@ namespace recurloop {
         return type;
       }
 
+      void condition(const Expression &value) {
+        const auto type = expression(value);
+        const auto descriptor = context.language().types.get(type);
+        if (descriptor.kind == compiler::TypeKind::FloatingPoint) {
+          floatingToRegister("rax", 0, descriptor.size);
+          emitBytes({0x0f, 0x57, 0xc9}); // xorps xmm1, xmm1
+          if (descriptor.size == 8) emitBytes({0x66});
+          emitBytes({0x0f, 0x2e, 0xc1}); // ucomiss/ucomisd
+          emit("mov", "rax, 0");
+          emitBytes({0x0f, 0x95, 0xc0, 0x0f, 0x9b, 0xc2, 0x20, 0xd0}); // ordered and nonzero
+        }
+      }
+
       compiler::TypeId emitLogicalNot(const Expression &value) {
-        expression(*value.children[0]);
+        condition(*value.children[0]);
         emit("test", "rax, rax");
         emit("mov", "rax, 0");
         emitBytes({0x0f, 0x94, 0xc0});
@@ -220,38 +231,74 @@ namespace recurloop {
         return type;
       }
 
-      compiler::TypeId emitArithmetic(const Expression &value, std::string_view instruction) {
-        const compiler::TypeId left = binaryOperands(value);
-        const compiler::TypeDescriptor descriptor = context.language().types.get(left);
+      compiler::TypeDescriptor scalarType(compiler::TypeId type, std::size_t offset) {
+        const auto descriptor = context.language().types.get(type);
+        if (descriptor.kind == compiler::TypeKind::Void || descriptor.kind == compiler::TypeKind::Structure ||
+            descriptor.kind == compiler::TypeKind::Array || descriptor.size == 0 || descriptor.size > 8)
+          fail({}, offset, "fn ABI requires numeric or pointer scalar types up to 64 bits");
+        return descriptor;
+      }
+
+      unsigned floatingRegisterIndex(std::string_view name) {
+        const auto &registers = signature.function.signature.convention.floatingRegisters;
+        const auto found = std::ranges::find(registers, name);
+        if (found == registers.end()) fail({}, 0, "unsupported floating argument register");
+        return static_cast<unsigned>(found - registers.begin());
+      }
+
+      void floatingToRegister(std::string_view source, unsigned index, std::size_t size) {
+        // Scalar expressions live in RAX/RCX as raw bits; only the ABI and SSE operations use XMM.
+        emitBytes({0x66});
+        if (size == 8) emitBytes({0x48});
+        emitBytes({0x0f, 0x6e, static_cast<std::uint8_t>(0xc0 | (index << 3) | (source == "rcx" ? 1 : 0))});
+      }
+
+      void floatingFromRegister(unsigned index, std::size_t size) {
+        emitBytes({0x66});
+        if (size == 8) emitBytes({0x48});
+        emitBytes({0x0f, 0x7e, static_cast<std::uint8_t>(0xc0 | (index << 3))});
+      }
+
+      void floatingOperation(const compiler::TypeDescriptor &descriptor, std::uint8_t opcode) {
+        floatingToRegister("rax", 0, descriptor.size);
+        floatingToRegister("rcx", 1, descriptor.size);
+        emitBytes({static_cast<std::uint8_t>(descriptor.size == 8 ? 0xf2 : 0xf3), 0x0f, opcode, 0xc1});
+        floatingFromRegister(0, descriptor.size);
+      }
+
+      void arithmeticOperation(compiler::TypeId type, std::string_view instruction, std::size_t offset) {
+        const auto descriptor = context.language().types.get(type);
         if (descriptor.kind == compiler::TypeKind::FloatingPoint) {
-          if (descriptor.size != sizeof(double)) fail({}, value.offset, "fn currently supports f64 expressions");
           const std::uint8_t opcode = instruction == "add"    ? 0x58
                                       : instruction == "sub"  ? 0x5c
                                       : instruction == "imul" ? 0x59
                                                               : 0;
-          if (opcode == 0) fail({}, value.offset, "unsupported floating arithmetic operator");
-          emitBytes({0x66, 0x48, 0x0f, 0x6e, 0xc0}); // movq xmm0, rax
-          emitBytes({0x66, 0x48, 0x0f, 0x6e, 0xc9}); // movq xmm1, rcx
-          emitBytes({0xf2, 0x0f, opcode, 0xc1});     // op xmm0, xmm1
-          emitBytes({0x66, 0x48, 0x0f, 0x7e, 0xc0}); // movq rax, xmm0
-          return left;
+          if (opcode == 0) fail({}, offset, "unsupported floating arithmetic operator");
+          floatingOperation(descriptor, opcode);
+        } else {
+          emit(instruction, "rax, rcx");
+          if (descriptor.kind == compiler::TypeKind::Integer) normalizeBitwise(descriptor);
         }
-        emit(instruction, "rax, rcx");
-        if (descriptor.kind == compiler::TypeKind::Integer) normalizeBitwise(descriptor);
-        return left;
+      }
+
+      compiler::TypeId emitArithmetic(const Expression &value, std::string_view instruction) {
+        const auto type = binaryOperands(value);
+        arithmeticOperation(type, instruction, value.offset);
+        return type;
       }
 
       compiler::TypeId emitDivision(const Expression &value, bool remainder) {
-        const compiler::TypeId left = binaryOperands(value);
-        const compiler::TypeDescriptor descriptor = context.language().types.get(left);
+        const auto type = binaryOperands(value);
+        divisionOperation(type, remainder, value.offset);
+        return type;
+      }
+
+      void divisionOperation(compiler::TypeId type, bool remainder, std::size_t offset) {
+        const auto descriptor = context.language().types.get(type);
         if (descriptor.kind == compiler::TypeKind::FloatingPoint) {
-          if (descriptor.size != sizeof(double) || remainder)
-            fail({}, value.offset, "fn floating division supports f64 and no remainder");
-          emitBytes({0x66, 0x48, 0x0f, 0x6e, 0xc0}); // movq xmm0, rax
-          emitBytes({0x66, 0x48, 0x0f, 0x6e, 0xc9}); // movq xmm1, rcx
-          emitBytes({0xf2, 0x0f, 0x5e, 0xc1});       // divsd xmm0, xmm1
-          emitBytes({0x66, 0x48, 0x0f, 0x7e, 0xc0}); // movq rax, xmm0
-          return left;
+          if (remainder) fail({}, offset, "floating remainder is unsupported");
+          floatingOperation(descriptor, 0x5e);
+          return;
         }
         emit("test", "rcx, rcx");
         const auto nonzero = jump({0x0f, 0x85});
@@ -274,7 +321,6 @@ namespace recurloop {
         }
         if (remainder) emit("mov", "rax, rdx");
         normalizeBitwise(descriptor);
-        return left;
       }
 
       void runtimeCall(const char *symbol) {
@@ -319,10 +365,10 @@ namespace recurloop {
           }
         }
         if (floating) {
-          if (descriptor.size != sizeof(double)) fail({}, value.offset, "fn currently supports f64 comparisons");
-          emitBytes({0x66, 0x48, 0x0f, 0x6e, 0xc0}); // movq xmm0, rax
-          emitBytes({0x66, 0x48, 0x0f, 0x6e, 0xc9}); // movq xmm1, rcx
-          emitBytes({0x66, 0x0f, 0x2e, 0xc1});       // ucomisd xmm0, xmm1
+          floatingToRegister("rax", 0, descriptor.size);
+          floatingToRegister("rcx", 1, descriptor.size);
+          if (descriptor.size == 8) emitBytes({0x66});
+          emitBytes({0x0f, 0x2e, 0xc1}); // ucomiss/ucomisd xmm0, xmm1
         } else {
           emit("cmp", "rax, rcx");
         }
@@ -337,10 +383,10 @@ namespace recurloop {
       }
 
       compiler::TypeId emitLogical(const Expression &value, bool conjunction) {
-        expression(*value.children[0]);
+        condition(*value.children[0]);
         emit("test", "rax, rax");
         const std::size_t shortcut = jump({0x0f, static_cast<std::uint8_t>(conjunction ? 0x84 : 0x85)});
-        expression(*value.children[1]);
+        condition(*value.children[1]);
         emit("test", "rax, rax");
         emit("mov", "rax, 0");
         emitBytes({0x0f, 0x95, 0xc0});
@@ -351,31 +397,79 @@ namespace recurloop {
         return integerType;
       }
 
-      compiler::TypeId emitCastIntrinsic(const Expression &value) {
-        const compiler::TypeId sourceType = expression(*value.children[0]);
-        const compiler::TypeDescriptor source = context.language().types.get(sourceType);
-        const compiler::TypeDescriptor target = context.language().types.get(value.declaredType);
-        if (source.kind == compiler::TypeKind::FloatingPoint && source.size == sizeof(double) &&
-            target.kind == compiler::TypeKind::Integer && target.size == sizeof(std::int64_t) && target.isSigned) {
-          emitBytes({0x66, 0x48, 0x0f, 0x6e, 0xc0}); // movq xmm0, rax
-          emitBytes({0xf2, 0x48, 0x0f, 0x2c, 0xc0}); // cvttsd2si rax, xmm0
-          return value.declaredType;
+      void convert(compiler::TypeId sourceType, compiler::TypeId targetType, std::size_t offset,
+                   bool explicitCast = false) {
+        if (sourceType == targetType) return;
+        if (!explicitCast) compatible(targetType, sourceType, offset);
+        const auto source = context.language().types.get(sourceType);
+        const auto target = context.language().types.get(targetType);
+        const auto prefix = [](std::size_t size) -> std::uint8_t { return size == 8 ? 0xf2 : 0xf3; };
+        if (source.kind == compiler::TypeKind::FloatingPoint && target.kind == compiler::TypeKind::FloatingPoint) {
+          floatingToRegister("rax", 0, source.size);
+          emitBytes({prefix(source.size), 0x0f, 0x5a, 0xc0}); // cvtss2sd/cvtsd2ss
+          floatingFromRegister(0, target.size);
+          return;
         }
-        if (source.kind == compiler::TypeKind::Integer && source.size == sizeof(std::int64_t) && source.isSigned &&
-            target.kind == compiler::TypeKind::FloatingPoint && target.size == sizeof(double)) {
-          emitBytes({0xf2, 0x48, 0x0f, 0x2a, 0xc0}); // cvtsi2sd xmm0, rax
-          emitBytes({0x66, 0x48, 0x0f, 0x7e, 0xc0}); // movq rax, xmm0
-          return value.declaredType;
+        if (explicitCast && source.kind == compiler::TypeKind::Integer &&
+            target.kind == compiler::TypeKind::FloatingPoint) {
+          normalizeBitwise(source);
+          if (!source.isSigned && source.size == 8) {
+            emit("test", "rax, rax");
+            const auto ordinary = jump({0x0f, 0x89});
+            // Convert the rounded half of a u64, then double it in floating precision.
+            emit("mov", "rdx, rax");
+            emit("and", "rdx, 1");
+            emit("shr", "rax, 1");
+            emit("or", "rax, rdx");
+            emitBytes({prefix(target.size), 0x48, 0x0f, 0x2a, 0xc0});
+            emitBytes({prefix(target.size), 0x0f, 0x58, 0xc0});
+            const auto done = jump({0xe9});
+            patchRelative(ordinary, code.size());
+            emitBytes({prefix(target.size), 0x48, 0x0f, 0x2a, 0xc0});
+            patchRelative(done, code.size());
+          } else {
+            emitBytes({prefix(target.size), 0x48, 0x0f, 0x2a, 0xc0}); // cvtsi2ss/cvtsi2sd
+          }
+          floatingFromRegister(0, target.size);
+          return;
         }
-        const bool sourceScalar = source.kind == compiler::TypeKind::Integer ||
-                                  source.kind == compiler::TypeKind::Pointer ||
-                                  source.kind == compiler::TypeKind::Function;
-        const bool targetScalar = target.kind == compiler::TypeKind::Integer ||
-                                  target.kind == compiler::TypeKind::Pointer ||
-                                  target.kind == compiler::TypeKind::Function;
-        if (!sourceScalar || !targetScalar || source.size > 8 || target.size > 8)
-          fail({}, value.offset, "fn cast currently requires integer or pointer scalar types");
+        if (explicitCast && source.kind == compiler::TypeKind::FloatingPoint &&
+            target.kind == compiler::TypeKind::Integer) {
+          floatingToRegister("rax", 0, source.size);
+          if (!target.isSigned && target.size == 8) {
+            const auto threshold = source.size == 8 ? std::bit_cast<std::uint64_t>(0x1p63)
+                                                    : std::uint64_t{std::bit_cast<std::uint32_t>(0x1p63f)};
+            emit("mov", "rax, " + std::to_string(threshold));
+            floatingToRegister("rax", 1, source.size);
+            if (source.size == 8) emitBytes({0x66});
+            emitBytes({0x0f, 0x2e, 0xc1});
+            const auto ordinary = jump({0x0f, 0x82}); // below 2^63
+            emitBytes({prefix(source.size), 0x0f, 0x5c, 0xc1});
+            emitBytes({prefix(source.size), 0x48, 0x0f, 0x2c, 0xc0});
+            emit("mov", "rdx, " + std::to_string(std::uint64_t{1} << 63));
+            emit("xor", "rax, rdx");
+            const auto done = jump({0xe9});
+            patchRelative(ordinary, code.size());
+            emitBytes({prefix(source.size), 0x48, 0x0f, 0x2c, 0xc0});
+            patchRelative(done, code.size());
+          } else {
+            emitBytes({prefix(source.size), 0x48, 0x0f, 0x2c, 0xc0}); // cvttss2si/cvttsd2si
+          }
+          normalizeBitwise(target);
+          return;
+        }
+        const auto scalar = [](const compiler::TypeDescriptor &type) {
+          return type.kind == compiler::TypeKind::Integer || type.kind == compiler::TypeKind::Pointer ||
+                 type.kind == compiler::TypeKind::Function;
+        };
+        if (!scalar(source) || !scalar(target) || source.size > 8 || target.size > 8)
+          fail({}, offset, "cast requires numeric or pointer scalar types");
         if (target.kind == compiler::TypeKind::Integer) normalizeBitwise(target);
+      }
+
+      compiler::TypeId emitCastIntrinsic(const Expression &value) {
+        const auto sourceType = expression(*value.children[0]);
+        convert(sourceType, value.declaredType, value.offset, true);
         return value.declaredType;
       }
 
@@ -499,7 +593,7 @@ namespace recurloop {
         emit("push", "rax");
         ++temporaryDepth;
         const compiler::TypeId right = expression(*value.children[1]);
-        compatible(left, right, value.offset);
+        convert(right, left, value.offset);
         emit("mov", "rcx, rax");
         emit("pop", "rax");
         --temporaryDepth;
@@ -701,7 +795,7 @@ namespace recurloop {
         const compiler::TypeId valueType = expression(*statement.expression, statement.declaredType);
         const compiler::TypeId type =
             statement.declaredType == compiler::InvalidType ? valueType : statement.declaredType;
-        compatible(type, valueType, statement.offset);
+        convert(valueType, type, statement.offset);
         const compiler::TypeDescriptor descriptor = context.language().types.get(type);
         if (descriptor.size > 8 || descriptor.kind == compiler::TypeKind::Structure ||
             descriptor.kind == compiler::TypeKind::Array)
@@ -717,7 +811,7 @@ namespace recurloop {
         emit("push", "rax");
         ++temporaryDepth;
         const compiler::TypeId valueType = expression(*statement.expression, targetType);
-        compatible(targetType, valueType, statement.offset);
+        convert(valueType, targetType, statement.offset);
         emit("mov", "rcx, rax");
         emit("pop", "rdx");
         --temporaryDepth;
@@ -745,14 +839,12 @@ namespace recurloop {
 
       void emitAssignmentArithmetic(compiler::TypeId targetType, std::string_view instruction) {
         load(targetType, "rdx");
-        emit(instruction, "rax, rcx");
+        arithmeticOperation(targetType, instruction, 0);
       }
 
       void emitAssignmentDivision(compiler::TypeId targetType, bool remainder) {
         load(targetType, "rdx");
-        emit("cqo", "");
-        emit("idiv", "rcx");
-        if (remainder) emit("mov", "rax, rdx");
+        divisionOperation(targetType, remainder, 0);
       }
 
       void emitAssignmentBitwise(compiler::TypeId targetType, std::string_view instruction, std::size_t offset) {
@@ -761,7 +853,7 @@ namespace recurloop {
       }
 
       void generateConditional(const Statement &statement) {
-        expression(*statement.expression);
+        condition(*statement.expression);
         emit("test", "rax, rax");
         const std::size_t rejected = jump({0x0f, 0x84});
         statements(statement.accepted, true);
@@ -774,7 +866,7 @@ namespace recurloop {
       void generateLoop(const Statement &statement) {
         const std::size_t begin = code.size();
         pendingGuard();
-        expression(*statement.expression);
+        condition(*statement.expression);
         emit("test", "rax, rax");
         const std::size_t end = jump({0x0f, 0x84});
         loops.push_back({begin, {}, defers.size()});
@@ -802,7 +894,7 @@ namespace recurloop {
       void generateReturn(const Statement &statement) {
         if (statement.expression) {
           const compiler::TypeId result = expression(*statement.expression, signature.function.resultType);
-          compatible(signature.function.resultType, result, statement.offset);
+          convert(result, signature.function.resultType, statement.offset);
         } else {
           if (context.language().types.get(signature.function.resultType).kind != compiler::TypeKind::Void)
             fail({}, statement.offset, "non-void fn requires a return value");
@@ -930,6 +1022,8 @@ namespace recurloop {
             emit("mov", "rax, " + slot(local->offset));
             return local->type;
           }
+          if (const auto literal = constantLiteral(context, value.text, signature.scope, value.offset))
+            return expression(*literal, expected);
           const std::optional<compiler::TypedFunction> function = functionReference(value.text, expected);
           if (!function) fail({}, value.offset, "unknown fn local or typed function '" + value.text + "'");
           emitFunctionAddress(function->signature.symbol, function->imported);
@@ -951,14 +1045,14 @@ namespace recurloop {
         case Expression::Kind::Binary: return operatorBehavior(value, OperatorEmitName);
         case Expression::Kind::Block: return expressionBlock(value.body->accepted, value.offset);
         case Expression::Kind::Conditional: {
-          expression(*value.body->condition);
+          condition(*value.body->condition);
           emit("test", "rax, rax");
           const std::size_t rejected = jump({0x0f, 0x84});
           const compiler::TypeId accepted = expressionBlock(value.body->accepted, value.offset);
           const std::size_t end = jump({0xe9});
           patchRelative(rejected, code.size());
           const compiler::TypeId rejectedType = expressionBlock(value.body->rejected, value.offset);
-          compatible(accepted, rejectedType, value.offset);
+          convert(rejectedType, accepted, value.offset);
           patchRelative(end, code.size());
           return accepted;
         }
@@ -997,12 +1091,13 @@ namespace recurloop {
         }
         case Expression::Kind::Variable:
           if (const Local *local = findLocalOptional(value.text)) return local->type;
+          if (const auto literal = constantLiteral(context, value.text, signature.scope, value.offset))
+            return infer(*literal, expected);
           if (const std::optional<compiler::TypedFunction> function = functionReference(value.text, expected))
             return context.language().functionType(*function);
           fail({}, value.offset, "unknown fn local or typed function '" + value.text + "'");
         case Expression::Kind::Index: {
-          const compiler::TypeDescriptor pointer = context.language().types.get(infer(*value.children[0]));
-          if (pointer.kind != compiler::TypeKind::Pointer) fail({}, value.offset, "indexing requires a pointer");
+          const auto pointer = indexedType(context, infer(*value.children[0]), value.offset);
           return pointer.element;
         }
         case Expression::Kind::Member: {
@@ -1049,9 +1144,11 @@ namespace recurloop {
           if (!implementation.isNull()) return operatorBehavior(value, OperatorLvalueName);
         }
         if (value.kind == Expression::Kind::Index) {
-          const compiler::TypeId baseType = expression(*value.children[0]);
-          const compiler::TypeDescriptor pointer = context.language().types.get(baseType);
-          if (pointer.kind != compiler::TypeKind::Pointer) fail({}, value.offset, "indexing requires a pointer");
+          const auto pointer = indexedType(context, infer(*value.children[0]), value.offset);
+          if (pointer.kind == compiler::TypeKind::Array)
+            lvalue(*value.children[0], requireMutable);
+          else
+            expression(*value.children[0]);
           emit("push", "rax");
           ++temporaryDepth;
           const compiler::TypeId indexType = expression(*value.children[1]);
@@ -1099,6 +1196,7 @@ namespace recurloop {
         else
           emit("movzx",
                "eax, " + std::string(descriptor.size == 1 ? "byte" : "word") + " [" + std::string(address) + "]");
+        if (descriptor.kind == compiler::TypeKind::Integer) normalizeBitwise(descriptor);
       }
 
       void store(compiler::TypeId type, std::string_view address) {
@@ -1213,31 +1311,56 @@ namespace recurloop {
                          (callable->signature.variadic && value.children.size() < callable->parameterTypes.size())))
           fail({}, value.offset, "invalid argument count for '" + symbol + "'");
 
-        static constexpr std::string_view registers[] = {"rdi", "rsi", "rdx", "rcx", "r8", "r9"};
-        const std::size_t registerArguments = std::min(value.children.size(), std::size(registers));
-        const std::size_t stackArguments = value.children.size() - registerArguments;
+        compiler::FunctionSignature abi = callable ? callable->signature : compiler::FunctionSignature{};
+        abi.parameters.clear();
+        std::vector<compiler::TypeId> argumentTypes;
+        std::vector<std::size_t> savedArguments;
+        for (std::size_t index = 0; index < value.children.size(); ++index) {
+          auto type = callable && index < callable->parameterTypes.size() ? callable->parameterTypes[index]
+                                                                          : infer(*value.children[index]);
+          scalarType(type, value.offset);
+          // System V variadic arguments use the C default promotions.
+          if (callable && index >= callable->parameterTypes.size()) type = promotedArgumentType(context, type);
+          argumentTypes.push_back(type);
+          savedArguments.push_back(allocate());
+          abi.parameters.push_back(context.language().types.abiType(type));
+        }
+        // Evaluate before loading any argument registers: nested calls may clobber them.
+        for (std::size_t reverse = value.children.size(); reverse-- > 0;) {
+          const auto actual = expression(*value.children[reverse], argumentTypes[reverse]);
+          convert(actual, argumentTypes[reverse], value.offset);
+          emit("mov", slot(savedArguments[reverse]) + ", rax");
+        }
+        const auto locations = compiler::Abi::lowerArguments(abi);
+        const auto stackArguments =
+            static_cast<std::size_t>(std::count_if(locations.begin(), locations.end(), [](const auto &location) {
+              return location.kind == compiler::ArgumentLocationKind::Stack;
+            }));
         const bool padding = ((temporaryDepth + stackArguments) & 1u) != 0;
         if (padding) {
           emit("sub", "rsp, 8");
           ++temporaryDepth;
         }
-        for (std::size_t reverse = value.children.size(); reverse-- > 0;) {
-          const compiler::TypeId expected = callable && reverse < callable->parameterTypes.size()
-                                                ? callable->parameterTypes[reverse]
-                                                : compiler::InvalidType;
-          const compiler::TypeId actual = expression(*value.children[reverse], expected);
-          const compiler::TypeDescriptor actualDescriptor = context.language().types.get(actual);
-          if (actualDescriptor.kind == compiler::TypeKind::FloatingPoint || actualDescriptor.size > 8)
-            fail({}, value.offset, "fn calls currently require integer, pointer, or scalar arguments up to 64 bits");
-          if (expected != compiler::InvalidType) compatible(expected, actual, value.offset);
+        for (std::size_t reverse = locations.size(); reverse-- > 0;) {
+          if (locations[reverse].kind != compiler::ArgumentLocationKind::Stack) continue;
+          emit("mov", "rax, " + slot(savedArguments[reverse]));
           emit("push", "rax");
           ++temporaryDepth;
         }
-        for (std::size_t index = 0; index < registerArguments; ++index) {
-          emit("pop", std::string(registers[index]));
-          --temporaryDepth;
+        unsigned floatingArguments = 0;
+        for (std::size_t index = 0; index < locations.size(); ++index) {
+          const auto &location = locations[index];
+          if (location.kind == compiler::ArgumentLocationKind::Stack) continue;
+          if (context.language().types.get(argumentTypes[index]).kind == compiler::TypeKind::FloatingPoint) {
+            emit("mov", "rax, " + slot(savedArguments[index]));
+            floatingToRegister("rax", floatingRegisterIndex(location.registerName),
+                               context.language().types.get(argumentTypes[index]).size);
+            ++floatingArguments;
+          } else {
+            emit("mov", location.registerName + ", " + slot(savedArguments[index]));
+          }
         }
-        if (callable && callable->signature.variadic) emit("xor", "eax, eax");
+        if (callable && callable->signature.variadic) emit("mov", "eax, " + std::to_string(floatingArguments));
         if (function) {
           if (function->imported) {
             emitBytes({0xe8});
@@ -1254,9 +1377,15 @@ namespace recurloop {
                                    function->signature.symbol != signature.function.signature.symbol});
           }
         } else {
-          emit("mov", "rax, " + slot(indirect->offset));
-          emit("call", "rax");
+          emit("mov", "r11, " + slot(indirect->offset));
+          emit("call", "r11");
         }
+        const auto resultType = callable ? callable->resultType : integerType;
+        const auto result = context.language().types.get(resultType);
+        if (result.kind == compiler::TypeKind::FloatingPoint)
+          floatingFromRegister(0, result.size);
+        else if (result.kind == compiler::TypeKind::Integer)
+          normalizeBitwise(result);
         if (stackArguments != 0) {
           emit("add", "rsp, " + std::to_string(stackArguments * 8));
           temporaryDepth -= stackArguments;
@@ -1266,7 +1395,7 @@ namespace recurloop {
           --temporaryDepth;
         }
         pendingGuard();
-        return callable ? callable->resultType : integerType;
+        return resultType;
       }
 
       compiler::TypedFunction methodFunction(const Expression &value) {

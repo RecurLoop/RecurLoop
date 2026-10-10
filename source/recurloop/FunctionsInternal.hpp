@@ -16,6 +16,7 @@
 #include <cstdint>
 #include <cstring>
 #include <memory>
+#include <optional>
 #include <span>
 #include <string>
 #include <string_view>
@@ -97,6 +98,25 @@ namespace recurloop {
       compiler::TypeId declaredType = compiler::InvalidType;
     };
 
+    std::optional<Expression> constantLiteral(context::Context &context, std::string_view name, std::string_view scope,
+                                              std::size_t offset);
+
+    inline compiler::TypeDescriptor indexedType(context::Context &context, compiler::TypeId type, std::size_t offset) {
+      auto descriptor = context.language().types.get(type);
+      if (descriptor.kind != compiler::TypeKind::Pointer && descriptor.kind != compiler::TypeKind::Array)
+        fail({}, offset, "indexing requires a pointer or array");
+      return descriptor;
+    }
+
+    inline compiler::TypeId promotedArgumentType(context::Context &context, compiler::TypeId type) {
+      const auto descriptor = context.language().types.get(type);
+      if (descriptor.kind == compiler::TypeKind::FloatingPoint && descriptor.size == 4)
+        return context.language().types.find("f64");
+      if (descriptor.kind == compiler::TypeKind::Integer && descriptor.size < 4)
+        return context.language().types.find("i32");
+      return type;
+    }
+
     struct Statement {
       lexicon::Phrase syntax;
       lexicon::Phrase operationSyntax;
@@ -148,7 +168,7 @@ namespace recurloop {
                                       std::size_t sourceLine = 1, std::size_t sourceColumn = 1);
     std::vector<Statement> parseBody(context::Context &context, std::string_view source, std::string scope = {},
                                      std::string sourcePath = {}, std::size_t sourceLine = 1,
-                                     std::size_t sourceColumn = 1);
+                                     std::size_t sourceColumn = 1, std::span<const std::string> parameterNames = {});
     compiler::Module generateModule(context::Context &context, const FunctionDefinition &signature,
                                     const std::vector<Statement> &body);
     compiler::TypedFunction compileFunctionDefinition(context::Context &context, FunctionDefinition definition,

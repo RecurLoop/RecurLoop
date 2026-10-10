@@ -1,6 +1,7 @@
 #pragma once
 
 #include <utilities/Exception.hpp>
+#include <context/Values.hpp>
 
 #include <cstddef>
 #include <cstdint>
@@ -105,6 +106,8 @@ namespace recurloop {
     };
 
     static bool active(context::Context &context);
+    // Value facts are owned by the inspection, never written into runtime bindings.
+    static context::Values::Bindings *valueBindings(context::Context &context);
     static std::uint64_t owner(context::Context &context);
     static std::uint64_t group(context::Context &context);
 

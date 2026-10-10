@@ -326,16 +326,34 @@ namespace context {
   }
 
   Value Values::get(std::string_view name) const {
-    for (lexicon::Phrase scope = activeScope(*lexicon); !scope.isNull(); scope = scope.getPrototype()) {
-      lexicon::Phrase found = exact(scope, name);
-      if (!found.isNull()) return decode(found);
-    }
+    if (const auto binding = find(name)) return binding->value;
     THROW(, "undefined variable: '" << name << "'")
   }
 
+  std::optional<Values::Binding> Values::find(std::string_view name, std::string_view owner,
+                                              const Bindings *overlay) const {
+    const auto lookup = [&](std::string_view candidate) -> std::optional<Binding> {
+      if (overlay) {
+        const auto found = overlay->find(std::string(candidate));
+        if (found != overlay->end()) return found->second;
+      }
+      for (lexicon::Phrase scope = activeScope(*lexicon); !scope.isNull(); scope = scope.getPrototype()) {
+        lexicon::Phrase found = exact(scope, candidate);
+        if (!found.isNull()) return Binding{std::string(candidate), decode(found), header(found).mutableValue};
+      }
+      return std::nullopt;
+    };
+    if (name.find(':') == std::string_view::npos) {
+      while (!owner.empty()) {
+        if (auto binding = lookup(std::string(owner) + ":" + std::string(name))) return binding;
+        const auto parent = owner.rfind(':');
+        owner = parent == std::string_view::npos ? std::string_view{} : owner.substr(0, parent);
+      }
+    }
+    return lookup(name);
+  }
+
   bool Values::contains(std::string_view name) const {
-    for (lexicon::Phrase scope = activeScope(*lexicon); !scope.isNull(); scope = scope.getPrototype())
-      if (!exact(scope, name).isNull()) return true;
-    return false;
+    return find(name).has_value();
   }
 } // namespace context

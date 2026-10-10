@@ -119,7 +119,13 @@ namespace recurloop {
         return result;
       }
 
-      std::vector<Statement> body() {
+      void bindParameters(std::span<const std::string> names) {
+        for (const auto &name : names)
+          if (!name.empty()) locals.back().emplace(name, Semantic::local(context, name));
+      }
+
+      std::vector<Statement> body(std::span<const std::string> parameterNames) {
+        bindParameters(parameterNames);
         lexer.skipNewlines();
         std::vector<Statement> result;
         while (lexer.current().kind != TokenKind::End) {
@@ -456,8 +462,12 @@ namespace recurloop {
         while (true) {
           if (Semantic::active(context) && result->kind == Expression::Kind::Variable &&
               !findLocal(result->text) && !LanguageGrammar::matches(context, lexer.current().text, ":")) {
-            const auto functions = context.language().findFunctions(result->text, scope);
-            if (!functions.empty()) {
+            const auto binding = context.values().find(result->text, scope, Semantic::valueBindings(context));
+            if (binding && !binding->mutableValue) {
+              lexer.recordResolved(LanguageGrammar::findQualified(context.lexicon.phrase(), binding->name),
+                                   result->offset, lexer.consumedEnd());
+            } else if (const auto functions = context.language().findFunctions(result->text, scope);
+                       !functions.empty()) {
               const auto phrase = LanguageGrammar::findQualified(context.lexicon.phrase(), functions.front().name);
               lexer.recordResolved(phrase, result->offset, lexer.consumedEnd());
             }
@@ -539,7 +549,7 @@ namespace recurloop {
         auto enclosingLocals = std::move(locals);
         locals.clear();
         locals.emplace_back();
-        for (const auto &name : definition.names) locals.back().emplace(name, Semantic::local(context, name));
+        bindParameters(definition.names);
         const std::vector<Statement> statements = blockContents(&closing, &closingExpanded);
         locals = std::move(enclosingLocals);
         const std::size_t bodyBeginExpanded = opening.expandedOffset + opening.text.size();
@@ -956,7 +966,8 @@ namespace recurloop {
     }
 
     std::vector<Statement> parseBody(context::Context &context, std::string_view source, std::string scope,
-                                     std::string sourcePath, std::size_t sourceLine, std::size_t sourceColumn) {
+                                     std::string sourcePath, std::size_t sourceLine, std::size_t sourceColumn,
+                                     std::span<const std::string> parameterNames) {
       if (sourcePath.empty()) {
         sourcePath = context.source.path;
         sourceLine = context.source.line;
@@ -965,7 +976,7 @@ namespace recurloop {
       const SourceLocation origin{sourcePath, sourceLine, sourceColumn};
       DiagnosticScope diagnostics(source, origin);
       Parser parser(context, source, std::move(scope), std::move(sourcePath), sourceLine, sourceColumn);
-      return parser.body();
+      return parser.body(parameterNames);
     }
 
   } // namespace function_internal

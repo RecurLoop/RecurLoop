@@ -1,9 +1,11 @@
 #pragma once
 
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <variant>
+#include <unordered_map>
 #include <vector>
 #include <utilities/Size.hpp>
 
@@ -47,6 +49,13 @@ namespace context {
 
   class Values {
   public:
+    struct Binding {
+      std::string name;
+      Value value;
+      bool mutableValue = true;
+      bool knownValue = true;
+    };
+    using Bindings = std::unordered_map<std::string, Binding>;
     struct ScopeFrame {
       Size checkpoint = 0, scope = 0, marker = 0;
     };
@@ -60,6 +69,8 @@ namespace context {
     void define(std::string name, Value value, bool mutableValue = true);
     void assign(std::string_view name, Value value);
     Value get(std::string_view name) const;
+    std::optional<Binding> find(std::string_view name, std::string_view scope = {},
+                                const Bindings *overlay = nullptr) const;
     bool contains(std::string_view name) const;
 
   private:

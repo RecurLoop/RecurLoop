@@ -667,6 +667,8 @@ namespace recurloop::function_internal {
       Emitted variableValue(const Expression &value, compiler::TypeId expected) {
         if (const LlvmLocal *local = findLocalOptional(value.text))
           return {builder.CreateLoad(type(local->type), local->address), local->type};
+        if (const auto literal = constantLiteral(context, value.text, signature.scope, value.offset))
+          return expression(*literal, expected);
         const std::optional<compiler::TypedFunction> target = functionReference(value.text, expected);
         if (!target) fail({}, value.offset, "unknown fn local or typed function '" + value.text + "'");
         return {declare(*target), context.language().functionType(*target)};
@@ -894,14 +896,15 @@ namespace recurloop::function_internal {
           return {pointer.value, descriptor.element};
         }
         if (value.kind == Expression::Kind::Index) {
-          Emitted pointer = expression(*value.children[0]);
-          const compiler::TypeDescriptor descriptor = context.language().types.get(pointer.type);
-          if (descriptor.kind != compiler::TypeKind::Pointer) fail({}, value.offset, "indexing requires a pointer");
+          const auto descriptor = indexedType(context, infer(*value.children[0]), value.offset);
+          llvm::Value *base = descriptor.kind == compiler::TypeKind::Array
+                                  ? lvalue(*value.children[0], requireMutable).first
+                                  : expression(*value.children[0]).value;
           Emitted index = expression(*value.children[1]);
           if (context.language().types.get(index.type).kind != compiler::TypeKind::Integer)
             fail({}, value.offset, "pointer index must be an integer");
           index = coerce(index, integerType, value.offset);
-          llvm::Value *address = builder.CreateGEP(type(descriptor.element), pointer.value, index.value);
+          llvm::Value *address = builder.CreateGEP(type(descriptor.element), base, index.value);
           return {address, descriptor.element};
         }
         if (value.kind == Expression::Kind::Member) {
@@ -941,12 +944,13 @@ namespace recurloop::function_internal {
         }
         case Expression::Kind::Variable:
           if (const LlvmLocal *local = findLocalOptional(value.text)) return local->type;
+          if (const auto literal = constantLiteral(context, value.text, signature.scope, value.offset))
+            return infer(*literal, expected);
           if (const auto function = functionReference(value.text, expected))
             return context.language().functionType(*function);
           fail({}, value.offset, "unknown fn local or typed function '" + value.text + "'");
         case Expression::Kind::Index: {
-          const compiler::TypeDescriptor pointer = context.language().types.get(infer(*value.children[0]));
-          if (pointer.kind != compiler::TypeKind::Pointer) fail({}, value.offset, "indexing requires a pointer");
+          const auto pointer = indexedType(context, infer(*value.children[0]), value.offset);
           return pointer.element;
         }
         case Expression::Kind::Member: {
@@ -1145,7 +1149,10 @@ namespace recurloop::function_internal {
           const compiler::TypeId wanted =
               index < callable.parameterTypes.size() ? callable.parameterTypes[index] : compiler::InvalidType;
           Emitted argument = expression(*value.children[index], wanted);
-          if (wanted != compiler::InvalidType) argument = coerce(argument, wanted, value.offset);
+          if (wanted != compiler::InvalidType)
+            argument = coerce(argument, wanted, value.offset);
+          else if (callable.signature.variadic)
+            argument = coerce(argument, promotedArgumentType(context, argument.type), value.offset);
           arguments.push_back(argument.value);
         }
         llvm::CallInst *result = builder.CreateCall(functionType(callable), target, arguments);
@@ -1246,8 +1253,8 @@ namespace recurloop::function_internal {
         dependency.sourceText = source->body;
         dependency.sourceLine = source->line;
         dependency.sourceColumn = source->column;
-        const std::vector<Statement> statements =
-            parseBody(context, source->body, source->scope, source->path, source->line, source->column);
+        const std::vector<Statement> statements = parseBody(context, source->body, source->scope, source->path,
+                                                            source->line, source->column, source->parameterNames);
         DiagnosticScope dependencyDiagnostics(source->body, {source->path, source->line, source->column});
         LlvmProgram artifact = LlvmGenerator(context, dependency, {}, RECURLOOP_LLVM_TARGET_TRIPLE, RECURLOOP_LLVM_CPU,
                                              RECURLOOP_LLVM_FEATURES, debug)

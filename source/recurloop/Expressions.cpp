@@ -259,7 +259,10 @@ namespace recurloop {
   void Expressions::variable(context::Context &context, lexicon::Phrase &) {
     const internal::Assignment statement = internal::assignment(context, true);
     const context::Value value = evaluate(context, statement.expression, statement.expressionOrigin);
-    if (!Semantic::active(context)) context.values().define(statement.name, value, true);
+    if (!Semantic::active(context))
+      context.values().define(statement.name, value, true);
+    else
+      (*Semantic::valueBindings(context))[statement.name] = {statement.name, value, true};
     bindAssignment(context, statement.name);
     internal::recordBinding(context, statement);
   }
@@ -267,7 +270,14 @@ namespace recurloop {
   void Expressions::constant(context::Context &context, lexicon::Phrase &) {
     const internal::Assignment statement = internal::assignment(context, true);
     const context::Value value = evaluate(context, statement.expression, statement.expressionOrigin);
-    if (!Semantic::active(context)) context.values().define(statement.name, value, false);
+    if (!Semantic::active(context)) {
+      context.values().define(statement.name, value, false);
+    } else if (const auto folded = evaluateConstant(context, statement.expression, statement.expressionOrigin)) {
+      (*Semantic::valueBindings(context))[statement.name] = {statement.name, *folded, false};
+    } else {
+      // An unevaluated declaration must still shadow a cached value of the same name.
+      (*Semantic::valueBindings(context))[statement.name] = {statement.name, {}, false, false};
+    }
     bindAssignment(context, statement.name);
     internal::recordBinding(context, statement);
   }

@@ -557,6 +557,7 @@ namespace compiler {
     const TypeDescriptor expectedType = types.get(expected);
     const TypeDescriptor actualType = types.get(actual);
     if (expectedType.kind == TypeKind::Integer && actualType.kind == TypeKind::Integer) return 1;
+    if (expectedType.kind == TypeKind::FloatingPoint && actualType.kind == TypeKind::FloatingPoint) return 1;
     if (expectedType.kind == TypeKind::Pointer && actualType.kind == TypeKind::Pointer &&
         expectedType.pointerDepth == actualType.pointerDepth)
       return 1;

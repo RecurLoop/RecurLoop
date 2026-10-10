@@ -2905,3 +2905,90 @@ TEST_F(AssemblerTesting, StopsAtInteractiveEofWithTheOpenStateIntact) {
   EXPECT_EQ(code(), expected);
   EXPECT_FALSE(lookup().empty());
 }
+
+TEST_F(AssemblerTesting, ConstantsArrayFieldsAndFloatingCallsWorkInDebugExecutables) {
+  const std::string path = executablePath("debug-game-language-features");
+  const std::string source = std::string(R"(
+extern free(pointer:u8*) -> void abi sysv-amd64
+extern snprintf(buffer:u8*, size:u64, format:u8*, ...) -> i32 abi sysv-amd64
+const count = 3
+let Layout = phrase { dictionary = true }
+const Layout:width = 960
+const Layout:rows = 2
+const label = "ok"
+const fraction = 2.5
+const absent = null
+record Row { cells:u8[count] weights:f32[count] }
+record Board { rows:Row[Layout:rows] }
+fn Layout:read() -> i64 { return width }
+fn Layout:shadow(width:i64) -> i64 { return width }
+fn twice(value:f64) -> f64 { return value * 2.0 }
+fn channel(value:u32) -> f32 { return cast(f32, value) / cast(f32, 255) }
+fn mixed(a:i64, x:f64, b:i64, y:f32, c:i64, d:i64, e:i64, f:i64, g:i64,
+         z:f64, h:f64, i:f64, j:f64, k:f64, l:f64, m:f64) -> f64 {
+  return cast(f64, a + b + c + d + e + f + g) + x + cast(f64, y) + z + h + i + j + k + l + m
+}
+fn game_features() -> i64 {
+  if Layout:read() != 960 || Layout:shadow(42) != 42 { return 1 }
+  let board = alloc(Board)
+  if !board { return 2 }
+  defer free(cast(u8*, board))
+  board.rows[1].cells[2] = cast(u8, 255)
+  let cell = &board.rows[1].cells[2]
+  if cell[0] != cast(u8, 255) { return 3 }
+  board.rows[1].weights[2] = channel(cast(u32, 255))
+  if cast(u32*, &board.rows[1].weights[2])[0] != cast(u32, 0x3f800000) { return 4 }
+  var value:f64 = 2.0
+  value += 0.5
+  value *= 4.0
+  value -= 1.0
+  value /= 3.0
+  if cast(i64, value) != 3 { return 5 }
+  if cast(i64, twice(2.5)) != 5 { return 6 }
+  let callback:fn (u32) -> f32 = channel
+  if cast(i64, callback(cast(u32, 255))) != 1 { return 7 }
+  if cast(i64, mixed(1, twice(1.0), 2, channel(cast(u32, 255)), 3, 4, 5, 6, 7,
+                    3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0)) != 73 { return 8 }
+  var single:f32 = cast(f32, -2)
+  single += cast(f32, 0.5)
+  single *= cast(f32, -2)
+  single /= cast(f32, 2)
+  if single < cast(f32, 1) || single > cast(f32, 2) { return 9 }
+  if cast(i32, single) != 1 { return 10 }
+  if cast(i8, cast(f32, -128)) != cast(i8, -128) { return 11 }
+  if cast(u64, cast(f64, cast(u64, -2048))) != cast(u64, -2048) { return 12 }
+  if cast(i64, cast(f32, cast(u32, 4294967295))) != 4294967296 { return 13 }
+  var zero:f32 = cast(f32, 0)
+  var nan:f32 = zero / zero
+  if -zero || nan { return 14 }
+  if nan == nan || nan != nan { return 15 }
+  let text = alloc(u8[64])
+  if !text { return 16 }
+  defer free(cast(u8*, text))
+  let buffer = cast(u8*, text)
+  if snprintf(buffer, sizeof(u8[64]), "%.1f %.1f", cast(f32, 1.5), 2.5) != 7 { return 17 }
+  if buffer[0] != cast(u8, 49) || buffer[4] != cast(u8, 50) { return 18 }
+  if label[0] != cast(u8, 111) || cast(i64, fraction * 10.0) != 25 { return 19 }
+  if absent { return 20 }
+  return 0
+}
+print game_features()
+)") + "emit executable debug \"" +
+                             path + R"(" debug_game_features = fn () -> i64 {
+  return game_features()
+}
+)";
+  ASSERT_EQ(execute(source), 0) << error();
+  EXPECT_EQ(output(), "0\n");
+  const pid_t process = fork();
+  ASSERT_NE(process, -1);
+  if (process == 0) {
+    execl(path.c_str(), path.c_str(), static_cast<char *>(nullptr));
+    _exit(127);
+  }
+  int status = 0;
+  ASSERT_EQ(waitpid(process, &status, 0), process);
+  ASSERT_TRUE(WIFEXITED(status));
+  EXPECT_EQ(WEXITSTATUS(status), 0);
+  std::filesystem::remove(path);
+}
