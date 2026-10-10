@@ -279,6 +279,44 @@ TEST_F(RecurloopTesting, ParsesPhysicalRecordsAndTypedExternalSignatures) {
   EXPECT_TRUE(phrase.isInvokable());
 }
 
+TEST_F(RecurloopTesting, ArrayLengthsResolveLiteralsAndConstantsAcrossTypeParsers) {
+  const char *argv[] = {"Recurloop", "--string", R"(
+const width = 12
+const Layout:height = 2
+record Round(literal:u8[3], named:u8[width], qualified:u8[Layout:height])
+record Braced { literal:u8[3] named:u8[width] qualified:u8[Layout:height] }
+let read_arrays = fn (literal:u8[3]*, named:u8[width]*, qualified:u8[Layout:height]*) -> i64 {
+  return 0
+}
+)"};
+
+  ASSERT_EQ(execute(countof(argv), (char **)argv), 0);
+  const auto &types = context.language().types;
+  const std::size_t counts[] = {3, 12, 2};
+  for (const char *name : {"Round", "Braced"}) {
+    SCOPED_TRACE(name);
+    const auto record = types.get(name);
+    ASSERT_EQ(record.fields.size(), countof(counts));
+    for (std::size_t index = 0; index < countof(counts); ++index) {
+      const auto array = types.get(record.fields[index].type);
+      EXPECT_EQ(array.kind, compiler::TypeKind::Array);
+      EXPECT_EQ(array.elementCount, counts[index]);
+      EXPECT_EQ(array.element, types.find("u8"));
+    }
+  }
+  const auto function = context.language().findFunction("read_arrays");
+  ASSERT_TRUE(function);
+  ASSERT_EQ(function->parameterTypes.size(), countof(counts));
+  for (std::size_t index = 0; index < countof(counts); ++index) {
+    const auto pointer = types.get(function->parameterTypes[index]);
+    ASSERT_EQ(pointer.kind, compiler::TypeKind::Pointer);
+    const auto array = types.get(pointer.element);
+    EXPECT_EQ(array.kind, compiler::TypeKind::Array);
+    EXPECT_EQ(array.elementCount, counts[index]);
+    EXPECT_EQ(array.element, types.find("u8"));
+  }
+}
+
 TEST_F(RecurloopTesting, DeclaresCustomCallingConventionsInSource) {
   const char *argv[] = {"Recurloop", "--string",
                         "let downward = <down>\n"

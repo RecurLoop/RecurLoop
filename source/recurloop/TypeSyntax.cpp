@@ -125,7 +125,8 @@ namespace recurloop {
       ParseFrame &current = frame();
       auto &tokens = current.cursor->typeSyntaxCursor();
       std::size_t count;
-      if (tokens.current().kind == SyntaxTokenKind::Integer) {
+      const auto literal = LanguageGrammar::numberLiteral(tokens.current().text);
+      if (literal.bytes != 0 && literal.bytes == tokens.current().text.size() && !literal.real) {
         count = current.cursor->typeNumber("an array length");
       } else {
         const auto start = tokens.current().offset;
