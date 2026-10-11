@@ -199,8 +199,8 @@ point are actually rolled back.
 
 ## RecurLoop phrase integration
 
-The parser and backtracking runtime are Prolog-specific, but user-visible names
-are not private strings owned only by that runtime.
+The term builder and backtracking runtime are Prolog-specific. Recognition
+uses shared phrase readers, and user-visible names use the RecurLoop lexicon.
 
 The RecurLoop lexicon is the canonical identity registry for user-visible
 Prolog symbols:
@@ -223,10 +223,10 @@ compatibility semantics, but its spelling is interned as a phrase.
 
 `?-` is a real RecurLoop phrase.
 
-Arbitrary predicate clauses still use the top-level fallback and the custom
-Prolog term parser because the current RecurLoop host has no per-source
-language root that could safely hand every arbitrary functor token to a Prolog
-phrase graph without conflicting with existing root phrases.
+Arbitrary predicate clauses use the top-level fallback and a term builder
+backed by `Prolog:Grammar:Tokens`. Within a clause, shared readers select grammar
+phrases before lexical identifiers. At the root, ordinary registered RecurLoop
+phrases still have longest-match priority over the clause fallback.
 
 The regression suite verifies phrase visibility with:
 
@@ -393,3 +393,19 @@ without adding those concepts as dedicated facilities to the C++ host.
 
 This tests whether RecurLoop's extension model can change not only source
 grammar but also fundamental assumptions about how programs execute.
+
+## Changing the syntax
+
+Grammar tokens live in the mutable `Prolog:Grammar:Tokens` dictionary. Readers
+choose the longest eligible phrase, and syntax checks follow prototype identity.
+For example, a new list opener can inherit the existing token:
+
+```rl
+let Prolog:Grammar:Tokens:"⟦" = <Prolog:Grammar:Tokens:"[">
+let Prolog:Grammar:Tokens:"⟧" = <Prolog:Grammar:Tokens:"]">
+```
+
+Root entry phrases can be aliased separately. The `tests/phrase-grammar.pl`
+fixture demonstrates delimiters, keywords and comments changed in source after
+importing the language image. Recognition changes preserve the existing semantic
+implementation; these examples retain their documented compatibility limits.

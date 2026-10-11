@@ -65,6 +65,28 @@ enable phrase line/block comments; longer registered keys take priority. The
 optional `fallback` dictionary is explicit and competes by key length, with the
 selected grammar winning equal lengths.
 
+`SliceReader:new_source(state, grammar, flags)` provides non-consuming lookahead
+over live input with the same interface. It refills on demand, reacquires source
+pointers, and keeps byte positions relative to the current source origin. Commit
+the final position with `context:source:advance`; avoid advancing live input while
+that reader is active. Amber uses it for assignments, arrays and echo arguments,
+without fixed lookahead limits.
+
+`LanguageKit:define_infix(state, grammar, key, operation, precedence, right)`
+stores three integer values on a token: the library's operation identifier,
+binding power and right-associativity flag. `infix_value` reads inherited fields.
+A token with its own dictionary can override these fields; repeated definitions
+update the existing payload. The Haskell and Erlang compatibility builders use
+this metadata in precedence-climbing recognition. Identifier flags 16 and 32
+also apply to phrase boundaries, protecting apostrophes and `@` within names.
+
+`LanguageKit:Source:take_form(state, grammar, terminator, flags, quote, include_end)`
+uses the streaming phrase reader to capture a tokenized form, balancing grammar
+groups and recognizing terminator aliases. It returns normalized source, omits
+comments, and escapes quoted data again using the requested quote byte. It has
+no fixed statement-size limit. Prolog and Erlang use this compatibility capture;
+opaque native DSL payloads use `raw`/`code` captures instead.
+
 `context:source:block:capture(state, grammar)` captures a streamed block using an
 explicit grammar plus native root phrases. The bounded
 `context:syntax:block:extent(state, source, bytes, position)` returns the byte
@@ -125,9 +147,22 @@ wins regardless of how many bytes the Inferred parser could consume. `infer`
 selects the grammar explicitly; recognition within an explicitly selected block
 uses the existing compatibility dispatcher.
 
-LanguageKit retains its structural probe dispatcher and older character readers
-for the unchanged Haskell, Erlang and Prolog examples. These compatibility APIs
-are not the grammar interface used by HTTP or Inferred's normal native entry.
-Those examples retain their parsers and runtime evaluators and are outside this
-migration's scope. Protocol, filesystem, transport and native ABI readers also
-remain data-processing boundaries.
+The Prolog, Haskell, Erlang and Amber workflows now recognize syntax through
+`<Language>:Grammar:Tokens` and the shared phrase readers. Aliases inherit token
+identity, so delimiters, separators, keywords and comment markers can change
+without editing byte scanners. Haskell and Erlang infix binding powers and
+associativity are phrase metadata. Their recursive semantic builders and existing
+compatibility runtimes remain; this recognition migration does not turn those
+legacy evaluators into native language compilers.
+
+Amber arrays, assignments, `for` headers, echo arguments and outcome bindings use
+the same readers. Its command grammar already dispatches phrases with successors.
+Native outcome/modifier bodies use shared block extent recognition, and their
+source-defined recognition descriptions protect the local header grammar in
+surrounding blocks. Native body delimiters are root phrase aliases.
+
+LanguageKit retains the opt-in structural probe dispatcher and older character
+reader API for compatibility callers. Its generic expression fallback respects
+an explicitly installed language fallback, so Prolog compounds are not claimed
+as native expression statements. Protocol, filesystem, transport and native ABI
+readers remain data-processing boundaries.

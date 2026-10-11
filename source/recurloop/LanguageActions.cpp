@@ -422,6 +422,10 @@ namespace recurloop {
       lexicon::Phrase phrase = matched.getPhrase();
 
       context.staging.phrase.setPrototype(phrase).setType(phrase.getType()).copyAction(phrase);
+      if (phrase.isRewritable() && !context.exec.hasPendingPhraseRewritable) {
+        context.exec.pendingPhraseRewritable = true;
+        context.exec.hasPendingPhraseRewritable = true;
+      }
 
       context::Lookup::leave(context, invoked, 2);
 

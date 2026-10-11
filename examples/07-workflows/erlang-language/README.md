@@ -134,9 +134,9 @@ The current image supports:
 
 ## RecurLoop phrase integration
 
-Erlang expressions still need a custom parser/AST and the actor model needs its
-own scheduler and mailboxes, but foreign names use the RecurLoop lexicon as
-their canonical identity:
+The expression builder uses shared phrase readers and infix phrase metadata.
+The actor model retains its scheduler and mailboxes, and foreign names use the
+RecurLoop lexicon as their canonical identity:
 
 ```text
 Erlang
@@ -156,8 +156,8 @@ selecting names by string comparison.
 
 `-module` and `-export` are dedicated phrase actions.
 
-Arbitrary function forms still enter the custom Erlang parser through the
-language fallback.
+Arbitrary function forms enter the semantic builder through the language
+fallback and use the selected `Erlang:Grammar:Tokens` dictionary.
 
 Runtime-created PID records remain actor-runtime state. Lexicon mutations
 performed during runtime invocation do not currently behave like
@@ -476,3 +476,25 @@ experiment:
 
 - https://www.erlang.org/doc/system/modules.html
 - https://www.erlang.org/doc/system/expressions.html
+
+## Changing the syntax
+
+Grammar tokens live in the mutable `Erlang:Grammar:Tokens` dictionary. Readers
+choose the longest eligible phrase, and syntax checks follow prototype identity.
+For example, a new list opener can inherit the existing token:
+
+```rl
+let Erlang:Grammar:Tokens:"⟦" = <Erlang:Grammar:Tokens:"[">
+let Erlang:Grammar:Tokens:"⟧" = <Erlang:Grammar:Tokens:"]">
+```
+
+Root entry phrases can be aliased separately. The `tests/phrase-grammar.erl`
+fixture demonstrates delimiters, keywords and comments changed in source after
+importing the language image. Recognition changes preserve the existing semantic
+implementation; these examples retain their documented compatibility limits.
+
+Infix tokens carry the shared three-integer `infix` descriptor. A phrase action
+can call `LanguageKit:define_infix(state, Erlang:grammar(state), "strongplus",
+1, 100, 0)` to define addition with higher binding power and left associativity.
+The operation identifiers are 1 addition, 2 subtraction, 3 multiplication,
+4 pattern match, and 5 message send.

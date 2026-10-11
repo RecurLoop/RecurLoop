@@ -242,7 +242,27 @@ Erlang
     custom actor runtime + mailboxes + selective receive
 ```
 
-The latter languages require custom parsers or semantic runtimes for constructs
-that do not map naturally onto RecurLoop's existing expression model. Their
-user-visible names are nevertheless interned as RecurLoop phrases and used as
-canonical identities by those runtimes.
+The latter languages retain semantic builders and compatibility runtimes for
+constructs outside RecurLoop's existing expression model. Recognition uses the
+shared phrase readers. User-visible names are interned as RecurLoop phrases and
+used as canonical identities by those runtimes.
+
+## Changing the syntax
+
+Grammar tokens live in the mutable `Amber:Grammar:Tokens` dictionary. Readers
+choose the longest eligible phrase, and syntax checks follow prototype identity.
+For example, a new list opener can inherit the existing token:
+
+```rl
+let Amber:Grammar:Tokens:"⟦" = <Amber:Grammar:Tokens:"[">
+let Amber:Grammar:Tokens:"⟧" = <Amber:Grammar:Tokens:"]">
+```
+
+Root entry phrases can be aliased separately. The `tests/phrase-grammar.ab`
+fixture demonstrates delimiters, keywords and comments changed in source after
+importing the language image. Recognition changes preserve the existing semantic
+implementation; these examples retain their documented compatibility limits.
+
+Assignments, arrays and echo arguments use non-consuming streamed phrase
+lookahead. The regression runner checks long comments and quoted arguments
+beyond the former fixed buffer sizes.

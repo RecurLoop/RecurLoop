@@ -1,3 +1,6 @@
+import "language-kit"
+languagekit_native_begin
+
 // ============================================================================
 // RecurLoop Amber compatibility layer
 //
@@ -1153,31 +1156,7 @@ let Shell:state_set_text = fn (state:Context*, name:u8*, value:u8*) -> i64 {
 }
 
 let Shell:source_line_end = fn (state:Context*, start:i64) -> i64 {
-    var finish = start
-    var quote = 0
-    var done = 0
-    while !done {
-        let ch = context:source:peek(state, finish)
-        if ch == 0 || ch == 10 || ch == 13 {
-            done = 1
-        } else if quote != 0 {
-            if ch == 92 {
-                finish += 1
-                if context:source:peek(state, finish) != 0 { finish += 1 }
-            } else if ch == quote {
-                quote = 0
-                finish += 1
-            } else {
-                finish += 1
-            }
-        } else if ch == 34 || ch == 39 {
-            quote = ch
-            finish += 1
-        } else {
-            finish += 1
-        }
-    }
-    return finish
+    return LanguageKit:Source:line_extent(state)
 }
 
 // ============================================================================
@@ -1193,6 +1172,65 @@ let Amber:Arrays = phrase { dictionary = true permanent = true }
 let Amber:Types = phrase { dictionary = true permanent = true }
 let Amber:Builtins = phrase { dictionary = true permanent = true }
 let Amber:Grammar = phrase { dictionary = true permanent = true }
+
+// Syntax spellings and aliases belong to this mutable phrase dictionary.
+let Amber:Grammar:Tokens = phrase { dictionary = true }
+let Amber:grammar = fn (state:Context*) -> u64 {
+    let root = context:phrase:find(state, "Amber")
+    let grammar = context:phrase:find:exact(state, root, "Grammar")
+    return context:phrase:find:exact(state, grammar, "Tokens")
+}
+let Amber:install_tokens = phrase {
+    type = <phrase-types:elaborate>
+    serializable = false
+    action = fn (state:Context*, called:Phrase*) -> void {
+        let grammar = Amber:grammar(state)
+        let open_group = LanguageKit:define_token(state, grammar, "(", 5)
+        context:phrase:set:prototype(state, open_group, context:phrase:find(state, "("))
+        let close_group = LanguageKit:define_token(state, grammar, ")", 5)
+        context:phrase:set:prototype(state, close_group, context:phrase:find(state, ")"))
+        let open_array = LanguageKit:define_token(state, grammar, "[", 5)
+        context:phrase:set:prototype(state, open_array, context:phrase:find(state, "["))
+        let close_array = LanguageKit:define_token(state, grammar, "]", 5)
+        context:phrase:set:prototype(state, close_array, context:phrase:find(state, "]"))
+        let open_block = LanguageKit:define_token(state, grammar, "{", 5)
+        context:phrase:set:prototype(state, open_block, context:phrase:find(state, "{"))
+        let close_block = LanguageKit:define_token(state, grammar, "}", 5)
+        context:phrase:set:prototype(state, close_block, context:phrase:find(state, "}"))
+        LanguageKit:define_token(state, grammar, ",", 5)
+        LanguageKit:define_token(state, grammar, "=", 4)
+        LanguageKit:define_token(state, grammar, ":", 5)
+        LanguageKit:define_token(state, grammar, "<", 4)
+        LanguageKit:define_token(state, grammar, "phrase", 1)
+        LanguageKit:define_token(state, grammar, "in", 1)
+        LanguageKit:define_token(state, grammar, "run", 1)
+        LanguageKit:define_token(state, grammar, "capture", 1)
+        LanguageKit:define_token(state, grammar, "$", 4)
+        LanguageKit:define_token(state, grammar, "fn", 1)
+        LanguageKit:define_token(state, grammar, "fun", 1)
+        let line_comment = LanguageKit:define_token(state, grammar, "//", 4)
+        context:phrase:set:prototype(state, line_comment, context:phrase:find(state, "//"))
+        let block_comment = LanguageKit:define_token(state, grammar, "/*", 4)
+        context:phrase:set:prototype(state, block_comment, context:phrase:find(state, "/*"))
+        LanguageKit:define_token(state, grammar, "*/", 4)
+        context:source:root(state)
+    }
+}
+let amber_install_tokens = <Amber:install_tokens>
+amber_install_tokens
+set amber_install_tokens.serializable = false
+
+let Amber:reader = fn (state:Context*, source:u8*, length:i64) -> LanguageKit:SliceReader* {
+    let reader = LanguageKit:SliceReader:new_phrases(state, Amber:grammar(state), source, length, 456)
+    if reader { reader.fallback = context:syntax:dictionary(state) }
+    return reader
+}
+
+let Amber:source_reader = fn (state:Context*) -> LanguageKit:SliceReader* {
+    let reader = LanguageKit:SliceReader:new_source(state, Amber:grammar(state), 456)
+    if reader { reader.fallback = context:syntax:dictionary(state) }
+    return reader
+}
 
 // Stable language vocabulary is serialized in the engine image. Dynamic user
 // declarations are interned beneath the same dictionaries at elaboration time.
@@ -1338,7 +1376,6 @@ let echo = fn (value:i64) -> i64 {
     return 0
 }
 
-
 let cd = fn (path:u8*) -> i64 {
     let pipeline = Shell:Pipeline:new()
     if !pipeline {
@@ -1427,7 +1464,6 @@ let sleep_seconds = fn (seconds:i64) -> i64 {
     return 0
 }
 
-
 // ============================================================================
 // Amber Text interpolation + lightweight runtime arrays
 // ============================================================================
@@ -1458,48 +1494,43 @@ let Amber:array_item_key = fn (name:u8*, index:i64) -> u8* {
     return output.take()
 }
 
-let Amber:skip_space_and_comments = fn (source:u8*, start:i64) -> i64 {
-    var cursor = start
-    var again = 1
-    while again {
-        again = 0
-        while source[cursor] == 32 || source[cursor] == 9 || source[cursor] == 10 || source[cursor] == 13 {
-            cursor += 1
-        }
-        if source[cursor] == 47 && source[cursor + 1] == 47 {
-            cursor += 2
-            while source[cursor] != 0 && source[cursor] != 10 && source[cursor] != 13 {
-                cursor += 1
-            }
-            again = 1
-        }
+let Amber:syntax_block_open = fn (state:Context*, source:u8*, limit:i64) -> i64 {
+    let reader = Amber:reader(state, source, limit)
+    if !reader { return -1 }
+    defer reader.destroy()
+    reader.fallback = context:syntax:dictionary(state)
+    var depth = 0
+    while reader.position < limit {
+        reader.skip_trivia()
+        let start = reader.position
+        if !reader.kind_of() || reader.error { return -1 }
+        if depth == 0 && reader.is("{") { return start }
+        if reader.is("(") || reader.is("[") { depth += 1 }
+        else if reader.is(")") || reader.is("]") { depth -= 1 }
+        reader.consume()
     }
-    return cursor
+    return -1
 }
 
-// Decode the contents of one Amber double-quoted Text literal. `start` points
-// to the first byte after the opening quote. `finish` points at the closing
-// quote. The caller is responsible for locating those boundaries.
-let Amber:decode_text = fn (source:u8*, start:i64, finish:i64) -> u8* {
-    let output = Shell:Text:new()
-    if !output { return cast(u8*, 0) }
-    defer output.destroy()
-    var cursor = start
-    while cursor < finish {
-        let ch = source[cursor]
-        if ch == 92 && cursor + 1 < finish {
-            let escaped = source[cursor + 1]
-            if escaped == 110 { output.append_byte(10) }
-            else if escaped == 114 { output.append_byte(13) }
-            else if escaped == 116 { output.append_byte(9) }
-            else { output.append_byte(escaped) }
-            cursor += 2
-        } else {
-            output.append_byte(ch)
-            cursor += 1
-        }
+let Amber:syntax_body_start = fn (state:Context*, source:u8*, limit:i64, open:i64) -> i64 {
+    let grammar = context:syntax:dictionary(state)
+    let token = LanguageKit:Cursor:phrase_at(state, grammar, source, limit, open)
+    return open + cast(i64, context:phrase:key(state, token, cast(u8*, 0), 0))
+}
+
+let Amber:syntax_block_close = fn (state:Context*, source:u8*, open:i64, limit:i64) -> i64 {
+    let end = cast(i64, context:syntax:block:extent(state, source, cast(u64, limit), cast(u64, open)))
+    if !end { return -1 }
+    let grammar = context:syntax:dictionary(state)
+    let closing = context:phrase:find:exact(state, grammar, "}")
+    var position = open
+    while position < end {
+        let token = LanguageKit:Cursor:phrase_at(state, grammar, source, end, position)
+        if LanguageKit:phrase_inherits(state, token, closing) &&
+           position + cast(i64, context:phrase:key(state, token, cast(u8*, 0), 0)) == end { return position }
+        position += 1
     }
-    return output.take()
+    return -1
 }
 
 // Evaluate Amber `{ expression }` interpolation using RecurLoop's public
@@ -1509,130 +1540,67 @@ let Amber:interpolate_text = fn (state:Context*, text:u8*) -> u8* {
     let output = Shell:Text:new()
     if !output { return cast(u8*, 0) }
     defer output.destroy()
-
+    let grammar = context:syntax:dictionary(state)
+    let opening = context:phrase:find:exact(state, grammar, "{")
+    let length = Shell:strlen(text)
     var cursor = 0
-    while text[cursor] != 0 {
-        if text[cursor] != 123 {
-            output.append_byte(text[cursor])
-            cursor += 1
+    while cursor < length {
+        let token = LanguageKit:Cursor:phrase_at(state, grammar, text, length, cursor)
+        if !LanguageKit:phrase_inherits(state, token, opening) {
+            output.append_byte(text[cursor]); cursor += 1
         } else {
-            let open = cursor
-            cursor += 1
-            let expression_start = cursor
-            var depth = 1
-            var quote = 0
-            while text[cursor] != 0 && depth > 0 {
-                let ch = text[cursor]
-                if quote != 0 {
-                    if ch == 92 && text[cursor + 1] != 0 {
-                        cursor += 2
-                    } else if ch == quote {
-                        quote = 0
-                        cursor += 1
-                    } else {
-                        cursor += 1
-                    }
-                } else if ch == 34 || ch == 39 {
-                    quote = ch
-                    cursor += 1
-                } else if ch == 123 {
-                    depth += 1
-                    cursor += 1
-                } else if ch == 125 {
-                    depth -= 1
-                    if depth > 0 { cursor += 1 }
-                } else {
-                    cursor += 1
-                }
-            }
-
-            if depth != 0 {
-                // Keep unmatched `{` literal instead of silently discarding it.
-                output.append_byte(text[open])
-                cursor = open + 1
-            } else {
-                let expression = Shell:copy_slice(text, expression_start, cursor)
+            let close = Amber:syntax_block_close(state, text, cursor, length)
+            if close < 0 { output.append_byte(text[cursor]); cursor += 1 }
+            else {
+                let start = Amber:syntax_body_start(state, text, length, cursor)
+                let expression = Shell:copy_slice(text, start, close)
                 if !expression { return cast(u8*, 0) }
-                defer free(expression)
                 let value = context:expression:format(state, expression)
+                free(expression)
                 if !value { return cast(u8*, 0) }
                 output.append_text(value)
                 free(value)
-                cursor += 1
+                cursor = cast(i64, context:syntax:block:extent(state, text, cast(u64, length), cast(u64, cursor)))
             }
         }
     }
     return output.take()
 }
 
-let Amber:store_text_array = fn (state:Context*, name:u8*, source:u8*, start:i64) -> i64 {
-    var cursor = start
-    if source[cursor] != 91 { return -1 }
-    cursor += 1
-
+let Amber:store_text_array = fn (state:Context*, name:u8*, start:i64) -> i64 {
+    let reader = Amber:source_reader(state)
+    if !reader { return -1 }
+    defer reader.destroy()
+    reader.position = start
+    if !reader.match("[") { return -1 }
     let joined = Shell:Text:new()
     if !joined { return -1 }
     defer joined.destroy()
-
     var count = 0
-    var done = 0
-    while !done {
-        cursor = Amber:skip_space_and_comments(source, cursor)
-        if source[cursor] == 93 {
-            cursor += 1
-            done = 1
-        } else {
-            if source[cursor] != 34 {
-                context:diagnostic:error(state, "Amber array compatibility currently expects Text elements")
-                return -1
-            }
-            cursor += 1
-            let content_start = cursor
-            var closed = 0
-            while source[cursor] != 0 && !closed {
-                if source[cursor] == 92 && source[cursor + 1] != 0 {
-                    cursor += 2
-                } else if source[cursor] == 34 {
-                    closed = 1
-                } else {
-                    cursor += 1
-                }
-            }
-            if !closed {
-                context:diagnostic:error(state, "unterminated Text literal in Amber array")
-                return -1
-            }
-
-            let decoded = Amber:decode_text(source, content_start, cursor)
-            if !decoded { return -1 }
-            defer free(decoded)
-            let value = Amber:interpolate_text(state, decoded)
-            if !value { return -1 }
-            defer free(value)
-
-            let key = Amber:array_item_key(name, count)
-            if !key { return -1 }
-            defer free(key)
-            if context:value:contains(state, key) {
-                context:value:assign:text(state, key, value)
-            } else {
-                context:value:define:text(state, key, value)
-            }
-
-            if count > 0 { joined.append_byte(32) }
-            joined.append_text(value)
-            count += 1
-            cursor += 1
-            cursor = Amber:skip_space_and_comments(source, cursor)
-            if source[cursor] == 44 {
-                cursor += 1
-            } else if source[cursor] != 93 {
-                context:diagnostic:error(state, "Amber array expects ',' or ']' after an element")
-                return -1
-            }
+    while !reader.match("]") {
+        if reader.kind_of() != 3 || reader.error {
+            context:diagnostic:error(state, "Amber array compatibility currently expects Text elements")
+            return -1
+        }
+        let decoded = reader.take_text()
+        if !decoded { return -1 }
+        defer free(decoded)
+        let value = Amber:interpolate_text(state, decoded)
+        if !value { return -1 }
+        defer free(value)
+        let key = Amber:array_item_key(name, count)
+        if !key { return -1 }
+        defer free(key)
+        if context:value:contains(state, key) { context:value:assign:text(state, key, value) }
+        else { context:value:define:text(state, key, value) }
+        if count > 0 { joined.append_byte(32) }
+        joined.append_text(value)
+        count += 1
+        if !reader.match(",") && !reader.is("]") {
+            context:diagnostic:error(state, "Amber array expects ',' or ']' after an element")
+            return -1
         }
     }
-
     let count_key = Amber:array_count_key(name)
     if !count_key { return -1 }
     defer free(count_key)
@@ -1652,7 +1620,7 @@ let Amber:store_text_array = fn (state:Context*, name:u8*, source:u8*, start:i64
     } else {
         context:value:define:text(state, name, joined_text)
     }
-    return cursor
+    return reader.position
 }
 
 let Amber:array_count = fn (state:Context*, name:u8*) -> i64 {
@@ -1682,65 +1650,62 @@ let Amber:echo_call = phrase {
     type = <phrase-types:elaborate>
     permanent = true
     action = fn (state:Context*, called:Phrase*) -> void {
-        let source = cast(u8*, context:source:data(state))
-        var cursor = 0
-        var depth = 0
-        var quote = 0
+        let reader = Amber:source_reader(state)
+        if !reader { return }
+        defer reader.destroy()
+        reader.fallback = context:syntax:dictionary(state)
+        let groups = LanguageKit:Text:new()
+        if !groups { return }
+        defer groups.destroy()
         var close = -1
-        while source[cursor] != 0 && close < 0 {
-            let ch = source[cursor]
-            if quote != 0 {
-                if ch == 92 && source[cursor + 1] != 0 { cursor += 2 }
-                else if ch == quote { quote = 0; cursor += 1 }
-                else { cursor += 1 }
-            } else if ch == 34 || ch == 39 {
-                quote = ch
-                cursor += 1
-            } else if ch == 40 || ch == 91 || ch == 123 {
-                depth += 1
-                cursor += 1
-            } else if ch == 41 {
-                if depth == 0 { close = cursor }
-                else { depth -= 1; cursor += 1 }
-            } else if ch == 93 || ch == 125 {
-                if depth > 0 { depth -= 1 }
-                cursor += 1
-            } else {
-                cursor += 1
+        var finish = -1
+        var argument_end = 0
+        while reader.available(0) && close < 0 {
+            reader.skip_trivia()
+            let start = reader.position
+            if !reader.kind_of() || reader.error { break }
+            if reader.is(")") && groups.length == 0 { close = start; finish = reader.position }
+            else {
+                if reader.is("(") { groups.append_byte(1) }
+                else if reader.is("[") { groups.append_byte(2) }
+                else if reader.is("{") { groups.append_byte(3) }
+                else if reader.is(")") || reader.is("]") || reader.is("}") {
+                    var expected = 1
+                    if reader.is("]") { expected = 2 } else if reader.is("}") { expected = 3 }
+                    if !groups.length || groups.data[groups.length - 1] != expected {
+                        context:diagnostic:error(state, "echo call has a mismatched closing phrase")
+                        return
+                    }
+                    groups.length -= 1
+                }
+                argument_end = reader.position
+                reader.consume()
             }
         }
-        if close < 0 {
-            context:diagnostic:error(state, "echo call is missing ')'")
-            return
-        }
-
-        var start = 0
-        var finish = close
-        while start < finish && (source[start] == 32 || source[start] == 9 || source[start] == 10 || source[start] == 13) { start += 1 }
-        while finish > start && (source[finish - 1] == 32 || source[finish - 1] == 9 || source[finish - 1] == 10 || source[finish - 1] == 13) { finish -= 1 }
-
+        if close < 0 { context:diagnostic:error(state, "echo call is missing its closing phrase"); return }
+        reader.clear(); reader.position = 0
+        reader.skip_trivia()
+        let argument_start = reader.position
         var formatted = cast(u8*, 0)
-        if finish > start + 1 && source[start] == 34 && source[finish - 1] == 34 {
-            let decoded = Amber:decode_text(source, start + 1, finish - 1)
-            if decoded {
+        if reader.kind_of() == 3 {
+            let decoded = reader.take_text()
+            if reader.position == argument_end {
                 formatted = Amber:interpolate_text(state, decoded)
-                free(decoded)
             }
-        } else if finish == start {
-            formatted = Shell:copy_text("")
-        } else {
-            let expression = Shell:copy_slice(source, start, finish)
-            if expression {
-                formatted = context:expression:format(state, expression)
-                free(expression)
+            free(decoded)
+        }
+        if !formatted {
+            if close == argument_start { formatted = Shell:copy_text("") }
+            else {
+                let expression = Shell:copy_slice(cast(u8*, context:source:data(state)), argument_start, close)
+                if expression { formatted = context:expression:format(state, expression); free(expression) }
             }
         }
-
         if formatted {
             printf("%s\n", formatted)
             free(formatted)
         }
-        context:source:advance(state, close + 1)
+        context:source:advance(state, finish)
     }
 }
 
@@ -1749,62 +1714,22 @@ let "echo(" = <Amber:echo_call>
 // `for value in array { ... }` is a source-defined Amber loop. The block can be
 // executed repeatedly just like RecurLoop's source-defined `repeat` example.
 let Amber:for_loop = phrase {
+    dictionary = true
     type = <phrase-types:elaborate>
     permanent = true
     action = fn (state:Context*, called:Phrase*) -> void {
-        let block = state.source_block_capture()
+        let block = context:source:block:capture(state, Amber:grammar(state))
         if !block { return }
         defer block.release()
         let header = block.header()
-        var cursor = 0
-        while header[cursor] == 32 || header[cursor] == 9 || header[cursor] == 10 || header[cursor] == 13 { cursor += 1 }
-        let variable_start = cursor
-        let first = header[cursor]
-        if !((first >= 65 && first <= 90) || (first >= 97 && first <= 122) || first == 95) {
-            context:diagnostic:error(state, "Amber for expects an iteration variable")
-            return
-        }
-        cursor += 1
-        var scanning = 1
-        while scanning {
-            let ch = header[cursor]
-            if (ch >= 65 && ch <= 90) || (ch >= 97 && ch <= 122) || (ch >= 48 && ch <= 57) || ch == 95 { cursor += 1 }
-            else { scanning = 0 }
-        }
-        let variable_end = cursor
-        while header[cursor] == 32 || header[cursor] == 9 || header[cursor] == 10 || header[cursor] == 13 { cursor += 1 }
-        if header[cursor] != 105 || header[cursor + 1] != 110 {
-            context:diagnostic:error(state, "Amber for expects 'in'")
-            return
-        }
-        cursor += 2
-        if !(header[cursor] == 32 || header[cursor] == 9 || header[cursor] == 10 || header[cursor] == 13) {
-            context:diagnostic:error(state, "Amber for expects whitespace after 'in'")
-            return
-        }
-        while header[cursor] == 32 || header[cursor] == 9 || header[cursor] == 10 || header[cursor] == 13 { cursor += 1 }
-        let array_start = cursor
-        let array_first = header[cursor]
-        if !((array_first >= 65 && array_first <= 90) || (array_first >= 97 && array_first <= 122) || array_first == 95) {
-            context:diagnostic:error(state, "Amber for expects an array name after 'in'")
-            return
-        }
-        cursor += 1
-        scanning = 1
-        while scanning {
-            let ch = header[cursor]
-            if (ch >= 65 && ch <= 90) || (ch >= 97 && ch <= 122) || (ch >= 48 && ch <= 57) || ch == 95 { cursor += 1 }
-            else { scanning = 0 }
-        }
-        let array_end = cursor
-        while header[cursor] == 32 || header[cursor] == 9 || header[cursor] == 10 || header[cursor] == 13 { cursor += 1 }
-        if header[cursor] != 0 {
-            context:diagnostic:error(state, "unexpected input after Amber for array")
-            return
-        }
-
-        let variable = Shell:copy_slice(header, variable_start, variable_end)
-        let array = Shell:copy_slice(header, array_start, array_end)
+        let reader = Amber:reader(state, header, Shell:strlen(header))
+        if !reader { return }
+        defer reader.destroy()
+        let variable = reader.take_identifier()
+        if !variable { context:diagnostic:error(state, "Amber for expects an iteration variable"); return }
+        if !reader.match("in") { free(variable); context:diagnostic:error(state, "Amber for expects 'in'"); return }
+        let array = reader.take_identifier()
+        if reader.kind_of() { free(variable); if array { free(array) }; context:diagnostic:error(state, "unexpected input after Amber for array"); return }
         if !variable || !array {
             if variable { free(variable) }
             if array { free(array) }
@@ -2351,67 +2276,41 @@ let Shell:begin_top_command = fn (state:Context*, capture:i64) -> void {
 let Shell:top_level_assignment = fn (
     state:Context*, canonical:u8*, define_value:i64
 ) -> void {
-    // Array literals may span physical input lines. Ask the Context source
-    // reader to make the remaining source available before scanning.
-    context:source:ensure(state, 65536)
-    let source = cast(u8*, context:source:data(state))
-    var cursor = 0
-    while source[cursor] == 32 || source[cursor] == 9 { cursor += 1 }
-    let name_start = cursor
-    let first = source[cursor]
-    if (first >= 65 && first <= 90) || (first >= 97 && first <= 122) || first == 95 {
-        cursor += 1
-        var scanning = 1
-        while scanning {
-            let ch = source[cursor]
-            if (ch >= 65 && ch <= 90) || (ch >= 97 && ch <= 122) ||
-                (ch >= 48 && ch <= 57) || ch == 95 {
-                cursor += 1
-            } else {
-                scanning = 0
-            }
-        }
-    }
-    let name_end = cursor
-    while source[cursor] == 32 || source[cursor] == 9 { cursor += 1 }
-
-    var mode = 0
-    if name_end > name_start && source[cursor] == 61 {
-        cursor += 1
-        while source[cursor] == 32 || source[cursor] == 9 { cursor += 1 }
-        if source[cursor] == 114 && source[cursor + 1] == 117 && source[cursor + 2] == 110 &&
-            Shell:is_space(source[cursor + 3]) {
-            mode = 1
-            cursor += 3
-        } else if source[cursor] == 99 && source[cursor + 1] == 97 && source[cursor + 2] == 112 &&
-            source[cursor + 3] == 116 && source[cursor + 4] == 117 && source[cursor + 5] == 114 &&
-            source[cursor + 6] == 101 && Shell:is_space(source[cursor + 7]) {
-            mode = 2
-            cursor += 7
-        } else if source[cursor] == 36 {
-            // Amber command expression: let value = $ command $
-            mode = 2
-            cursor += 1
-        } else if source[cursor] == 91 {
-            // Amber array literal. The compatibility layer currently stores
-            // Text elements as runtime Context values for `for ... in ...`.
-            mode = 3
-        }
-    }
-
-    var declared_name = cast(u8*, 0)
-    if name_end > name_start { declared_name = Shell:copy_slice(source, name_start, name_end) }
+    let reader = Amber:source_reader(state)
+    if !reader { return }
+    defer reader.destroy()
+    reader.skip_trivia()
+    let name_start = reader.position
+    let declared_name = reader.take_identifier()
+    let name_end = reader.position
     defer free(declared_name)
-
+    if Shell:text_equal(canonical, "var") && (!declared_name || reader.is(":")) {
+        context:phrase:elaborate(state, context:phrase:find(state, "let"))
+        return
+    }
+    var mode = 0
+    if declared_name && reader.match("=") {
+        if reader.match("run") { mode = 1 }
+        else if reader.match("capture") || reader.match("$") { mode = 2 }
+        else if reader.is("[") { mode = 3 }
+    }
+    // Scanning is non-consuming for the Context. Retain the start of the RHS.
+    if mode == 0 || mode == 3 {
+        reader.clear(); reader.position = name_end; reader.match("=")
+    }
+    reader.skip_trivia()
+    var cursor = reader.position
     if mode == 0 {
         // Amber `let` is mutable for ordinary values, but RecurLoop function
         // literals still need the canonical immutable declaration path so the
         // compiler can install their typed phrase. Preserve that path for an
         // RHS beginning with `fn` or the compatibility `fun` phrase.
         if Shell:text_equal(canonical, "var") {
-            let fn_rhs = source[cursor] == 102 && source[cursor + 1] == 110 && Shell:is_space(source[cursor + 2])
-            let fun_rhs = source[cursor] == 102 && source[cursor + 1] == 117 && source[cursor + 2] == 110 && Shell:is_space(source[cursor + 3])
-            if fn_rhs || fun_rhs {
+            reader.position = cursor
+            let fn_rhs = reader.is("fn")
+            let fun_rhs = reader.is("fun")
+            let phrase_rhs = reader.is("phrase") || reader.is("<")
+            if fn_rhs || fun_rhs || phrase_rhs {
                 if declared_name { Amber:categorize_symbol(state, "Functions", declared_name) }
                 context:phrase:elaborate(state, context:phrase:find(state, "let"))
                 return
@@ -2421,19 +2320,18 @@ let Shell:top_level_assignment = fn (
         context:phrase:elaborate(state, context:phrase:find(state, canonical))
         return
     }
-    let name = Shell:copy_slice(source, name_start, name_end)
+    let name = Shell:copy_slice(cast(u8*, context:source:data(state)), name_start, name_end)
     if !name { context:diagnostic:error(state, "assignment could not copy its name"); return }
     defer free(name)
     if define_value { Amber:categorize_symbol(state, "Variables", name) }
 
     if mode == 3 {
         Amber:categorize_symbol(state, "Arrays", name)
-        let finish = Amber:store_text_array(state, name, source, cursor)
+        let finish = Amber:store_text_array(state, name, cursor)
         if finish >= 0 { context:source:advance(state, finish) }
         return
     }
 
-    while source[cursor] == 32 || source[cursor] == 9 { cursor += 1 }
     if cursor >= Shell:source_line_end(state, cursor) {
         context:diagnostic:error(state, "shell assignment expects a command")
         return
@@ -2495,39 +2393,17 @@ let Shell:rewrite_command = fn (state:Context*, mode:i64) -> void {
 let Amber:rewrite_let = fn (state:Context*) -> void {
     let source = context:syntax:data(state)
     let bytes = context:syntax:bytes(state)
-    var cursor = 0
-    while cursor < bytes && (source[cursor] == 32 || source[cursor] == 9) { cursor += 1 }
-    let name_start = cursor
-    if cursor < bytes {
-        let first = source[cursor]
-        if (first >= 65 && first <= 90) || (first >= 97 && first <= 122) || first == 95 {
-            cursor += 1
-            var scanning = 1
-            while scanning && cursor < bytes {
-                let ch = source[cursor]
-                if (ch >= 65 && ch <= 90) || (ch >= 97 && ch <= 122) ||
-                    (ch >= 48 && ch <= 57) || ch == 95 { cursor += 1 }
-                else { scanning = 0 }
-            }
-        }
-    }
-    let name_end = cursor
-    while cursor < bytes && (source[cursor] == 32 || source[cursor] == 9) { cursor += 1 }
-    if name_end <= name_start || cursor >= bytes || source[cursor] != 61 {
-        context:syntax:emit(state, "var ")
-        return
-    }
-    cursor += 1
-    while cursor < bytes && (source[cursor] == 32 || source[cursor] == 9) { cursor += 1 }
-    if cursor >= bytes || source[cursor] != 36 {
-        context:syntax:emit(state, "var ")
-        return
-    }
-
+    let reader = Amber:reader(state, source, bytes)
+    if !reader { return }
+    defer reader.destroy()
+    let name = reader.take_identifier()
+    if !name { context:syntax:emit(state, "var "); return }
+    defer free(name)
+    if !reader.match("=") || !reader.match("$") { context:syntax:emit(state, "var "); return }
     context:syntax:emit(state, "var ")
-    context:syntax:emit(state, source, name_start, name_end - name_start)
+    context:syntax:emit(state, name)
     context:syntax:emit(state, " = ")
-    context:syntax:advance(state, cursor + 1)
+    context:syntax:advance(state, reader.position)
     Shell:rewrite_command(state, 1)
 }
 
@@ -2540,7 +2416,6 @@ let shell_top_level_let = phrase {
         else { Shell:top_level_assignment(state, "var", 1) }
     }
 }
-
 
 let run = phrase {
     type = <phrase-types:elaborate>
@@ -2597,7 +2472,6 @@ let spawn = phrase {
         }
     }
 }
-
 
 // The command grammar is the phrase graph itself. Every alias carries both
 // behavior and its next state, so top-level elaboration and fn rewriting walk
@@ -2664,6 +2538,7 @@ let Shell:Grammar:double_expression_single:"'" = phrase { type = <phrase-types:s
 // ============================================================================
 
 let Amber:command = phrase {
+    dictionary = true
     type = <phrase-types:elaborate>
     permanent = true
     rewrite = true
@@ -2679,6 +2554,7 @@ let Amber:command = phrase {
 }
 
 let Amber:silent_command = phrase {
+    dictionary = true
     type = <phrase-types:elaborate>
     permanent = true
     rewrite = true
@@ -2696,6 +2572,7 @@ let Amber:silent_command = phrase {
 }
 
 let Amber:suppress_command = phrase {
+    dictionary = true
     type = <phrase-types:elaborate>
     permanent = true
     rewrite = true
@@ -2713,6 +2590,7 @@ let Amber:suppress_command = phrase {
 }
 
 let Amber:silent_suppress_command = phrase {
+    dictionary = true
     type = <phrase-types:elaborate>
     permanent = true
     rewrite = true
@@ -2751,46 +2629,30 @@ let "trust suppress silent $" = <Amber:silent_suppress_command>
 
 let Amber:bind_handler_status = fn (state:Context*, header:u8*, value:i64) -> i64 {
     if !header { return 1 }
-    var cursor = 0
-    while header[cursor] == 32 || header[cursor] == 9 || header[cursor] == 10 || header[cursor] == 13 { cursor += 1 }
-    if header[cursor] == 0 { return 1 }
-    if header[cursor] != 40 { return 0 }
-    cursor += 1
-    while header[cursor] == 32 || header[cursor] == 9 { cursor += 1 }
-    let start = cursor
-    let first = header[cursor]
-    if !((first >= 65 && first <= 90) || (first >= 97 && first <= 122) || first == 95) { return 0 }
-    cursor += 1
-    var scanning = 1
-    while scanning {
-        let ch = header[cursor]
-        if (ch >= 65 && ch <= 90) || (ch >= 97 && ch <= 122) || (ch >= 48 && ch <= 57) || ch == 95 { cursor += 1 }
-        else { scanning = 0 }
-    }
-    let name = Shell:copy_slice(header, start, cursor)
+    let reader = Amber:reader(state, header, Shell:strlen(header))
+    if !reader { return 0 }
+    defer reader.destroy()
+    if !reader.kind_of() { return 1 }
+    if !reader.match("(") { return 0 }
+    let name = reader.take_identifier()
     if !name { return 0 }
     defer free(name)
-    while header[cursor] == 32 || header[cursor] == 9 { cursor += 1 }
-    if header[cursor] != 41 { return 0 }
-    cursor += 1
-    while header[cursor] == 32 || header[cursor] == 9 || header[cursor] == 10 || header[cursor] == 13 { cursor += 1 }
-    if header[cursor] != 0 { return 0 }
-    if context:value:contains(state, name) {
-        return context:value:assign:integer(state, name, value)
-    }
+    if !reader.match(")") || reader.kind_of() { return 0 }
+    if context:value:contains(state, name) { return context:value:assign:integer(state, name, value) }
     return context:value:define:integer(state, name, value)
 }
 
 let Amber:run_handler = fn (state:Context*, kind:i64) -> void {
-    let block = state.source_block_capture()
+    let block = context:source:block:capture(state, Amber:grammar(state))
     if !block { return }
     defer block.release()
     let code = Amber:get_status()
     let handler_header = block.header()
     if kind == 2 {
-        var cursor = 0
-        while handler_header[cursor] == 32 || handler_header[cursor] == 9 || handler_header[cursor] == 10 || handler_header[cursor] == 13 { cursor += 1 }
-        if handler_header[cursor] != 0 {
+        let reader = Amber:reader(state, handler_header, Shell:strlen(handler_header))
+        if !reader { return }
+        defer reader.destroy()
+        if reader.kind_of() {
             context:diagnostic:error(state, "Amber succeeded does not accept an exit-code binding")
             return
         }
@@ -2803,134 +2665,56 @@ let Amber:run_handler = fn (state:Context*, kind:i64) -> void {
     state.source_block_execute_current(block)
 }
 
-let Amber:syntax_skip_string = fn (source:u8*, position:i64, limit:i64, quote:u8) -> i64 {
-    var cursor = position + 1
-    while cursor < limit {
-        if source[cursor] == 92 {
-            cursor += 2
-        } else if source[cursor] == quote {
-            return cursor + 1
-        } else {
-            cursor += 1
-        }
-    }
-    return limit
-}
-
-let Amber:syntax_block_open = fn (source:u8*, limit:i64) -> i64 {
-    var cursor = 0
-    var parens = 0
-    while cursor < limit {
-        let ch = source[cursor]
-        if ch == 34 || ch == 39 {
-            cursor = Amber:syntax_skip_string(source, cursor, limit, ch)
-        } else {
-            if ch == 40 { parens += 1 }
-            else if ch == 41 { parens -= 1 }
-            else if ch == 123 && parens == 0 { return cursor }
-            cursor += 1
-        }
-    }
-    return -1
-}
-
-let Amber:syntax_block_close = fn (source:u8*, open:i64, limit:i64) -> i64 {
-    var cursor = open + 1
-    var depth = 1
-    while cursor < limit {
-        let ch = source[cursor]
-        if ch == 34 || ch == 39 {
-            cursor = Amber:syntax_skip_string(source, cursor, limit, ch)
-        } else {
-            if ch == 123 { depth += 1 }
-            else if ch == 125 {
-                depth -= 1
-                if depth == 0 { return cursor }
-            }
-            cursor += 1
-        }
-    }
-    return -1
-}
-
 // Rewrite Amber outcome handlers inside compiled functions. The command itself
 // has already updated Amber status(), so the handler becomes ordinary RecurLoop
 // control flow around the original body.
 let Amber:rewrite_handler = fn (state:Context*, kind:i64) -> void {
     let source = context:syntax:data(state)
     let bytes = context:syntax:bytes(state)
-    let open = Amber:syntax_block_open(source, bytes)
+    let open = Amber:syntax_block_open(state, source, bytes)
     if open < 0 {
         context:diagnostic:error(state, "Amber outcome handler expects a block")
         return
     }
-    let close = Amber:syntax_block_close(source, open, bytes)
+    let close = Amber:syntax_block_close(state, source, open, bytes)
     if close < 0 {
         context:diagnostic:error(state, "Amber outcome handler block is not closed")
         return
     }
 
-    var start = 0
-    while start < open && (source[start] == 32 || source[start] == 9 || source[start] == 10 || source[start] == 13) { start += 1 }
-    var name_start = -1
-    var name_end = -1
-    if start < open {
-        if source[start] != 40 {
-            context:diagnostic:error(state, "Amber outcome status binding expects (name)")
-            return
-        }
-        start += 1
-        while start < open && (source[start] == 32 || source[start] == 9) { start += 1 }
-        name_start = start
-        if start >= open { context:diagnostic:error(state, "Amber outcome status binding is empty"); return }
-        let first = source[start]
-        if !((first >= 65 && first <= 90) || (first >= 97 && first <= 122) || first == 95) {
-            context:diagnostic:error(state, "Amber outcome status binding expects an identifier")
-            return
-        }
-        start += 1
-        var scanning = 1
-        while scanning && start < open {
-            let ch = source[start]
-            if (ch >= 65 && ch <= 90) || (ch >= 97 && ch <= 122) || (ch >= 48 && ch <= 57) || ch == 95 { start += 1 }
-            else { scanning = 0 }
-        }
-        name_end = start
-        while start < open && (source[start] == 32 || source[start] == 9) { start += 1 }
-        if start >= open || source[start] != 41 {
-            context:diagnostic:error(state, "Amber outcome status binding expects a closing parenthesis")
-            return
-        }
-        start += 1
-        while start < open && (source[start] == 32 || source[start] == 9 || source[start] == 10 || source[start] == 13) { start += 1 }
-        if start != open {
-            context:diagnostic:error(state, "unexpected text before Amber outcome block")
+    let reader = Amber:reader(state, source, open)
+    if !reader { return }
+    defer reader.destroy()
+    var name = cast(u8*, 0)
+    if reader.kind_of() {
+        if !reader.match("(") { context:diagnostic:error(state, "Amber outcome status binding expects (name)"); return }
+        name = reader.take_identifier()
+        if !name || !reader.match(")") || reader.kind_of() {
+            if name { free(name) }
+            context:diagnostic:error(state, "Amber outcome status binding expects one identifier")
             return
         }
     }
-
-    if kind == 2 && name_start >= 0 {
-        context:diagnostic:error(state, "Amber succeeded does not accept an exit-code binding")
-        return
-    }
+    defer free(name)
+    if kind == 2 && name { context:diagnostic:error(state, "Amber succeeded does not accept an exit-code binding"); return }
 
     if kind == 1 { context:syntax:emit(state, "if status() != 0 {\n") }
     else if kind == 2 { context:syntax:emit(state, "if status() == 0 {\n") }
     else { context:syntax:emit(state, "if 1 {\n") }
 
-    if name_start >= 0 {
+    if name {
         context:syntax:emit(state, "var ")
-        context:syntax:emit(state, source, name_start, name_end - name_start)
+        context:syntax:emit(state, name)
         context:syntax:emit(state, " = status()\n")
     }
-    if close > open + 1 {
-        context:syntax:emit(state, source, open + 1, close - open - 1)
-    }
+    let body = Amber:syntax_body_start(state, source, bytes, open)
+    if close > body { context:syntax:emit(state, source, body, close - body) }
     context:syntax:emit(state, "\n}\n")
-    context:syntax:advance(state, close + 1)
+    context:syntax:advance(state, context:syntax:block:extent(state, source, cast(u64, bytes), cast(u64, open)))
 }
 
 let failed = phrase {
+    dictionary = true
     type = <phrase-types:elaborate>
     permanent = true
     rewrite = true
@@ -2941,6 +2725,7 @@ let failed = phrase {
 }
 
 let succeeded = phrase {
+    dictionary = true
     type = <phrase-types:elaborate>
     permanent = true
     rewrite = true
@@ -2951,6 +2736,7 @@ let succeeded = phrase {
 }
 
 let exited = phrase {
+    dictionary = true
     type = <phrase-types:elaborate>
     permanent = true
     rewrite = true
@@ -2968,13 +2754,14 @@ let exited = phrase {
 // `trust` is a semantic no-op here because this compatibility layer does not
 // implement Amber's compile-time failable-command checker.
 let Amber:run_modifier_scope = fn (state:Context*, silence_stdout:i64, suppress_stderr:i64) -> void {
-    let block = state.source_block_capture()
+    let block = context:source:block:capture(state, Amber:grammar(state))
     if !block { return }
     defer block.release()
     let header = block.header()
-    var cursor = 0
-    while header[cursor] == 32 || header[cursor] == 9 || header[cursor] == 10 || header[cursor] == 13 { cursor += 1 }
-    if header[cursor] != 0 {
+    let reader = Amber:reader(state, header, Shell:strlen(header))
+    if !reader { return }
+    defer reader.destroy()
+    if reader.kind_of() {
         context:diagnostic:error(state, "Amber command modifier scope expects a block with no header")
         return
     }
@@ -2991,18 +2778,19 @@ let Amber:run_modifier_scope = fn (state:Context*, silence_stdout:i64, suppress_
 let Amber:rewrite_modifier_scope = fn (state:Context*, silence_stdout:i64, suppress_stderr:i64) -> void {
     let source = context:syntax:data(state)
     let bytes = context:syntax:bytes(state)
-    let open = Amber:syntax_block_open(source, bytes)
+    let open = Amber:syntax_block_open(state, source, bytes)
     if open < 0 {
         context:diagnostic:error(state, "Amber command modifier scope expects a block")
         return
     }
-    var cursor = 0
-    while cursor < open && (source[cursor] == 32 || source[cursor] == 9 || source[cursor] == 10 || source[cursor] == 13) { cursor += 1 }
-    if cursor != open {
+    let reader = Amber:reader(state, source, open)
+    if !reader { return }
+    defer reader.destroy()
+    if reader.kind_of() {
         context:diagnostic:error(state, "Amber command modifier scope expects a block with no header")
         return
     }
-    let close = Amber:syntax_block_close(source, open, bytes)
+    let close = Amber:syntax_block_close(state, source, open, bytes)
     if close < 0 {
         context:diagnostic:error(state, "Amber command modifier scope block is not closed")
         return
@@ -3015,14 +2803,14 @@ let Amber:rewrite_modifier_scope = fn (state:Context*, silence_stdout:i64, suppr
     if suppress_stderr {
         context:syntax:emit(state, "let __amber_scope_stderr = Amber:stderr_silence_enter()\ndefer Amber:stderr_silence_leave(__amber_scope_stderr)\n")
     }
-    if close > open + 1 {
-        context:syntax:emit(state, source, open + 1, close - open - 1)
-    }
+    let body = Amber:syntax_body_start(state, source, bytes, open)
+    if close > body { context:syntax:emit(state, source, body, close - body) }
     context:syntax:emit(state, "\n}\n")
-    context:syntax:advance(state, close + 1)
+    context:syntax:advance(state, context:syntax:block:extent(state, source, cast(u64, bytes), cast(u64, open)))
 }
 
 let Amber:trust_scope = phrase {
+    dictionary = true
     type = <phrase-types:elaborate>
     permanent = true
     rewrite = true
@@ -3033,6 +2821,7 @@ let Amber:trust_scope = phrase {
 }
 
 let Amber:silent_scope = phrase {
+    dictionary = true
     type = <phrase-types:elaborate>
     permanent = true
     rewrite = true
@@ -3043,6 +2832,7 @@ let Amber:silent_scope = phrase {
 }
 
 let Amber:suppress_scope = phrase {
+    dictionary = true
     type = <phrase-types:elaborate>
     permanent = true
     rewrite = true
@@ -3053,6 +2843,7 @@ let Amber:suppress_scope = phrase {
 }
 
 let Amber:silent_suppress_scope = phrase {
+    dictionary = true
     type = <phrase-types:elaborate>
     permanent = true
     rewrite = true
@@ -3085,7 +2876,7 @@ let directory = phrase {
     type = <phrase-types:elaborate>
     permanent = true
     action = fn (state:Context*, called:Phrase*) -> void {
-        let block = state.source_block_capture()
+        let block = context:source:block:capture(state, Amber:grammar(state))
         if !block { return }
         defer block.release()
         let header = block.header()
@@ -3108,7 +2899,7 @@ let environment = phrase {
     type = <phrase-types:elaborate>
     permanent = true
     action = fn (state:Context*, called:Phrase*) -> void {
-        let block = state.source_block_capture()
+        let block = context:source:block:capture(state, Amber:grammar(state))
         if !block { return }
         defer block.release()
         let header = block.header()
@@ -3134,7 +2925,7 @@ let parallel = phrase {
     type = <phrase-types:elaborate>
     permanent = true
     action = fn (state:Context*, called:Phrase*) -> void {
-        let block = state.source_block_capture()
+        let block = context:source:block:capture(state, Amber:grammar(state))
         if !block { return }
         defer block.release()
         let jobs = Shell:Parallel:new()
@@ -3155,20 +2946,12 @@ let Amber:assert_symbol_phrase = phrase {
     type = <phrase-types:elaborate>
     permanent = true
     action = fn (state:Context*, called:Phrase*) -> void {
-        context:source:ensure(state, 4096)
-        let source = cast(u8*, context:source:data(state))
-        let bytes = context:source:bytes(state)
-        var i = 0
-        while i < bytes && Shell:is_space(source[i]) { i += 1 }
-        let category_start = i
-        while i < bytes && !Shell:is_space(source[i]) { i += 1 }
-        let category_end = i
-        while i < bytes && Shell:is_space(source[i]) { i += 1 }
-        let name_start = i
-        while i < bytes && !Shell:is_space(source[i]) { i += 1 }
-        let name_end = i
-        let category = Shell:copy_slice(source, category_start, category_end)
-        let name = Shell:copy_slice(source, name_start, name_end)
+        let reader = LanguageKit:Reader:new_phrases(state, Amber:grammar(state), 457)
+        if !reader { return }
+        defer reader.destroy()
+        let category = reader.take_identifier()
+        var name = cast(u8*, 0)
+        if reader.kind_of() && reader.kind_of() != 6 { name = reader.take_text() }
         if !category || !name { context:diagnostic:error(state, "amber_assert expects CATEGORY NAME") }
         else {
             var owner_name = cast(u8*, 0)
@@ -3185,7 +2968,7 @@ let Amber:assert_symbol_phrase = phrase {
         }
         if category { free(category) }
         if name { free(name) }
-        context:source:advance(state, name_end)
+        LanguageKit:Source:skip_line(state)
         context:source:root(state)
     }
 }
@@ -3211,6 +2994,27 @@ let install_shell_assignments = phrase {
     }
 }
 install_shell_assignments
+
+let Amber:describe_syntax = phrase {
+    type = <phrase-types:elaborate>
+    serializable = false
+    action = fn (state:Context*, called:Phrase*) -> void {
+        let grammar = Amber:grammar(state)
+        let root = context:phrase:find(state, "Amber")
+        context:syntax:describe(state, context:phrase:find:exact(state, root, "for_loop"), "<variable:id> in <array:id> <body:block>", grammar)
+        context:syntax:describe(state, context:phrase:find(state, "failed"), "[\"(\" <name:id> \")\"] <body:block>", grammar)
+        context:syntax:describe(state, context:phrase:find(state, "exited"), "[\"(\" <name:id> \")\"] <body:block>", grammar)
+        context:syntax:describe(state, context:phrase:find(state, "succeeded"), "<body:block>", grammar)
+        context:syntax:describe(state, context:phrase:find:exact(state, root, "trust_scope"), "<body:block>", grammar)
+        context:syntax:describe(state, context:phrase:find:exact(state, root, "silent_scope"), "<body:block>", grammar)
+        context:syntax:describe(state, context:phrase:find:exact(state, root, "suppress_scope"), "<body:block>", grammar)
+        context:syntax:describe(state, context:phrase:find:exact(state, root, "silent_suppress_scope"), "<body:block>", grammar)
+        context:source:root(state)
+    }
+}
+let amber_describe_syntax = <Amber:describe_syntax>
+amber_describe_syntax
+set amber_describe_syntax.serializable = false
 
 // The image contains only phrase graphs, compiled actions and stable native
 // symbol names. No parser state or process-local pointer is exported.
@@ -3244,4 +3048,6 @@ set sleep.serializable = false
 set install_shell_fallback.serializable = false
 set install_shell_assignments.serializable = false
 set install_amber_scalar_types.serializable = false
+languagekit_native_end
+
 engine export "/tmp/recurloop-amber-library.rli"

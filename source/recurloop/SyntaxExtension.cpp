@@ -1,5 +1,6 @@
 #include <recurloop/SyntaxExtension.hpp>
 
+#include <compiler/LanguageState.hpp>
 #include <context/Context.hpp>
 #include <lexicon/Lexicon.hpp>
 #include <recurloop/ContextApi.hpp>
@@ -49,14 +50,33 @@ namespace recurloop {
       return identifierByte(value) || value == '.';
     }
 
-    bool hasBoundary(std::string_view source, std::size_t offset, std::string_view spelling) {
+    bool qualifiedMember(context::Context &context, std::string_view source, std::size_t offset,
+                         std::string_view spelling) {
+      if (offset == 0 || source[offset - 1] != ':') return false;
+      std::size_t begin = offset - 1;
+      while (begin != 0 && (identifierByte(static_cast<unsigned char>(source[begin - 1])) || source[begin - 1] == ':' ||
+                            source[begin - 1] == '-'))
+        --begin;
+      const auto qualified = source.substr(begin, offset + spelling.size() - begin);
+      if (!LanguageGrammar::findQualified(context.lexicon.phrase(), qualified).isNull() ||
+          !context.language().findFunctions(qualified).empty())
+        return true;
+      auto owner = LanguageGrammar::findQualified(context.lexicon.phrase(), source.substr(begin, offset - begin - 1));
+      // A colon also introduces a type annotation. Only an existing phrase
+      // member or native function establishes namespace qualification here.
+      return !LanguageGrammar::findInherited(owner, spelling).isNull();
+    }
+
+    bool hasBoundary(context::Context &context, std::string_view source, std::size_t offset,
+                     std::string_view spelling) {
       if (spelling.empty()) return false;
-      if (identifierByte(static_cast<unsigned char>(spelling.front())) && offset != 0 &&
-          qualifiedIdentifierByte(static_cast<unsigned char>(source[offset - 1])))
+      if (identifierByte(static_cast<unsigned char>(spelling.front())) &&
+          ((offset != 0 && qualifiedIdentifierByte(static_cast<unsigned char>(source[offset - 1]))) ||
+           qualifiedMember(context, source, offset, spelling)))
         return false;
       const std::size_t end = offset + spelling.size();
       return !identifierByte(static_cast<unsigned char>(spelling.back())) || end == source.size() ||
-             !qualifiedIdentifierByte(static_cast<unsigned char>(source[end]));
+             !(qualifiedIdentifierByte(static_cast<unsigned char>(source[end])) || source[end] == ':');
     }
 
     lexicon::Phrase phraseAt(context::Context &context, std::uint64_t address) {
@@ -64,10 +84,11 @@ namespace recurloop {
       return lexicon::Phrase(&context.lexicon, address).load();
     }
 
-    lexicon::Phrase longest(lexicon::Phrase dictionary, std::string_view source, std::size_t offset) {
+    lexicon::Phrase longest(context::Context &context, lexicon::Phrase dictionary, std::string_view source,
+                            std::size_t offset) {
       if (dictionary.isNull() || !dictionary.containsSubdictionary()) return lexicon::Phrase(dictionary.getLexicon());
       auto result = LanguageGrammar::matchLongest(dictionary, source.substr(offset), [&](lexicon::Phrase phrase) {
-        return hasBoundary(source, offset, phrase.getKey());
+        return hasBoundary(context, source, offset, phrase.getKey());
       });
       return !result.isNull() && result.isRewritable() ? result : lexicon::Phrase(dictionary.getLexicon());
     }
@@ -75,8 +96,9 @@ namespace recurloop {
     std::size_t protectedEnd(context::Context &context, std::string_view source, std::size_t cursor) {
       auto matched = LanguageGrammar::matchLongest(
           context.lexicon.phrase(), source.substr(cursor),
-          [&](lexicon::Phrase candidate) { return hasBoundary(source, cursor, candidate.getKey()); });
-      if (!matched.isNull() && matched.isRewritable() && hasBoundary(source, cursor, matched.getKey())) return cursor;
+          [&](lexicon::Phrase candidate) { return hasBoundary(context, source, cursor, candidate.getKey()); });
+      if (!matched.isNull() && matched.isRewritable() && hasBoundary(context, source, cursor, matched.getKey()))
+        return cursor;
       const auto comment = [&](std::string_view canonical) {
         return LanguageGrammar::inherits(matched, LanguageGrammar::find(context.lexicon.phrase(), canonical));
       };
@@ -122,7 +144,7 @@ namespace recurloop {
           continue;
         }
 
-        lexicon::Phrase rewrite = longest(rewrites, source, cursor);
+        lexicon::Phrase rewrite = longest(context, rewrites, source, cursor);
         if (rewrite.isNull()) {
           expanded.source.push_back(source[cursor]);
           expanded.originalOffsets.push_back(originalOffsets[cursor++]);
@@ -210,7 +232,7 @@ namespace recurloop {
     for (std::size_t pass = 0; pass < MaximumExpansionPasses; ++pass) {
       if (offset >= source.size() || protectedEnd(context, source, offset) != offset) return {changed, false};
 
-      lexicon::Phrase rewrite = longest(rewrites, source, offset);
+      lexicon::Phrase rewrite = longest(context, rewrites, source, offset);
       if (rewrite.isNull()) return {changed, false};
 
       const std::string key = rewrite.getKey();

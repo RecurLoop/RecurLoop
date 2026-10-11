@@ -122,9 +122,9 @@ builtin dispatch use phrase identity rather than string comparison.
 `data` is also a real top-level RecurLoop phrase rather than going through the
 generic fallback.
 
-A custom parser/AST remains necessary for whitespace application, precedence,
-Haskell patterns, and lazy syntax, while thunks and currying remain custom
-semantic runtime state.
+The semantic builder combines phrase-backed tokens into application, patterns
+and lazy expressions. Infix precedence and associativity come from phrase
+metadata; thunks and currying remain compatibility runtime state.
 
 The regression suite proves that symbols are visible from RecurLoop itself:
 
@@ -385,6 +385,28 @@ Haskell-style currying + lazy thunks + pattern matching
 without adding a dedicated Haskell parser or runtime implementation to the C++
 host.
 
-Instead, the Haskell-specific parser and semantic runtime are implemented in
-RecurLoop source while their user-visible symbols remain integrated with the
-RecurLoop lexicon.
+The semantic builder and compatibility runtime are implemented in RecurLoop
+source. Syntax recognition uses shared phrase readers, and user-visible symbols
+remain integrated with the RecurLoop lexicon.
+
+## Changing the syntax
+
+Grammar tokens live in the mutable `Haskell:Grammar:Tokens` dictionary. Readers
+choose the longest eligible phrase, and syntax checks follow prototype identity.
+For example, a new list opener can inherit the existing token:
+
+```rl
+let Haskell:Grammar:Tokens:"⟦" = <Haskell:Grammar:Tokens:"[">
+let Haskell:Grammar:Tokens:"⟧" = <Haskell:Grammar:Tokens:"]">
+```
+
+Root entry phrases can be aliased separately. The `tests/phrase-grammar.hs`
+fixture demonstrates delimiters, keywords and comments changed in source after
+importing the language image. Recognition changes preserve the existing semantic
+implementation; these examples retain their documented compatibility limits.
+
+Infix tokens carry the shared three-integer `infix` descriptor. A phrase action
+can call `LanguageKit:define_infix(state, Haskell:grammar(state), "strongplus",
+1, 100, 0)` to define addition with higher binding power and left associativity.
+The operation identifiers are 1 addition, 2 subtraction, 3 multiplication,
+4 list cons.

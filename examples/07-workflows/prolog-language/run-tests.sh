@@ -70,6 +70,14 @@ true.
 false.
 EOF_EXPECTED
 
+run_case phrase-grammar <<'EOF_EXPECTED'
+Destination = bob.
+Values = [-7, 9].
+X = Uppercase.
+true.
+X = anything.
+EOF_EXPECTED
+
 for spec in \
     "predicate ancestor" \
     "atom parent" \

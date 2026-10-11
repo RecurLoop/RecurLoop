@@ -74,6 +74,41 @@ if ! diff -u "$TMP/shell.expected" "$TMP/shell.out"; then
 fi
 printf '[amber] %-20s ok\n' 'shell-smoke'
 
+cat >"$TMP/phrase-grammar.expected" <<'OUT'
+alpha
+beta
+7
+OUT
+"$RECURLOOP" --import "$IMAGE" --file "$DIR/tests/phrase-grammar.ab" \
+    >"$TMP/phrase-grammar.out" 2>"$TMP/phrase-grammar.err"
+if [[ -s "$TMP/phrase-grammar.err" ]]; then
+    cat "$TMP/phrase-grammar.err" >&2
+    exit 1
+fi
+diff -u "$TMP/phrase-grammar.expected" "$TMP/phrase-grammar.out"
+printf '[amber] %-20s ok\n' 'phrase-grammar'
+
+# Both constructs cross the old fixed lookahead sizes. The long comment also
+# checks that a refill cannot turn its tail into array syntax.
+{
+    printf 'let values = [\n// %*s\n"ok"]\necho(values)\necho("' 70000 ''
+    printf '%*s' 1048704 '' | tr ' ' x
+    printf '")\n'
+} >"$TMP/streamed.ab"
+{
+    printf 'ok\n'
+    printf '%*s' 1048704 '' | tr ' ' x
+    printf '\n'
+} >"$TMP/streamed.expected"
+"$RECURLOOP" --import "$IMAGE" --file "$TMP/streamed.ab" \
+    >"$TMP/streamed.out" 2>"$TMP/streamed.err"
+if [[ -s "$TMP/streamed.err" ]]; then
+    cat "$TMP/streamed.err" >&2
+    exit 1
+fi
+cmp "$TMP/streamed.expected" "$TMP/streamed.out"
+printf '[amber] %-20s ok\n' 'streamed-input'
+
 for spec in \
     "variable engine" \
     "variable enabled" \

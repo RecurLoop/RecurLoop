@@ -521,9 +521,9 @@ different parts of RecurLoop's extension model.
 |---|---|---|
 | Shell | processes, pipelines, redirection, environment and directory state | phrase grammar plus a POSIX process layer written in RecurLoop |
 | Amber | imperative syntax close to native RecurLoop semantics | primarily phrase composition and ordinary RecurLoop expressions/functions |
-| Prolog | logical variables, unification, choice points and backtracking | a Prolog-specific parser and logical runtime written in RecurLoop |
-| Haskell | currying, algebraic data, pattern matching and call-by-need | a Haskell-specific parser and lazy runtime written in RecurLoop |
-| Erlang | actors, single-assignment matching, mailboxes and selective receive | an Erlang-specific parser and cooperative actor runtime written in RecurLoop |
+| Prolog | logical variables, unification, choice points and backtracking | phrase-backed recognition and a logical runtime written in RecurLoop |
+| Haskell | currying, algebraic data, pattern matching and call-by-need | phrase-backed recognition and a lazy runtime written in RecurLoop |
+| Erlang | actors, single-assignment matching, mailboxes and selective receive | phrase-backed recognition and a cooperative actor runtime written in RecurLoop |
 
 New language implementations must recognize grammar through the active phrase
 lexicon and longest matching, then lower to native compiler operations. Temporary
@@ -536,7 +536,8 @@ phrase-defined delimiters, keyword aliases and operator precedence.
 
 The Prolog, Haskell and Erlang examples below are **legacy interpreter
 experiments**. Moving their parsers and evaluators into `.rl` did not make them
-native language compilers. They remain regression fixtures pending native
+native language compilers. Their syntax recognition now uses mutable phrase
+grammars and shared longest matching. They remain regression fixtures pending native
 lowering; they should not serve as templates for new language implementations.
 
 These experiments have also exposed a common architectural boundary: a foreign

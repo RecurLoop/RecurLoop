@@ -57,6 +57,7 @@ run_fail() {
 }
 
 run_ok arithmetic '42'
+run_ok phrase-grammar 'answer=42.}, precedence=14, right=8'
 run_ok function-clauses '5050'
 run_ok tuple-pattern '42'
 run_ok ping-pong 'pong'

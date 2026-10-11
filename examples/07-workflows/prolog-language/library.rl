@@ -1,3 +1,6 @@
+import "language-kit"
+languagekit_native_begin
+
 // =============================================================================
 // RecurLoop Prolog compatibility experiment
 //
@@ -43,6 +46,38 @@ let Prolog:Builtins = phrase { dictionary = true permanent = true }
 let Prolog:Operators = phrase { dictionary = true permanent = true }
 let Prolog:Grammar = phrase { dictionary = true permanent = true }
 
+// Syntax spellings and aliases belong to this mutable phrase dictionary.
+let Prolog:Grammar:Tokens = phrase { dictionary = true }
+let Prolog:grammar = fn (state:Context*) -> u64 {
+    let root = context:phrase:find(state, "Prolog")
+    let grammar = context:phrase:find:exact(state, root, "Grammar")
+    return context:phrase:find:exact(state, grammar, "Tokens")
+}
+let Prolog:install_tokens = phrase {
+    type = <phrase-types:elaborate>
+    serializable = false
+    action = fn (state:Context*, called:Phrase*) -> void {
+        let grammar = Prolog:grammar(state)
+        LanguageKit:define_token(state, grammar, "(", 5)
+        LanguageKit:define_token(state, grammar, ")", 5)
+        LanguageKit:define_token(state, grammar, "[", 5)
+        LanguageKit:define_token(state, grammar, "]", 5)
+        LanguageKit:define_token(state, grammar, ",", 5)
+        LanguageKit:define_token(state, grammar, "|", 4)
+        LanguageKit:define_token(state, grammar, ".", 5)
+        LanguageKit:define_token(state, grammar, "=", 4)
+        LanguageKit:define_token(state, grammar, ":-", 4)
+        LanguageKit:define_token(state, grammar, "-", 4)
+        LanguageKit:define_token(state, grammar, "_", 1)
+        LanguageKit:define_token(state, grammar, "//", 4)
+        context:source:root(state)
+    }
+}
+let prolog_install_tokens = <Prolog:install_tokens>
+prolog_install_tokens
+set prolog_install_tokens.serializable = false
+let Prolog:Grammar:Tokens:"%" = <Prolog:Grammar:Tokens:"//">
+
 // =============================================================================
 // Small allocation/string helpers.
 // =============================================================================
@@ -61,24 +96,12 @@ let Prolog:copy_text = fn (source:u8*) -> u8* {
     return Prolog:copy_bytes(source, cast(i64, strlen(source)))
 }
 
-let Prolog:is_space = fn (ch:u8) -> i64 {
-    return ch == 32 || ch == 9 || ch == 10 || ch == 13
-}
-
-let Prolog:is_lower = fn (ch:u8) -> i64 {
-    return ch >= 97 && ch <= 122
-}
-
 let Prolog:is_upper = fn (ch:u8) -> i64 {
     return ch >= 65 && ch <= 90
 }
 
 let Prolog:is_digit = fn (ch:u8) -> i64 {
     return ch >= 48 && ch <= 57
-}
-
-let Prolog:is_ident_continue = fn (ch:u8) -> i64 {
-    return Prolog:is_lower(ch) || Prolog:is_upper(ch) || Prolog:is_digit(ch) || ch == 95
 }
 
 // State-local pointers are created only after an imported language image starts
@@ -283,6 +306,7 @@ record Prolog:Parser {
     vars_head:Prolog:VarEntry*
     vars_tail:Prolog:VarEntry*
     error:i64
+    reader:LanguageKit:SliceReader*
 }
 
 record Prolog:Clause {
@@ -308,6 +332,8 @@ let Prolog:Parser:new = fn (state:Context*, source:u8*) -> Prolog:Parser* {
     self.vars_head = cast(Prolog:VarEntry*, 0)
     self.vars_tail = cast(Prolog:VarEntry*, 0)
     self.error = 0
+    self.reader = LanguageKit:SliceReader:new_phrases(state, Prolog:grammar(state), source, self.length, 72)
+    if !self.reader { free(cast(u8*, self)); return cast(Prolog:Parser*, 0) }
     return self
 }
 
@@ -318,94 +344,50 @@ let Prolog:Parser:fail = fn (self:Prolog:Parser*, message:u8*) -> void {
     }
 }
 
+// The position is the committed byte offset. Recognition is non-consuming;
+// only consume/match transfers the longest token's complete extent.
 let Prolog:Parser:skip = fn (self:Prolog:Parser*) -> void {
-    var again = 1
-    while again {
-        again = 0
-        while self.position < self.length && Prolog:is_space(self.source[self.position]) {
-            self.position += 1
-        }
-        if self.position < self.length && self.source[self.position] == 37 {
-            while self.position < self.length && self.source[self.position] != 10 {
-                self.position += 1
-            }
-            again = 1
-        }
-    }
+    self.reader.clear()
+    self.reader.position = self.position
+    self.reader.skip_trivia()
+    self.position = self.reader.position
+    if self.reader.error { self.error = 1 }
 }
 
-let Prolog:Parser:peek = fn (self:Prolog:Parser*) -> u8 {
-    self.skip()
-    if self.position >= self.length { return cast(u8, 0) }
-    return self.source[self.position]
+let Prolog:Parser:token = fn (self:Prolog:Parser*) -> LanguageKit:SliceReader* {
+    Prolog:Parser:skip(self)
+    self.reader.scan()
+    if self.reader.error { self.error = 1 }
+    return self.reader
 }
 
-let Prolog:Parser:match_byte = fn (self:Prolog:Parser*, expected:u8) -> i64 {
-    self.skip()
-    if self.position < self.length && self.source[self.position] == expected {
-        self.position += 1
-        return 1
-    }
-    return 0
+let Prolog:Parser:kind = fn (self:Prolog:Parser*) -> i64 { return Prolog:Parser:token(self).kind }
+let Prolog:Parser:is = fn (self:Prolog:Parser*, text:u8*) -> i64 { return Prolog:Parser:token(self).is(text) }
+let Prolog:Parser:consume = fn (self:Prolog:Parser*) -> void {
+    let token = Prolog:Parser:token(self)
+    self.position = token.position
+    token.clear()
 }
-
-let Prolog:Parser:match_pair = fn (self:Prolog:Parser*, first:u8, second:u8) -> i64 {
-    self.skip()
-    if self.position + 1 < self.length && self.source[self.position] == first && self.source[self.position + 1] == second {
-        self.position += 2
-        return 1
-    }
-    return 0
+let Prolog:Parser:match = fn (self:Prolog:Parser*, text:u8*) -> i64 {
+    if !Prolog:Parser:is(self, text) { return 0 }
+    Prolog:Parser:consume(self)
+    return 1
 }
 
 let Prolog:Parser:identifier = fn (self:Prolog:Parser*) -> u8* {
-    self.skip()
-    if self.position >= self.length { return cast(u8*, 0) }
-    let first = self.source[self.position]
-    if !(Prolog:is_lower(first) || Prolog:is_upper(first) || first == 95) {
-        return cast(u8*, 0)
-    }
-    let start = self.position
-    self.position += 1
-    while self.position < self.length && Prolog:is_ident_continue(self.source[self.position]) {
-        self.position += 1
-    }
-    return Prolog:copy_bytes(&self.source[start], self.position - start)
+    let token = Prolog:Parser:token(self)
+    if token.kind != 1 { return cast(u8*, 0) }
+    self.position = token.position
+    return token.take_text()
 }
 
-let Prolog:Parser:quoted_atom = fn (self:Prolog:Parser*) -> u8* {
-    self.skip()
-    if self.position >= self.length || self.source[self.position] != 39 {
-        return cast(u8*, 0)
-    }
-    self.position += 1
-    let capacity = self.length - self.position + 1
-    let out = malloc(capacity)
-    if !out { self.fail("Prolog: out of memory while parsing quoted atom"); return cast(u8*, 0) }
-    var length = 0
-    var closed = 0
-    while self.position < self.length && !closed {
-        let ch = self.source[self.position]
-        if ch == 92 && self.position + 1 < self.length {
-            out[length] = self.source[self.position + 1]
-            length += 1
-            self.position += 2
-        } else if ch == 39 {
-            self.position += 1
-            closed = 1
-        } else {
-            out[length] = ch
-            length += 1
-            self.position += 1
-        }
-    }
-    if !closed {
-        free(out)
-        self.fail("Prolog: unterminated quoted atom")
-        return cast(u8*, 0)
-    }
-    out[length] = 0
-    return out
+let Prolog:Parser:integer = fn (self:Prolog:Parser*) -> i64 {
+    let token = Prolog:Parser:token(self)
+    let value = token.number_of()
+    if token.kind != 2 { Prolog:Parser:fail(self, "Prolog: expected integer"); return 0 }
+    self.position = token.position
+    token.clear()
+    return value
 }
 
 let Prolog:Parser:add_variable = fn (self:Prolog:Parser*, term:Prolog:Term*) -> i64 {
@@ -488,13 +470,12 @@ let Prolog:Parser:parse_term = fn (self:Prolog:Parser*) -> Prolog:Term* {
         return cast(Prolog:Term*, 0)
     }
 
-    let ch = self.source[self.position]
+    let kind = Prolog:Parser:kind(self)
 
     // Lists are encoded as the ordinary Prolog '.'/2 functor and [] atom.
-    if ch == 91 {
-        self.position += 1
+    if Prolog:Parser:match(self, "[") {
         self.skip()
-        if self.match_byte(cast(u8, 93)) {
+        if Prolog:Parser:match(self, "]") {
             return Prolog:Term:atom(self.state, "[]")
         }
 
@@ -511,15 +492,15 @@ let Prolog:Parser:parse_term = fn (self:Prolog:Parser*) -> Prolog:Term* {
                 done = 1
             } else {
                 self.skip()
-                if self.match_byte(cast(u8, 44)) {
+                if Prolog:Parser:match(self, ",") {
                     // another element
-                } else if self.match_byte(cast(u8, 124)) {
+                } else if Prolog:Parser:match(self, "|") {
                     tail = self.parse_term()
-                    if !self.match_byte(cast(u8, 93)) {
+                    if !Prolog:Parser:match(self, "]") {
                         self.fail("Prolog: expected ']' after list tail")
                     }
                     done = 1
-                } else if self.match_byte(cast(u8, 93)) {
+                } else if Prolog:Parser:match(self, "]") {
                     tail = Prolog:Term:atom(self.state, "[]")
                     done = 1
                 } else {
@@ -562,33 +543,33 @@ let Prolog:Parser:parse_term = fn (self:Prolog:Parser*) -> Prolog:Term* {
         return tail
     }
 
-    // Signed decimal integers.
-    if Prolog:is_digit(ch) || (ch == 45 && self.position + 1 < self.length && Prolog:is_digit(self.source[self.position + 1])) {
+    if kind == 2 || Prolog:Parser:is(self, "-") {
         var sign = 1
-        if ch == 45 { sign = -1; self.position += 1 }
-        var number = 0
-        while self.position < self.length && Prolog:is_digit(self.source[self.position]) {
-            number = number * 10 + self.source[self.position] - 48
-            self.position += 1
-        }
-        return Prolog:Term:integer(number * sign)
+        if Prolog:Parser:match(self, "-") { sign = -1 }
+        return Prolog:Term:integer(Prolog:Parser:integer(self) * sign)
     }
 
+    let quoted = kind == 3
+    let anonymous = !quoted && Prolog:Parser:is(self, "_")
     var name = cast(u8*, 0)
-    if ch == 39 { name = self.quoted_atom() }
-    else { name = self.identifier() }
+    if quoted {
+        let token = Prolog:Parser:token(self)
+        self.position = token.position
+        name = token.take_text()
+    } else { name = self.identifier() }
     if !name {
         self.fail("Prolog: expected atom, variable, integer, compound term or list")
         return cast(Prolog:Term*, 0)
     }
 
-    let variable = Prolog:is_upper(name[0]) || name[0] == 95
+    if anonymous { free(name); name = Prolog:copy_text("_") }
+    let variable = !quoted && (anonymous || Prolog:is_upper(name[0]) || name[0] == 95)
     if variable {
         return self.variable_owned(name)
     }
 
     self.skip()
-    if !self.match_byte(cast(u8, 40)) {
+    if !Prolog:Parser:match(self, "(") {
         return Prolog:Term:atom_owned(self.state, name)
     }
 
@@ -596,7 +577,7 @@ let Prolog:Parser:parse_term = fn (self:Prolog:Parser*) -> Prolog:Term* {
     var count = 0
     var capacity = 0
     self.skip()
-    if !self.match_byte(cast(u8, 41)) {
+    if !Prolog:Parser:match(self, ")") {
         var done = 0
         while !done && !self.error {
             let arg = self.parse_term()
@@ -605,9 +586,9 @@ let Prolog:Parser:parse_term = fn (self:Prolog:Parser*) -> Prolog:Term* {
             } else if !Prolog:Parser:append_term(&args, &count, &capacity, arg) {
                 self.fail("Prolog: out of memory while parsing compound term")
                 done = 1
-            } else if self.match_byte(cast(u8, 44)) {
+            } else if Prolog:Parser:match(self, ",") {
                 // another argument
-            } else if self.match_byte(cast(u8, 41)) {
+            } else if Prolog:Parser:match(self, ")") {
                 done = 1
             } else {
                 self.fail("Prolog: expected ',' or ')' in compound term")
@@ -630,7 +611,7 @@ let Prolog:Parser:parse_goal = fn (self:Prolog:Parser*) -> Prolog:Term* {
     let left = self.parse_term()
     if !left { return cast(Prolog:Term*, 0) }
     self.skip()
-    if self.match_byte(cast(u8, 61)) {
+    if Prolog:Parser:match(self, "=") {
         let right = self.parse_term()
         if !right { Prolog:Term:destroy_tree(left); return cast(Prolog:Term*, 0) }
         let args = cast(Prolog:Term**, malloc(2 * sizeof(Prolog:Term*)))
@@ -667,9 +648,9 @@ let Prolog:Parser:parse_goals_until_dot = fn (self:Prolog:Parser*) -> Prolog:Goa
                 else { head = goal }
                 tail = goal
                 self.skip()
-                if self.match_byte(cast(u8, 44)) {
+                if Prolog:Parser:match(self, ",") {
                     // another conjunct
-                } else if self.match_byte(cast(u8, 46)) {
+                } else if Prolog:Parser:match(self, ".") {
                     done = 1
                 } else {
                     self.fail("Prolog: expected ',' or '.' after goal")
@@ -696,13 +677,13 @@ let Prolog:Parser:parse_clause = fn (self:Prolog:Parser*) -> Prolog:Clause* {
 
     var body = cast(Prolog:Goal*, 0)
     self.skip()
-    if self.match_pair(cast(u8, 58), cast(u8, 45)) {
+    if Prolog:Parser:match(self, ":-") {
         body = self.parse_goals_until_dot()
         if self.error {
             Prolog:Term:destroy_tree(head)
             return cast(Prolog:Clause*, 0)
         }
-    } else if !self.match_byte(cast(u8, 46)) {
+    } else if !Prolog:Parser:match(self, ".") {
         self.fail("Prolog: expected ':-' or '.' after clause head")
         Prolog:Term:destroy_tree(head)
         return cast(Prolog:Clause*, 0)
@@ -758,6 +739,7 @@ let Prolog:Parser:parse_query = fn (self:Prolog:Parser*) -> Prolog:Query* {
 let Prolog:Parser:destroy = fn (self:Prolog:Parser*) -> void {
     if !self { return }
     if self.vars_head { Prolog:VarEntry:destroy_all(self.vars_head) }
+    self.reader.destroy()
     free(cast(u8*, self))
 }
 
@@ -1124,98 +1106,8 @@ let Prolog:run_query = fn (state:Context*, source:u8*) -> i64 {
 // Source statement capture.
 // =============================================================================
 
-// Find the first statement-ending '.' outside comments, quoted atoms,
-// parentheses and lists. Returns the byte count including '.', or -1.
-let Prolog:statement_end = fn (source:u8*, bytes:i64) -> i64 {
-    var i = 0
-    var parens = 0
-    var brackets = 0
-    var quoted = 0
-    var comment = 0
-    while i < bytes {
-        let ch = source[i]
-        if comment {
-            if ch == 10 { comment = 0 }
-            i += 1
-        } else if quoted {
-            if ch == 92 && i + 1 < bytes { i += 2 }
-            else {
-                if ch == 39 { quoted = 0 }
-                i += 1
-            }
-        } else if ch == 37 {
-            comment = 1
-            i += 1
-        } else if ch == 39 {
-            quoted = 1
-            i += 1
-        } else {
-            if ch == 40 { parens += 1 }
-            else if ch == 41 { parens -= 1 }
-            else if ch == 91 { brackets += 1 }
-            else if ch == 93 { brackets -= 1 }
-            else if ch == 46 && parens == 0 && brackets == 0 { return i + 1 }
-            i += 1
-        }
-    }
-    return -1
-}
-
-let Prolog:only_trivia = fn (source:u8*, bytes:i64) -> i64 {
-    var i = 0
-    while i < bytes {
-        if Prolog:is_space(source[i]) { i += 1 }
-        else if source[i] == 37 {
-            while i < bytes && source[i] != 10 { i += 1 }
-        } else { return 0 }
-    }
-    return 1
-}
-
-let Prolog:current_line_is_comment = fn (state:Context*) -> i64 {
-    let source = cast(u8*, context:source:data(state))
-    let bytes = context:source:bytes(state)
-    var i = 0
-    while i < bytes && (source[i] == 32 || source[i] == 9 || source[i] == 13) { i += 1 }
-    return i < bytes && source[i] == 37
-}
-
-let Prolog:consume_current_line = fn (state:Context*) -> void {
-    let source = cast(u8*, context:source:data(state))
-    let bytes = context:source:bytes(state)
-    var i = 0
-    while i < bytes && source[i] != 10 && source[i] != 13 { i += 1 }
-    if i < bytes && source[i] == 13 {
-        i += 1
-        if i < bytes && source[i] == 10 { i += 1 }
-    } else if i < bytes && source[i] == 10 { i += 1 }
-    context:source:advance(state, i)
-}
-
 let Prolog:capture_statement = fn (state:Context*) -> u8* {
-    // Files used as language inputs are intentionally bounded to 1 MiB per
-    // top-level statement for this experiment. `ensure` streams additional
-    // lines into the current source window before we scan for the final '.'.
-    context:source:ensure(state, 1048576)
-    let source = cast(u8*, context:source:data(state))
-    let bytes = context:source:bytes(state)
-    if bytes <= 0 { return cast(u8*, 0) }
-    let finish = Prolog:statement_end(source, bytes)
-    if finish < 0 {
-        if Prolog:only_trivia(source, bytes) {
-            context:source:advance(state, bytes)
-            return cast(u8*, 0)
-        }
-        context:diagnostic:error(state, "Prolog: expected '.' to terminate statement")
-        return cast(u8*, 0)
-    }
-    let text = Prolog:copy_bytes(source, finish)
-    if !text {
-        context:diagnostic:error(state, "Prolog: out of memory while capturing statement")
-        return cast(u8*, 0)
-    }
-    context:source:advance(state, finish)
-    return text
+    return LanguageKit:Source:take_form(state, Prolog:grammar(state), ".", 72, 39, 1)
 }
 
 // =============================================================================
@@ -1242,14 +1134,6 @@ let Prolog:top_clause = phrase {
     type = <phrase-types:elaborate>
     permanent = true
     action = fn (state:Context*, called:Phrase*) -> void {
-        // A standalone `% ...` line is consumed as trivia and then control is
-        // returned to the root dictionary. This matters when the following
-        // line begins with the explicit `?-` query phrase.
-        if Prolog:current_line_is_comment(state) {
-            Prolog:consume_current_line(state)
-            context:source:root(state)
-            return
-        }
         let source = Prolog:capture_statement(state)
         if source {
             let database = Prolog:database(state)
@@ -1269,18 +1153,12 @@ let Prolog:assert_symbol_phrase = phrase {
     type = <phrase-types:elaborate>
     permanent = true
     action = fn (state:Context*, called:Phrase*) -> void {
-        context:source:ensure(state, 4096)
-        let source = cast(u8*, context:source:data(state))
-        let bytes = context:source:bytes(state)
-        var i = 0
-        while i < bytes && Prolog:is_space(source[i]) { i += 1 }
-        let cs = i
-        while i < bytes && Prolog:is_ident_continue(source[i]) { i += 1 }
-        let category = Prolog:copy_bytes(&source[cs], i - cs)
-        while i < bytes && Prolog:is_space(source[i]) { i += 1 }
-        let ns = i
-        while i < bytes && !Prolog:is_space(source[i]) { i += 1 }
-        let name = Prolog:copy_bytes(&source[ns], i - ns)
+        let reader = LanguageKit:Reader:new_phrases(state, Prolog:grammar(state), 73)
+        if !reader { return }
+        defer reader.destroy()
+        let category = reader.take_identifier()
+        var name = cast(u8*, 0)
+        if reader.kind_of() && reader.kind_of() != 6 { name = reader.take_text() }
         var owner = cast(u8*, 0)
         if category {
             if strcmp(category, "predicate") == 0 { owner = "Predicates" }
@@ -1296,9 +1174,7 @@ let Prolog:assert_symbol_phrase = phrase {
         }
         if category { free(category) }
         if name { free(name) }
-        while i < bytes && source[i] != 10 && source[i] != 13 { i += 1 }
-        if i < bytes { i += 1 }
-        context:source:advance(state, i)
+        LanguageKit:Source:skip_line(state)
         context:source:root(state)
     }
 }
@@ -1326,5 +1202,7 @@ set strlen.serializable = false
 set strcmp.serializable = false
 set printf.serializable = false
 set install_prolog_fallback.serializable = false
+
+languagekit_native_end
 
 engine export "/tmp/recurloop-prolog-library.rli"

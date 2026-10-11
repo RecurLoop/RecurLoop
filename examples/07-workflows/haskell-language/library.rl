@@ -1,3 +1,6 @@
+import "language-kit"
+languagekit_native_begin
+
 // =============================================================================
 // RecurLoop Haskell compatibility experiment
 //
@@ -51,6 +54,46 @@ let Haskell:Types = phrase { dictionary = true permanent = true }
 let Haskell:Variables = phrase { dictionary = true permanent = true }
 let Haskell:Builtins = phrase { dictionary = true permanent = true }
 let Haskell:Grammar = phrase { dictionary = true permanent = true }
+
+// Syntax spellings and aliases belong to this mutable phrase dictionary.
+let Haskell:Grammar:Tokens = phrase { dictionary = true }
+let Haskell:grammar = fn (state:Context*) -> u64 {
+    let root = context:phrase:find(state, "Haskell")
+    let grammar = context:phrase:find:exact(state, root, "Grammar")
+    return context:phrase:find:exact(state, grammar, "Tokens")
+}
+let Haskell:install_tokens = phrase {
+    type = <phrase-types:elaborate>
+    serializable = false
+    action = fn (state:Context*, called:Phrase*) -> void {
+        let grammar = Haskell:grammar(state)
+        LanguageKit:define_token(state, grammar, "(", 5)
+        LanguageKit:define_token(state, grammar, ")", 5)
+        LanguageKit:define_token(state, grammar, "[", 5)
+        LanguageKit:define_token(state, grammar, "]", 5)
+        LanguageKit:define_token(state, grammar, ",", 5)
+        LanguageKit:define_token(state, grammar, ":", 4)
+        LanguageKit:define_token(state, grammar, "::", 4)
+        LanguageKit:define_token(state, grammar, "=", 4)
+        LanguageKit:define_token(state, grammar, "|", 4)
+        LanguageKit:define_token(state, grammar, "+", 4)
+        LanguageKit:define_token(state, grammar, "-", 4)
+        LanguageKit:define_token(state, grammar, "*", 4)
+        LanguageKit:define_token(state, grammar, "data", 1)
+        LanguageKit:define_token(state, grammar, "_", 1)
+        LanguageKit:define_token(state, grammar, "//", 4)
+        LanguageKit:define_infix(state, grammar, "+", 1, 10, 0)
+        LanguageKit:define_infix(state, grammar, "-", 2, 10, 0)
+        LanguageKit:define_infix(state, grammar, "*", 3, 20, 0)
+        LanguageKit:define_infix(state, grammar, ":", 4, 5, 1)
+        context:source:root(state)
+    }
+}
+let haskell_install_tokens = <Haskell:install_tokens>
+haskell_install_tokens
+set haskell_install_tokens.serializable = false
+let Haskell:Grammar:Tokens:"--" = <Haskell:Grammar:Tokens:"//">
+
 let Haskell:Env = phrase { dictionary = true permanent = true }
 
 // =============================================================================
@@ -82,20 +125,8 @@ let Haskell:concat = fn (left:u8*, right:u8*) -> u8* {
     return out
 }
 
-let Haskell:is_space = fn (ch:u8) -> i64 {
-    return ch == 32 || ch == 9 || ch == 10 || ch == 13
-}
-
-let Haskell:is_alpha = fn (ch:u8) -> i64 {
-    return (ch >= 65 && ch <= 90) || (ch >= 97 && ch <= 122)
-}
-
 let Haskell:is_upper = fn (ch:u8) -> i64 { return ch >= 65 && ch <= 90 }
 let Haskell:is_digit = fn (ch:u8) -> i64 { return ch >= 48 && ch <= 57 }
-
-let Haskell:is_ident_continue = fn (ch:u8) -> i64 {
-    return Haskell:is_alpha(ch) || Haskell:is_digit(ch) || ch == 95 || ch == 39
-}
 
 let Haskell:text_number = fn (text:u8*) -> i64 {
     if !text { return 0 }
@@ -165,7 +196,6 @@ let Haskell:symbol_in = fn (state:Context*, category:u8*, name:u8*) -> i64 {
 // AST, patterns and runtime objects.
 // =============================================================================
 
-
 record Haskell:Expr {
     kind:i64
     number:i64
@@ -175,7 +205,6 @@ record Haskell:Expr {
     right:Haskell:Expr*
 }
 
-
 record Haskell:Pattern {
     kind:i64
     number:i64
@@ -184,7 +213,6 @@ record Haskell:Pattern {
     arity:i64
     args:Haskell:Pattern**
 }
-
 
 record Haskell:Value {
     kind:i64
@@ -206,14 +234,12 @@ record Haskell:Thunk {
     forcing:i64
 }
 
-
 record Haskell:EnvEntry {
     name:u8*
     symbol:i64
     thunk:u8*
     next:Haskell:EnvEntry*
 }
-
 
 record Haskell:Equation {
     name:u8*
@@ -223,7 +249,6 @@ record Haskell:Equation {
     body:Haskell:Expr*
     next:Haskell:Equation*
 }
-
 
 record Haskell:ConstructorDef {
     name:u8*
@@ -483,6 +508,7 @@ record Haskell:Parser {
     length:i64
     position:i64
     error:i64
+    reader:LanguageKit:SliceReader*
 }
 
 let Haskell:Parser:new = fn (state:Context*, database:Haskell:Database*, source:u8*) -> Haskell:Parser* {
@@ -494,6 +520,8 @@ let Haskell:Parser:new = fn (state:Context*, database:Haskell:Database*, source:
     self.length = cast(i64, strlen(source))
     self.position = 0
     self.error = 0
+    self.reader = LanguageKit:SliceReader:new_phrases(state, Haskell:grammar(state), source, self.length, 24)
+    if !self.reader { free(cast(u8*, self)); return cast(Haskell:Parser*, 0) }
     return self
 }
 
@@ -501,77 +529,80 @@ let Haskell:Parser:fail = fn (self:Haskell:Parser*, message:u8*) -> void {
     if !self.error { self.error = 1; context:diagnostic:error(self.state, message) }
 }
 
+let Haskell:Parser:destroy = fn (self:Haskell:Parser*) -> void {
+    if !self { return }
+    self.reader.destroy()
+    free(cast(u8*, self))
+}
+
+// The position is the committed byte offset. Recognition is non-consuming;
+// only consume/match transfers the longest token's complete extent.
 let Haskell:Parser:skip = fn (self:Haskell:Parser*) -> void {
-    while self.position < self.length && Haskell:is_space(self.source[self.position]) { self.position += 1 }
+    self.reader.clear()
+    self.reader.position = self.position
+    self.reader.skip_trivia()
+    self.position = self.reader.position
+    if self.reader.error { self.error = 1 }
 }
 
-let Haskell:Parser:peek = fn (self:Haskell:Parser*) -> u8 {
+let Haskell:Parser:token = fn (self:Haskell:Parser*) -> LanguageKit:SliceReader* {
     Haskell:Parser:skip(self)
-    if self.position >= self.length { return cast(u8, 0) }
-    return self.source[self.position]
+    self.reader.scan()
+    if self.reader.error { self.error = 1 }
+    return self.reader
 }
 
-let Haskell:Parser:match = fn (self:Haskell:Parser*, ch:u8) -> i64 {
-    Haskell:Parser:skip(self)
-    if self.position < self.length && self.source[self.position] == ch { self.position += 1; return 1 }
-    return 0
+let Haskell:Parser:kind = fn (self:Haskell:Parser*) -> i64 { return Haskell:Parser:token(self).kind }
+let Haskell:Parser:is = fn (self:Haskell:Parser*, text:u8*) -> i64 { return Haskell:Parser:token(self).is(text) }
+let Haskell:Parser:consume = fn (self:Haskell:Parser*) -> void {
+    let token = Haskell:Parser:token(self)
+    self.position = token.position
+    token.clear()
 }
-
-let Haskell:Parser:match_pair = fn (self:Haskell:Parser*, a:u8, b:u8) -> i64 {
-    Haskell:Parser:skip(self)
-    if self.position + 1 < self.length && self.source[self.position] == a && self.source[self.position + 1] == b {
-        self.position += 2
-        return 1
-    }
-    return 0
+let Haskell:Parser:match = fn (self:Haskell:Parser*, text:u8*) -> i64 {
+    if !Haskell:Parser:is(self, text) { return 0 }
+    Haskell:Parser:consume(self)
+    return 1
 }
 
 let Haskell:Parser:identifier = fn (self:Haskell:Parser*) -> u8* {
-    Haskell:Parser:skip(self)
-    if self.position >= self.length { return cast(u8*, 0) }
-    let first = self.source[self.position]
-    if !(Haskell:is_alpha(first) || first == 95) { return cast(u8*, 0) }
-    let start = self.position
-    self.position += 1
-    while self.position < self.length && Haskell:is_ident_continue(self.source[self.position]) { self.position += 1 }
-    return Haskell:copy_bytes(&self.source[start], self.position - start)
+    let token = Haskell:Parser:token(self)
+    if token.kind != 1 { return cast(u8*, 0) }
+    self.position = token.position
+    return token.take_text()
 }
 
-let Haskell:Parser:number = fn (self:Haskell:Parser*) -> Haskell:Expr* {
-    Haskell:Parser:skip(self)
-    if self.position >= self.length || !Haskell:is_digit(self.source[self.position]) { return cast(Haskell:Expr*, 0) }
-    var value = 0
-    while self.position < self.length && Haskell:is_digit(self.source[self.position]) {
-        value = value * 10 + self.source[self.position] - 48
-        self.position += 1
-    }
-    return Haskell:Expr:integer(value)
+let Haskell:Parser:integer = fn (self:Haskell:Parser*) -> i64 {
+    let token = Haskell:Parser:token(self)
+    let value = token.number_of()
+    if token.kind != 2 { Haskell:Parser:fail(self, "Haskell: expected integer"); return 0 }
+    self.position = token.position
+    token.clear()
+    return value
 }
 
 let Haskell:Parser:starts_atom = fn (self:Haskell:Parser*) -> i64 {
-    Haskell:Parser:skip(self)
-    if self.position >= self.length { return 0 }
-    let ch = self.source[self.position]
-    return Haskell:is_alpha(ch) || Haskell:is_digit(ch) || ch == 95 || ch == 40 || ch == 91
+    let kind = Haskell:Parser:kind(self)
+    return kind == 1 || kind == 2 || Haskell:Parser:is(self, "(") || Haskell:Parser:is(self, "[")
 }
 
 let Haskell:Parser:parse_expr_mode = fn (self:Haskell:Parser*, mode:i64) -> Haskell:Expr* {
-    // mode 0: cons, 1: add/sub, 2: multiply, 3: application, 4: atom
+    // mode 0: expression, negative: binding power, 3: application, 4: atom
     if mode == 4 {
         Haskell:Parser:skip(self)
-        let ch = Haskell:Parser:peek(self)
-        if Haskell:is_digit(ch) { return Haskell:Parser:number(self) }
-        if Haskell:is_alpha(ch) || ch == 95 {
+        let kind = Haskell:Parser:kind(self)
+        if kind == 2 { return Haskell:Expr:integer(Haskell:Parser:integer(self)) }
+        if kind == 1 {
             let name = Haskell:Parser:identifier(self)
             return Haskell:Expr:name_owned(self.state, name)
         }
-        if Haskell:Parser:match(self, 40) {
+        if Haskell:Parser:match(self, "(") {
             let expr = Haskell:Parser:parse_expr_mode(self, 0)
-            if !Haskell:Parser:match(self, 41) { Haskell:Parser:fail(self, "Haskell: expected ')'") }
+            if !Haskell:Parser:match(self, ")") { Haskell:Parser:fail(self, "Haskell: expected ')'") }
             return expr
         }
-        if Haskell:Parser:match(self, 91) {
-            if Haskell:Parser:match(self, 93) { return Haskell:Expr:name(self.state, "__nil") }
+        if Haskell:Parser:match(self, "[") {
+            if Haskell:Parser:match(self, "]") { return Haskell:Expr:name(self.state, "__nil") }
             let first = Haskell:Parser:parse_expr_mode(self, 0)
             if !first { return cast(Haskell:Expr*, 0) }
             var capacity = 4
@@ -580,7 +611,7 @@ let Haskell:Parser:parse_expr_mode = fn (self:Haskell:Parser*, mode:i64) -> Hask
             if !items { return cast(Haskell:Expr*, 0) }
             items[count] = first
             count += 1
-            while Haskell:Parser:match(self, 44) {
+            while Haskell:Parser:match(self, ",") {
                 if count == capacity {
                     capacity *= 2
                     let replacement = realloc(cast(u8*, items), capacity * sizeof(Haskell:Expr*))
@@ -592,7 +623,7 @@ let Haskell:Parser:parse_expr_mode = fn (self:Haskell:Parser*, mode:i64) -> Hask
                 items[count] = next
                 count += 1
             }
-            if !Haskell:Parser:match(self, 93) {
+            if !Haskell:Parser:match(self, "]") {
                 Haskell:Parser:fail(self, "Haskell: expected ']' in list literal")
                 return cast(Haskell:Expr*, 0)
             }
@@ -627,37 +658,31 @@ let Haskell:Parser:parse_expr_mode = fn (self:Haskell:Parser*, mode:i64) -> Hask
         return expr
     }
 
-    if mode == 2 {
-        var left = Haskell:Parser:parse_expr_mode(self, 3)
-        var scanning = 1
-        while scanning {
-            if Haskell:Parser:match(self, 42) {
-                let right = Haskell:Parser:parse_expr_mode(self, 3)
-                left = Haskell:Expr:binary(self.state, "__mul", left, right)
-            } else { scanning = 0 }
+    // Nonpositive modes encode the minimum binding power. Primary/application
+    // parsing remains recursive, while every infix decision comes from phrases.
+    let minimum = 0 - mode
+    var left = Haskell:Parser:parse_expr_mode(self, 3)
+    if !left { return left }
+    var scanning = 1
+    while scanning {
+        let token = Haskell:Parser:token(self)
+        let operation = LanguageKit:infix_value(self.state, token.phrase, 0)
+        let precedence = LanguageKit:infix_value(self.state, token.phrase, 1)
+        if !operation || precedence < minimum { scanning = 0 }
+        else {
+            let right_associative = LanguageKit:infix_value(self.state, token.phrase, 2)
+            Haskell:Parser:consume(self)
+            var next = precedence + 1
+            if right_associative { next = precedence }
+            let right = Haskell:Parser:parse_expr_mode(self, 0 - next)
+            if !right { return cast(Haskell:Expr*, 0) }
+            var name = "__add"
+            if operation == 2 { name = "__sub" }
+            else if operation == 3 { name = "__mul" }
+            else if operation == 4 { name = "__cons" }
+            else if operation != 1 { Haskell:Parser:fail(self, "Haskell: unsupported infix operation"); return cast(Haskell:Expr*, 0) }
+            left = Haskell:Expr:binary(self.state, name, left, right)
         }
-        return left
-    }
-
-    if mode == 1 {
-        var left = Haskell:Parser:parse_expr_mode(self, 2)
-        var scanning = 1
-        while scanning {
-            if Haskell:Parser:match(self, 43) {
-                let right = Haskell:Parser:parse_expr_mode(self, 2)
-                left = Haskell:Expr:binary(self.state, "__add", left, right)
-            } else if Haskell:Parser:match(self, 45) {
-                let right = Haskell:Parser:parse_expr_mode(self, 2)
-                left = Haskell:Expr:binary(self.state, "__sub", left, right)
-            } else { scanning = 0 }
-        }
-        return left
-    }
-
-    let left = Haskell:Parser:parse_expr_mode(self, 1)
-    if Haskell:Parser:match(self, 58) {
-        let right = Haskell:Parser:parse_expr_mode(self, 0)
-        return Haskell:Expr:binary(self.state, "__cons", left, right)
     }
     return left
 }
@@ -666,24 +691,10 @@ let Haskell:Parser:parse_pattern_mode = fn (self:Haskell:Parser*, mode:i64) -> H
     // mode 0: right-associative cons, mode 1: atomic pattern
     if mode == 1 {
         Haskell:Parser:skip(self)
-        let ch = Haskell:Parser:peek(self)
-        if Haskell:is_digit(ch) {
-            var value = 0
-            while self.position < self.length && Haskell:is_digit(self.source[self.position]) {
-                value = value * 10 + self.source[self.position] - 48
-                self.position += 1
-            }
-            return Haskell:Pattern:integer(value)
-        }
-        if ch == 95 {
-            let name = Haskell:Parser:identifier(self)
-            if name && strcmp(name, "_") == 0 {
-                free(name)
-                return Haskell:Pattern:wildcard()
-            }
-            return Haskell:Pattern:variable_owned(self.state, name)
-        }
-        if Haskell:is_alpha(ch) {
+        let kind = Haskell:Parser:kind(self)
+        if kind == 2 { return Haskell:Pattern:integer(Haskell:Parser:integer(self)) }
+        if Haskell:Parser:match(self, "_") { return Haskell:Pattern:wildcard() }
+        if kind == 1 {
             let name = Haskell:Parser:identifier(self)
             if !name { return cast(Haskell:Pattern*, 0) }
             if Haskell:is_upper(name[0]) {
@@ -709,16 +720,16 @@ let Haskell:Parser:parse_pattern_mode = fn (self:Haskell:Parser*, mode:i64) -> H
             }
             return Haskell:Pattern:variable_owned(self.state, name)
         }
-        if Haskell:Parser:match(self, 91) {
-            if !Haskell:Parser:match(self, 93) {
+        if Haskell:Parser:match(self, "[") {
+            if !Haskell:Parser:match(self, "]") {
                 Haskell:Parser:fail(self, "Haskell: only [] is supported directly in patterns")
                 return cast(Haskell:Pattern*, 0)
             }
             return Haskell:Pattern:constructor_owned(self.state, Haskell:copy_text("__nil"), cast(Haskell:Pattern**, 0), 0)
         }
-        if Haskell:Parser:match(self, 40) {
+        if Haskell:Parser:match(self, "(") {
             let first = Haskell:Parser:parse_pattern_mode(self, 0)
-            if !Haskell:Parser:match(self, 41) { Haskell:Parser:fail(self, "Haskell: expected ')' in pattern") }
+            if !Haskell:Parser:match(self, ")") { Haskell:Parser:fail(self, "Haskell: expected ')' in pattern") }
             return first
         }
         Haskell:Parser:fail(self, "Haskell: expected pattern")
@@ -727,7 +738,7 @@ let Haskell:Parser:parse_pattern_mode = fn (self:Haskell:Parser*, mode:i64) -> H
 
     let left = Haskell:Parser:parse_pattern_mode(self, 1)
     if !left { return left }
-    if Haskell:Parser:match(self, 58) {
+    if Haskell:Parser:match(self, ":") {
         let right = Haskell:Parser:parse_pattern_mode(self, 0)
         let args = cast(Haskell:Pattern**, malloc(2 * sizeof(Haskell:Pattern*)))
         if !args { return cast(Haskell:Pattern*, 0) }
@@ -742,23 +753,11 @@ let Haskell:Parser:parse_pattern_mode = fn (self:Haskell:Parser*, mode:i64) -> H
 // Top-level declaration parser.
 // =============================================================================
 
-let Haskell:contains_type_signature = fn (source:u8*) -> i64 {
-    var i = 0
-    let bytes = cast(i64, strlen(source))
-    while i + 1 < bytes {
-        if source[i] == 58 && source[i + 1] == 58 { return 1 }
-        i += 1
-    }
-    return 0
-}
-
 let Haskell:parse_data = fn (state:Context*, database:Haskell:Database*, source:u8*) -> i64 {
     let parser = Haskell:Parser:new(state, database, source)
     if !parser { return 0 }
-    defer free(cast(u8*, parser))
-    let keyword = Haskell:Parser:identifier(parser)
-    if !keyword || strcmp(keyword, "data") != 0 { if keyword { free(keyword) }; return 0 }
-    free(keyword)
+    defer Haskell:Parser:destroy(parser)
+    if !Haskell:Parser:match(parser, "data") { return 0 }
     let type_name = Haskell:Parser:identifier(parser)
     if !type_name { Haskell:Parser:fail(parser, "Haskell: data declaration expects a type name"); return 0 }
     Haskell:categorize_symbol(state, "Types", type_name)
@@ -766,8 +765,8 @@ let Haskell:parse_data = fn (state:Context*, database:Haskell:Database*, source:
     // Skip type variables up to '='.
     var found_equal = 0
     while parser.position < parser.length && !found_equal {
-        if parser.source[parser.position] == 61 { parser.position += 1; found_equal = 1 }
-        else { parser.position += 1 }
+        if Haskell:Parser:match(parser, "=") { found_equal = 1 }
+        else { Haskell:Parser:consume(parser) }
     }
     if !found_equal { Haskell:Parser:fail(parser, "Haskell: data declaration expects '='"); return 0 }
     var parsing = 1
@@ -775,24 +774,25 @@ let Haskell:parse_data = fn (state:Context*, database:Haskell:Database*, source:
         let name = Haskell:Parser:identifier(parser)
         if !name || !Haskell:is_upper(name[0]) { if name { free(name) }; Haskell:Parser:fail(parser, "Haskell: expected constructor name"); return 0 }
         var arity = 0
-        var scan = parser.position
-        var depth = 0
-        var in_token = 0
-        while scan < parser.length {
-            let ch = parser.source[scan]
-            if ch == 40 || ch == 91 { depth += 1; in_token = 0; scan += 1 }
-            else if ch == 41 || ch == 93 { depth -= 1; in_token = 0; scan += 1 }
-            else if ch == 124 && depth == 0 { break }
-            else if Haskell:is_space(ch) { in_token = 0; scan += 1 }
-            else {
-                if !in_token { arity += 1; in_token = 1 }
-                scan += 1
-            }
+        // A field is one grammar atom, or a balanced type application. Count
+        // fields at the outer level, independent of delimiter spellings.
+        while Haskell:Parser:kind(parser) && !Haskell:Parser:is(parser, "|") {
+            arity += 1
+            if Haskell:Parser:is(parser, "(") || Haskell:Parser:is(parser, "[") {
+                var depth = 0
+                var reading = 1
+                while reading {
+                    if Haskell:Parser:is(parser, "(") || Haskell:Parser:is(parser, "[") { depth += 1 }
+                    else if Haskell:Parser:is(parser, ")") || Haskell:Parser:is(parser, "]") { depth -= 1 }
+                    if !Haskell:Parser:kind(parser) { Haskell:Parser:fail(parser, "Haskell: unclosed constructor field type"); return 0 }
+                    Haskell:Parser:consume(parser)
+                    if depth == 0 { reading = 0 }
+                }
+            } else { Haskell:Parser:consume(parser) }
         }
         if !Haskell:Database:add_constructor(database, state, name, arity) { free(name); return 0 }
-        parser.position = scan
         Haskell:Parser:skip(parser)
-        if parser.position < parser.length && parser.source[parser.position] == 124 { parser.position += 1 }
+        if Haskell:Parser:match(parser, "|") { }
         else { parsing = 0 }
     }
     return !parser.error
@@ -801,7 +801,7 @@ let Haskell:parse_data = fn (state:Context*, database:Haskell:Database*, source:
 let Haskell:parse_equation = fn (state:Context*, database:Haskell:Database*, source:u8*) -> Haskell:Equation* {
     let parser = Haskell:Parser:new(state, database, source)
     if !parser { return cast(Haskell:Equation*, 0) }
-    defer free(cast(u8*, parser))
+    defer Haskell:Parser:destroy(parser)
     let name = Haskell:Parser:identifier(parser)
     if !name { Haskell:Parser:fail(parser, "Haskell: expected top-level binding name"); return cast(Haskell:Equation*, 0) }
 
@@ -814,7 +814,7 @@ let Haskell:parse_equation = fn (state:Context*, database:Haskell:Database*, sou
     while scanning {
         Haskell:Parser:skip(parser)
         if parser.position >= parser.length { Haskell:Parser:fail(parser, "Haskell: equation expects '='"); return cast(Haskell:Equation*, 0) }
-        if parser.source[parser.position] == 61 { parser.position += 1; scanning = 0 }
+        if Haskell:Parser:match(parser, "=") { scanning = 0 }
         else {
             let pattern = Haskell:Parser:parse_pattern_mode(parser, 0)
             if !pattern { return cast(Haskell:Equation*, 0) }
@@ -831,7 +831,7 @@ let Haskell:parse_equation = fn (state:Context*, database:Haskell:Database*, sou
     let body = Haskell:Parser:parse_expr_mode(parser, 0)
     if !body || parser.error { return cast(Haskell:Equation*, 0) }
     Haskell:Parser:skip(parser)
-    if parser.position < parser.length && !(parser.position + 1 < parser.length && parser.source[parser.position] == 45 && parser.source[parser.position + 1] == 45) {
+    if Haskell:Parser:kind(parser) {
         Haskell:Parser:fail(parser, "Haskell: unexpected input after expression")
         return cast(Haskell:Equation*, 0)
     }
@@ -1092,28 +1092,6 @@ let Haskell:dispatch = fn (state:Context*, mode:i64, a:i64, b:i64, c:i64) -> i64
 // Feed one top-level Haskell declaration into the runtime.
 // =============================================================================
 
-let Haskell:trim_comment = fn (source:u8*) -> u8* {
-    let bytes = cast(i64, strlen(source))
-    var i = 0
-    while i + 1 < bytes {
-        if source[i] == 45 && source[i + 1] == 45 { return Haskell:copy_bytes(source, i) }
-        i += 1
-    }
-    return Haskell:copy_text(source)
-}
-
-let Haskell:line_is_data = fn (source:u8*) -> i64 {
-    var i = 0
-    while Haskell:is_space(source[i]) { i += 1 }
-    return source[i] == 100 && source[i+1] == 97 && source[i+2] == 116 && source[i+3] == 97 && Haskell:is_space(source[i+4])
-}
-
-let Haskell:line_is_trivia = fn (source:u8*) -> i64 {
-    var i = 0
-    while Haskell:is_space(source[i]) { i += 1 }
-    return source[i] == 0 || (source[i] == 45 && source[i + 1] == 45)
-}
-
 let Haskell:run_main = fn (state:Context*, equation:Haskell:Equation*) -> void {
     let database = Haskell:database(state)
     if !database || database.main_ran { return }
@@ -1123,27 +1101,19 @@ let Haskell:run_main = fn (state:Context*, equation:Haskell:Equation*) -> void {
 }
 
 let Haskell:consume_declaration = fn (state:Context*, source:u8*) -> void {
-    if !source || Haskell:line_is_trivia(source) { return }
+    if !source { return }
     let database = Haskell:database(state)
     if !database { return }
-    let clean = Haskell:trim_comment(source)
-    if !clean { return }
-    defer free(clean)
-    if Haskell:line_is_trivia(clean) { return }
-    if Haskell:contains_type_signature(clean) {
-        let signature_parser = Haskell:Parser:new(state, database, clean)
-        if signature_parser {
-            let signature_name = Haskell:Parser:identifier(signature_parser)
-            if signature_name { Haskell:categorize_symbol(state, "Functions", signature_name); free(signature_name) }
-            free(cast(u8*, signature_parser))
-        }
-        return
-    }
-    if Haskell:line_is_data(clean) {
-        Haskell:parse_data(state, database, clean)
-        return
-    }
-    let equation = Haskell:parse_equation(state, database, clean)
+    let classifier = Haskell:Parser:new(state, database, source)
+    if !classifier { return }
+    defer Haskell:Parser:destroy(classifier)
+    if !Haskell:Parser:kind(classifier) { return }
+    if Haskell:Parser:is(classifier, "data") { Haskell:parse_data(state, database, source); return }
+    let name = Haskell:Parser:identifier(classifier)
+    if !name { Haskell:Parser:fail(classifier, "Haskell: expected declaration name"); return }
+    defer free(name)
+    if Haskell:Parser:match(classifier, "::") { Haskell:categorize_symbol(state, "Functions", name); return }
+    let equation = Haskell:parse_equation(state, database, source)
     if !equation { return }
     Haskell:Database:add_equation(database, equation)
     if equation.arity == 0 && equation.symbol == Haskell:intern_symbol(state, "main") { Haskell:run_main(state, equation) }
@@ -1154,18 +1124,10 @@ let Haskell:consume_declaration = fn (state:Context*, source:u8*) -> void {
 // =============================================================================
 
 let Haskell:capture_line = fn (state:Context*) -> u8* {
-    context:source:ensure(state, 1048576)
-    let source = cast(u8*, context:source:data(state))
-    let bytes = context:source:bytes(state)
-    if bytes <= 0 { return cast(u8*, 0) }
-    var i = 0
-    while i < bytes && source[i] != 10 && source[i] != 13 { i += 1 }
-    let text = Haskell:copy_bytes(source, i)
-    if i < bytes && source[i] == 13 {
-        i += 1
-        if i < bytes && source[i] == 10 { i += 1 }
-    } else if i < bytes && source[i] == 10 { i += 1 }
-    context:source:advance(state, i)
+    if LanguageKit:Source:eof(state) { return cast(u8*, 0) }
+    let length = LanguageKit:Source:line_extent(state)
+    let text = Haskell:copy_bytes(context:source:data(state), length)
+    LanguageKit:Source:skip_line(state)
     return text
 }
 
@@ -1190,7 +1152,7 @@ let Haskell:data_form = phrase {
     }
 }
 
-let data = <Haskell:data_form>
+let "data " = <Haskell:data_form>
 
 let Haskell:top_line = phrase {
     type = <phrase-types:elaborate>
@@ -1206,18 +1168,12 @@ let Haskell:assert_symbol_phrase = phrase {
     type = <phrase-types:elaborate>
     permanent = true
     action = fn (state:Context*, called:Phrase*) -> void {
-        context:source:ensure(state, 4096)
-        let source = cast(u8*, context:source:data(state))
-        let bytes = context:source:bytes(state)
-        var i = 0
-        while i < bytes && Haskell:is_space(source[i]) { i += 1 }
-        let category_start = i
-        while i < bytes && Haskell:is_ident_continue(source[i]) { i += 1 }
-        let category = Haskell:copy_bytes(&source[category_start], i - category_start)
-        while i < bytes && Haskell:is_space(source[i]) { i += 1 }
-        let name_start = i
-        while i < bytes && !Haskell:is_space(source[i]) { i += 1 }
-        let name = Haskell:copy_bytes(&source[name_start], i - name_start)
+        let reader = LanguageKit:Reader:new_phrases(state, Haskell:grammar(state), 25)
+        if !reader { return }
+        defer reader.destroy()
+        let category = reader.take_identifier()
+        var name = cast(u8*, 0)
+        if reader.kind_of() && reader.kind_of() != 6 { name = reader.take_text() }
         if !category || !name { context:diagnostic:error(state, "Haskell: assert-symbol expects CATEGORY NAME") }
         else {
             var owner_name = cast(u8*, 0)
@@ -1234,9 +1190,7 @@ let Haskell:assert_symbol_phrase = phrase {
         }
         if category { free(category) }
         if name { free(name) }
-        while i < bytes && source[i] != 10 && source[i] != 13 { i += 1 }
-        if i < bytes { i += 1 }
-        context:source:advance(state, i)
+        LanguageKit:Source:skip_line(state)
         context:source:root(state)
     }
 }
@@ -1264,5 +1218,7 @@ set strlen.serializable = false
 set strcmp.serializable = false
 set printf.serializable = false
 set install_haskell_fallback.serializable = false
+
+languagekit_native_end
 
 engine export "/tmp/recurloop-haskell-library.rli"

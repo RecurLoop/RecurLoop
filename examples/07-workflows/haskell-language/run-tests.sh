@@ -42,6 +42,7 @@ run_ok constructor-value 'Just 42'
 run_ok higher-order '[2,4,6]'
 run_ok lazy '42'
 run_ok infinite-list '[1,1,1,1,1]'
+run_ok phrase-grammar '[42,42,14,8]'
 
 set +e
 "$RECURLOOP" --import "$IMAGE" --file "$DIR/tests/non-exhaustive.hs" >"$TMP/non-exhaustive.out" 2>"$TMP/non-exhaustive.err"

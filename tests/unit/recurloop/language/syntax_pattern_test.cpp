@@ -59,6 +59,52 @@ assert answer() == 42
   EXPECT_EQ(execute(countof(argv), (char **)argv), 0);
 }
 
+TEST_F(SyntaxPatternTesting, RootRewritesDoNotClaimQualifiedFunctionComponents) {
+  const char *argv[] = {"Recurloop", "--string", R"RL(
+let Tools = phrase { dictionary = true }
+let Tools:capture = fn (value:i64) -> i64 { return value + 1 }
+syntax capture <value:expr> => return ${value}
+let numeral = phrase {
+  type = <phrase-types:elaborate>
+  rewrite = true
+  action = fn (state:Context*, called:Phrase*) -> void { context:syntax:emit(state, "i64") }
+}
+let identity = fn (Tools:numeral) -> numeral { return Tools }
+let capture_native_block = fn (state:Context*) -> void {
+  let block = context:source:block:capture(state)
+  block.release()
+}
+let answer = fn () -> i64 {
+  return Tools:capture(41)
+}
+let other = fn () -> i64 {
+  capture 42
+}
+assert answer() == 42
+assert other() == 42
+assert identity(42) == 42
+)RL"};
+  EXPECT_EQ(execute(countof(argv), (char **)argv), 0);
+}
+
+TEST_F(SyntaxPatternTesting, SourceAndContextAliasesPreserveNativeRewriteBehavior) {
+  const char *argv[] = {"Recurloop", "--string", R"RL(
+syntax literal_alias_value <number:number> => ${number}
+let source_value = <literal_alias_value>
+let install_alias = phrase {
+  type = <phrase-types:elaborate>
+  action = fn (state:Context*, called:Phrase*) -> void {
+    context:phrase:define:alias(state, "api_value", context:phrase:find(state, "literal_alias_value"))
+    context:source:root(state)
+  }
+}
+install_alias
+let answer = fn () -> i64 { return source_value 20 + api_value 22 }
+assert answer() == 42
+)RL"};
+  EXPECT_EQ(execute(countof(argv), (char **)argv), 0);
+}
+
 TEST_F(SyntaxPatternTesting, ReplaceCanReusePreviousSemanticsThroughAliasMode) {
   const char *argv[] = {"Recurloop", "--string", R"RL(
 syntax replace if "(" <condition:expr> ")" <accepted:block> [else <rejected:block>] as <if>

@@ -546,6 +546,7 @@ namespace recurloop {
       try {
         lexicon::Phrase prototype = phraseAt(*context, prototypeAddress);
         if (prototype.isNull()) return 0;
+        const auto rewriteFlag = prototype.isRewritable() ? context_phrase::Rewritable : std::uint64_t{0};
         lexicon::Phrase type(&context->lexicon);
         lexicon::Phrase action(&context->lexicon);
         for (std::size_t depth = 0; !prototype.isNull() && depth < 64; ++depth) {
@@ -559,7 +560,7 @@ namespace recurloop {
         return definePhrase(context, owner, text, 0, std::strlen(reinterpret_cast<const char *>(text)) * Byte::length,
                             type.getAddress(), prototypeAddress, 0, action.getAddress(), nullptr,
                             context_phrase::Serializable | context_phrase::HasType | context_phrase::HasPrototype |
-                                context_phrase::HasAction);
+                                context_phrase::HasAction | rewriteFlag);
       } catch (...) {
         return 0;
       }

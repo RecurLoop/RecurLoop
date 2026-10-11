@@ -1,0 +1,35 @@
+let Amber:Grammar:Tokens:"⟦" = <Amber:Grammar:Tokens:"[">
+let Amber:Grammar:Tokens:"⟧" = <Amber:Grammar:Tokens:"]">
+let Amber:Grammar:Tokens:";" = <Amber:Grammar:Tokens:",">
+let Amber:Grammar:Tokens:"among" = <Amber:Grammar:Tokens:in>
+let Amber:Grammar:Tokens:"⟪" = <Amber:Grammar:Tokens:"(">
+let Amber:Grammar:Tokens:"⟫" = <Amber:Grammar:Tokens:")">
+let Amber:Grammar:Tokens:"#" = <Amber:Grammar:Tokens:"//">
+let "say⟪" = <"echo(">
+
+let values = ⟦
+    "alpha";
+    # A fake closing delimiter: ⟧
+    "beta";
+⟧
+for value among values {
+    say⟪value⟫
+}
+$ sh -c "exit 7" $ failed⟪code⟫ {
+    say⟪code⟫
+}
+
+let check = fn () -> i64 {
+    silent trust {
+        // A fake native closing delimiter: }
+        $ printf hidden $
+    }
+    $ sh -c "exit 3" $ failed⟪code⟫ {
+        // Another fake closing delimiter: }
+        if code != 3 { return 0 }
+    }
+    return 42
+}
+assert check() == 42
+
+$ true $

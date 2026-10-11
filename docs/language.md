@@ -210,6 +210,12 @@ let command = phrase {
 }
 ```
 
+Aliases created with `<phrase>` or `context:phrase:define:alias` retain the
+source phrase's native rewrite flag. Root rewrites respect `:` and `.`
+qualification boundaries; a bare rewrite does not replace a component of a
+resolved qualified function name. A colon introducing a type annotation still
+allows the type's rewrite.
+
 A permanent phrase cannot be redefined or modified. A rewritable root
 phrase is matched directly while an `fn` body is expanded; there is no second
 copy in a function-specific dictionary.

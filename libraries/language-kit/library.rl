@@ -1136,10 +1136,42 @@ let LanguageKit:define_token = fn (state:Context*, grammar:u64, name:u8*, kind:i
     if !token { return 0 }
     var descriptor = context:phrase:find:exact(state, token, "token-kind")
     if !descriptor { descriptor = context:phrase:define:data(state, token, "token-kind") }
-    if !descriptor || !context:phrase:data(state, descriptor, cast(u8*, &kind), 0, 8) {
+    if !descriptor { context:diagnostic:error(state, "grammar token needs its own dictionary"); return 0 }
+    if context:phrase:payload:bytes(state, descriptor) == 8 {
+        if !context:phrase:write(state, descriptor, 0, cast(u8*, &kind), 8) { return 0 }
+    } else if !context:phrase:data(state, descriptor, cast(u8*, &kind), 0, 8) {
         context:diagnostic:error(state, "grammar token needs its own dictionary"); return 0
     }
     return token
+}
+
+// Infix semantics and binding power are serializable phrase metadata. Aliases
+// inherit them; an entry with its own dictionary can override any descriptor.
+let LanguageKit:define_infix = fn (
+    state:Context*, grammar:u64, key:u8*, operation:i64, precedence:i64, right:i64
+) -> u64 {
+    if operation <= 0 || precedence <= 0 { return 0 }
+    let token = LanguageKit:define_token(state, grammar, key, 4)
+    if !token { return 0 }
+    var descriptor = context:phrase:find:exact(state, token, "infix")
+    if !descriptor { descriptor = context:phrase:define:data(state, token, "infix") }
+    let data = cast(i64*, malloc(24))
+    if !data { return 0 }
+    defer free(cast(u8*, data))
+    data[0] = operation; data[1] = precedence; data[2] = right
+    if !descriptor { return 0 }
+    if context:phrase:payload:bytes(state, descriptor) == 24 {
+        if !context:phrase:write(state, descriptor, 0, cast(u8*, data), 24) { return 0 }
+    } else if !context:phrase:data(state, descriptor, cast(u8*, data), 0, 24) { return 0 }
+    return token
+}
+
+let LanguageKit:infix_value = fn (state:Context*, token:u64, index:i64) -> i64 {
+    if index < 0 || index > 2 { return 0 }
+    let descriptor = LanguageKit:phrase_child(state, token, "infix")
+    var value = 0
+    if descriptor { context:phrase:read(state, descriptor, cast(u64, index * 8), cast(u8*, &value), 8) }
+    return value
 }
 
 // Return the descriptor owner, following aliases and matching root-native
@@ -1178,8 +1210,14 @@ let LanguageKit:token_kind = fn (state:Context*, grammar:u64, token:u64) -> i64 
     return 4
 }
 
-let LanguageKit:Cursor:phrase_at = fn (
-    state:Context*, grammar:u64, source:u8*, length:i64, position:i64
+let LanguageKit:identifier_byte = fn (byte:u8, flags:i64) -> i64 {
+    return LanguageKit:is_alpha(byte) || LanguageKit:is_digit(byte) || byte == 95 ||
+           (LanguageKit:has_flag(flags, 16) && byte == 39) ||
+           (LanguageKit:has_flag(flags, 32) && byte == 64)
+}
+
+let LanguageKit:Cursor:phrase_at_flags = fn (
+    state:Context*, grammar:u64, source:u8*, length:i64, position:i64, flags:i64
 ) -> u64 {
     if !source || !grammar { return 0 }
     if position < 0 || position >= length { return 0 }
@@ -1191,11 +1229,16 @@ let LanguageKit:Cursor:phrase_at = fn (
         if size <= 0 { return 0 }
         let last = source[position + size - 1]
         let next = LanguageKit:Cursor:peek(source, length, position, size)
-        if !(LanguageKit:is_alpha(last) || LanguageKit:is_digit(last) || last == 95) ||
-           !(LanguageKit:is_alpha(next) || LanguageKit:is_digit(next) || next == 95) { return candidate }
+        if !LanguageKit:identifier_byte(last, flags) || !LanguageKit:identifier_byte(next, flags) { return candidate }
         bytes = size - 1
     }
     return 0
+}
+
+let LanguageKit:Cursor:phrase_at = fn (
+    state:Context*, grammar:u64, source:u8*, length:i64, position:i64
+) -> u64 {
+    return LanguageKit:Cursor:phrase_at_flags(state, grammar, source, length, position, 0)
 }
 
 let LanguageKit:Cursor:phrase = fn (
@@ -1229,7 +1272,7 @@ let LanguageKit:Cursor:phrase = fn (
 
 // Non-consuming streaming lookup. Reacquire the source pointer after refill;
 // the longest active spelling determines the lookahead, without a fixed limit.
-let LanguageKit:Source:phrase_at = fn (state:Context*, grammar:u64, position:i64) -> u64 {
+let LanguageKit:Source:phrase_at_flags = fn (state:Context*, grammar:u64, position:i64, flags:i64) -> u64 {
     if position < 0 || !grammar { return 0 }
     var longest = 0
     var child = context:phrase:child:first(state, grammar)
@@ -1239,7 +1282,11 @@ let LanguageKit:Source:phrase_at = fn (state:Context*, grammar:u64, position:i64
         child = context:phrase:child:next(state, grammar, child)
     }
     let length = LanguageKit:Source:available(state, position + longest + 1)
-    return LanguageKit:Cursor:phrase_at(state, grammar, context:source:data(state), length, position)
+    return LanguageKit:Cursor:phrase_at_flags(state, grammar, context:source:data(state), length, position, flags)
+}
+
+let LanguageKit:Source:phrase_at = fn (state:Context*, grammar:u64, position:i64) -> u64 {
+    return LanguageKit:Source:phrase_at_flags(state, grammar, position, 0)
 }
 
 let LanguageKit:Cursor:match_phrase = fn (
@@ -1415,9 +1462,9 @@ let LanguageKit:Reader:new_phrases = fn (state:Context*, grammar:u64, flags:i64)
 }
 
 let LanguageKit:Reader:phrase_at = fn (self:LanguageKit:Reader*) -> u64 {
-    var token = LanguageKit:Source:phrase_at(self.state, self.grammar, 0)
+    var token = LanguageKit:Source:phrase_at_flags(self.state, self.grammar, 0, self.flags)
     if self.fallback {
-        let candidate = LanguageKit:Source:phrase_at(self.state, self.fallback, 0)
+        let candidate = LanguageKit:Source:phrase_at_flags(self.state, self.fallback, 0, self.flags)
         var bytes = 0; var current = 0
         if candidate { bytes = cast(i64, context:phrase:key(self.state, candidate, cast(u8*, 0), 0)) }
         if token { current = cast(i64, context:phrase:key(self.state, token, cast(u8*, 0), 0)) }
@@ -1757,14 +1804,71 @@ let LanguageKit:Reader:expect = fn (self:LanguageKit:Reader*, text:u8*, message:
     return 0
 }
 
+// Capture a terminated source form through the streaming phrase reader. The
+// result is normalized token source, with quoted data escaped again; comments
+// are trivia. No source pointer survives a refill and there is no size limit.
+let LanguageKit:Source:take_form = fn (
+    state:Context*, grammar:u64, terminator:u8*, flags:i64, quote:u8, include_end:i64
+) -> u8* {
+    let reader = LanguageKit:Reader:new_phrases(state, grammar, flags)
+    if !reader { return cast(u8*, 0) }
+    defer reader.destroy()
+    let out = LanguageKit:Text:new()
+    if !out { return cast(u8*, 0) }
+    defer out.destroy()
+    let groups = LanguageKit:Text:new()
+    if !groups { return cast(u8*, 0) }
+    defer groups.destroy()
+    while reader.kind_of() {
+        if reader.error { return cast(u8*, 0) }
+        let ending = groups.length == 0 && reader.is(terminator)
+        if ending && !include_end { reader.consume(); return out.take() }
+        if reader.is("(") { groups.append_byte(1) }
+        else if reader.is("[") { groups.append_byte(2) }
+        else if reader.is("{") { groups.append_byte(3) }
+        else if reader.is(")") || reader.is("]") || reader.is("}") {
+            var expected = 1
+            if reader.is("]") { expected = 2 } else if reader.is("}") { expected = 3 }
+            if !groups.length || groups.data[groups.length - 1] != expected {
+                context:diagnostic:error(state, "mismatched closing phrase in source form")
+                return cast(u8*, 0)
+            }
+            groups.length -= 1
+        }
+        let kind = reader.kind_of()
+        let text = reader.take_text()
+        if !text { return cast(u8*, 0) }
+        if out.length { out.append_byte(32) }
+        if kind == 3 {
+            out.append_byte(quote)
+            var index = 0
+            while text[index] {
+                let byte = text[index]
+                if byte == quote || byte == 92 { out.append_byte(92); out.append_byte(byte) }
+                else if byte == 10 { out.append("\\n") }
+                else if byte == 13 { out.append("\\r") }
+                else if byte == 9 { out.append("\\t") }
+                else { out.append_byte(byte) }
+                index += 1
+            }
+            out.append_byte(quote)
+        } else { out.append(text) }
+        free(text)
+        if ending { return out.take() }
+    }
+    if reader.error { return cast(u8*, 0) }
+    if out.length { context:diagnostic:error(state, "source form is missing its terminating phrase") }
+    return cast(u8*, 0)
+}
+
 // =============================================================================
 // In-memory slice reader.
 //
 // Phrase rewrites inside compiled functions receive an already captured
 // context:syntax buffer rather than the live Source stream. SliceReader exposes
 // a shared bounded reader for that case, so DSLs do not grow a second ad-hoc
-// scanner. It does not claim streaming: the host has already materialized the
-// syntax slice before the phrase action runs.
+// scanner. Bounded readers use the already materialized syntax slice; the
+// explicit new_source constructor instead refills non-consuming live lookahead.
 // =============================================================================
 
 record LanguageKit:SliceReader {
@@ -1775,6 +1879,7 @@ record LanguageKit:SliceReader {
     source:u8*
     length:i64
     position:i64
+    streamed:i64
     flags:i64
     error:i64
     cached:i64
@@ -1796,6 +1901,7 @@ let LanguageKit:SliceReader:new = fn (
     self.source = source
     self.length = length
     self.position = 0
+    self.streamed = 0
     self.flags = flags
     self.error = 0
     self.cached = 0
@@ -1812,6 +1918,25 @@ let LanguageKit:SliceReader:new_phrases = fn (state:Context*, grammar:u64, sourc
     let self = LanguageKit:SliceReader:new(state, source, length, flags)
     if self { self.grammar = grammar }
     return self
+}
+
+// Non-consuming lookahead over live source. Unlike Reader, this reader keeps
+// byte positions relative to the current source origin and commits no input.
+let LanguageKit:SliceReader:new_source = fn (state:Context*, grammar:u64, flags:i64) -> LanguageKit:SliceReader* {
+    let self = LanguageKit:SliceReader:new_phrases(state, grammar, cast(u8*, context:source:data(state)), context:source:bytes(state), flags)
+    if self { self.streamed = 1 }
+    return self
+}
+
+let LanguageKit:SliceReader:available = fn (self:LanguageKit:SliceReader*, relative:i64) -> i64 {
+    let at = self.position + relative
+    if at < 0 { return 0 }
+    if self.streamed {
+        context:source:ensure(self.state, at + 1)
+        self.source = cast(u8*, context:source:data(self.state))
+        self.length = context:source:bytes(self.state)
+    }
+    return at < self.length
 }
 
 
@@ -1841,7 +1966,7 @@ let LanguageKit:SliceReader:fail = fn (self:LanguageKit:SliceReader*, message:u8
 
 let LanguageKit:SliceReader:peek = fn (self:LanguageKit:SliceReader*, relative:i64) -> u8 {
     let at = self.position + relative
-    if at < 0 || at >= self.length { return cast(u8, 0) }
+    if !self.available(relative) { return cast(u8, 0) }
     return self.source[at]
 }
 
@@ -1859,7 +1984,7 @@ let LanguageKit:SliceReader:identifier_continue = fn (self:LanguageKit:SliceRead
 
 let LanguageKit:SliceReader:skip_line = fn (self:LanguageKit:SliceReader*) -> void {
     var running = 1
-    while running && self.position < self.length {
+    while running && self.available(0) {
         let ch = self.peek(0)
         self.advance(1)
         if ch == 10 { running = 0 }
@@ -1872,7 +1997,7 @@ let LanguageKit:SliceReader:skip_line = fn (self:LanguageKit:SliceReader*) -> vo
 
 let LanguageKit:SliceReader:skip_to_newline = fn (self:LanguageKit:SliceReader*) -> void {
     var running = 1
-    while running && self.position < self.length {
+    while running && self.available(0) {
         let ch = self.peek(0)
         if ch == 10 || ch == 13 { running = 0 }
         else { self.advance(1) }
@@ -1880,9 +2005,13 @@ let LanguageKit:SliceReader:skip_to_newline = fn (self:LanguageKit:SliceReader*)
 }
 
 let LanguageKit:SliceReader:phrase_at = fn (self:LanguageKit:SliceReader*) -> u64 {
-    var token = LanguageKit:Cursor:phrase_at(self.state, self.grammar, self.source, self.length, self.position)
+    var token:u64 = 0
+    if self.streamed { token = LanguageKit:Source:phrase_at_flags(self.state, self.grammar, self.position, self.flags) }
+    else { token = LanguageKit:Cursor:phrase_at_flags(self.state, self.grammar, self.source, self.length, self.position, self.flags) }
     if self.fallback {
-        let candidate = LanguageKit:Cursor:phrase_at(self.state, self.fallback, self.source, self.length, self.position)
+        var candidate:u64 = 0
+        if self.streamed { candidate = LanguageKit:Source:phrase_at_flags(self.state, self.fallback, self.position, self.flags) }
+        else { candidate = LanguageKit:Cursor:phrase_at_flags(self.state, self.fallback, self.source, self.length, self.position, self.flags) }
         var bytes = 0; var current = 0
         if candidate { bytes = cast(i64, context:phrase:key(self.state, candidate, cast(u8*, 0), 0)) }
         if token { current = cast(i64, context:phrase:key(self.state, token, cast(u8*, 0), 0)) }
@@ -1890,6 +2019,7 @@ let LanguageKit:SliceReader:phrase_at = fn (self:LanguageKit:SliceReader*) -> u6
         if candidate && !(bytes == 1 && LanguageKit:is_space(self.peek(0))) &&
            bytes > current { token = candidate }
     }
+    if self.streamed { self.available(0) }
     return token
 }
 
@@ -1898,18 +2028,18 @@ let LanguageKit:SliceReader:skip_phrases = fn (self:LanguageKit:SliceReader*) ->
     let line = context:phrase:find:exact(self.state, self.grammar, "//")
     let block = context:phrase:find:exact(self.state, self.grammar, "/*")
     let close = context:phrase:find:exact(self.state, self.grammar, "*/")
-    while !(self.position >= self.length) {
+    while self.available(0) {
         let token = self.phrase_at()
         let definition = LanguageKit:token_definition(self.state, self.grammar, token)
         if LanguageKit:has_flag(self.flags, 8) && LanguageKit:phrase_inherits(self.state, definition, line) {
             var bytes = cast(i64, context:phrase:key(self.state, token, cast(u8*, 0), 0))
             self.advance(bytes)
-            while !(self.position >= self.length) && self.peek(0) != 10 && self.peek(0) != 13 { self.advance(1) }
+            while self.available(0) && self.peek(0) != 10 && self.peek(0) != 13 { self.advance(1) }
         } else if LanguageKit:has_flag(self.flags, 256) && LanguageKit:phrase_inherits(self.state, definition, block) {
             var bytes = cast(i64, context:phrase:key(self.state, token, cast(u8*, 0), 0))
             self.advance(bytes)
             var closed = 0
-            while !(self.position >= self.length) && !closed {
+            while self.available(0) && !closed {
                 let end = self.phrase_at()
                 let owner = LanguageKit:token_definition(self.state, self.grammar, end)
                 if LanguageKit:phrase_inherits(self.state, owner, close) {
@@ -1952,7 +2082,7 @@ let LanguageKit:SliceReader:read_quoted = fn (self:LanguageKit:SliceReader*, quo
     if !out { return cast(u8*, 0) }
     var running = 1
     while running {
-        if self.position >= self.length {
+        if !self.available(0) {
             out.destroy()
             self.fail("LanguageKit: unterminated quoted slice token")
             return cast(u8*, 0)
@@ -1961,7 +2091,7 @@ let LanguageKit:SliceReader:read_quoted = fn (self:LanguageKit:SliceReader*, quo
         self.advance(1)
         if ch == quote { running = 0 }
         else if ch == 92 {
-            if self.position >= self.length {
+            if !self.available(0) {
                 out.destroy()
                 self.fail("LanguageKit: unterminated slice escape")
                 return cast(u8*, 0)
@@ -1987,7 +2117,7 @@ let LanguageKit:SliceReader:scan = fn (self:LanguageKit:SliceReader*) -> void {
     self.symbol = 0
     self.phrase = 0
     if self.text { free(self.text); self.text = cast(u8*, 0) }
-    if self.position >= self.length { self.cached = 1; return }
+    if !self.available(0) { self.cached = 1; return }
     let ch = self.peek(0)
     if self.grammar {
         let token = self.phrase_at()
@@ -3237,9 +3367,14 @@ let LanguageKit:Fallbacks:Expressions = phrase {
     type = <phrase-types:elaborate>
     permanent = true
     action = fn (state:Context*, called:Phrase*) -> void {
+        // An explicitly installed language fallback owns unknown forms. Do
+        // not reinterpret its compounds as native expression statements.
+        let kit = context:phrase:find(state, "LanguageKit")
+        let fallback = context:phrase:find(state, "")
+        let dispatcher = context:phrase:find:exact(state, kit, "top_form")
+        if fallback && !LanguageKit:phrase_inherits(state, fallback, dispatcher) { return }
         let extent = LanguageKit:Source:line_extent(state)
         if !context:expression:recognizes(state, context:source:data(state), cast(u64, extent)) { return }
-        let kit = context:phrase:find(state, "LanguageKit")
         let form = context:phrase:find:exact(state, kit, "root_form")
         let probe = LanguageKit:registry_entry(state, "Fallbacks", "Expressions")
         LanguageKit:offer_form(state, form, probe, extent, 1)

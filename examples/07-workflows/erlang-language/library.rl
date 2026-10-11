@@ -1,3 +1,6 @@
+import "language-kit"
+languagekit_native_begin
+
 // =============================================================================
 // RecurLoop Erlang compatibility experiment
 //
@@ -41,6 +44,54 @@ let Erlang:Modules = phrase { dictionary = true permanent = true }
 let Erlang:Processes = phrase { dictionary = true permanent = true }
 let Erlang:Builtins = phrase { dictionary = true permanent = true }
 let Erlang:Grammar = phrase { dictionary = true permanent = true }
+
+// Syntax spellings and aliases belong to this mutable phrase dictionary.
+let Erlang:Grammar:Tokens = phrase { dictionary = true }
+let Erlang:grammar = fn (state:Context*) -> u64 {
+    let root = context:phrase:find(state, "Erlang")
+    let grammar = context:phrase:find:exact(state, root, "Grammar")
+    return context:phrase:find:exact(state, grammar, "Tokens")
+}
+let Erlang:install_tokens = phrase {
+    type = <phrase-types:elaborate>
+    serializable = false
+    action = fn (state:Context*, called:Phrase*) -> void {
+        let grammar = Erlang:grammar(state)
+        LanguageKit:define_token(state, grammar, "(", 5)
+        LanguageKit:define_token(state, grammar, ")", 5)
+        LanguageKit:define_token(state, grammar, "[", 5)
+        LanguageKit:define_token(state, grammar, "]", 5)
+        LanguageKit:define_token(state, grammar, "{", 5)
+        LanguageKit:define_token(state, grammar, "}", 5)
+        LanguageKit:define_token(state, grammar, ",", 5)
+        LanguageKit:define_token(state, grammar, ";", 5)
+        LanguageKit:define_token(state, grammar, ".", 5)
+        LanguageKit:define_token(state, grammar, ":", 4)
+        LanguageKit:define_token(state, grammar, "/", 4)
+        LanguageKit:define_token(state, grammar, "->", 4)
+        LanguageKit:define_token(state, grammar, "=", 4)
+        LanguageKit:define_token(state, grammar, "!", 4)
+        LanguageKit:define_token(state, grammar, "+", 4)
+        LanguageKit:define_token(state, grammar, "-", 4)
+        LanguageKit:define_token(state, grammar, "*", 4)
+        LanguageKit:define_token(state, grammar, "receive", 1)
+        LanguageKit:define_token(state, grammar, "end", 1)
+        LanguageKit:define_token(state, grammar, "fun", 1)
+        LanguageKit:define_token(state, grammar, "_", 1)
+        LanguageKit:define_token(state, grammar, "//", 4)
+        LanguageKit:define_infix(state, grammar, "+", 1, 10, 0)
+        LanguageKit:define_infix(state, grammar, "-", 2, 10, 0)
+        LanguageKit:define_infix(state, grammar, "*", 3, 20, 0)
+        LanguageKit:define_infix(state, grammar, "=", 4, 5, 1)
+        LanguageKit:define_infix(state, grammar, "!", 5, 5, 1)
+        context:source:root(state)
+    }
+}
+let erlang_install_tokens = <Erlang:install_tokens>
+erlang_install_tokens
+set erlang_install_tokens.serializable = false
+let Erlang:Grammar:Tokens:"%" = <Erlang:Grammar:Tokens:"//">
+
 let Erlang:Env = phrase { dictionary = true permanent = true }
 
 let Erlang:copy_bytes = fn (source:u8*, bytes:i64) -> u8* {
@@ -57,14 +108,8 @@ let Erlang:copy_text = fn (source:u8*) -> u8* {
     return Erlang:copy_bytes(source, cast(i64, strlen(source)))
 }
 
-let Erlang:is_space = fn (ch:u8) -> i64 { return ch == 32 || ch == 9 || ch == 10 || ch == 13 }
-let Erlang:is_lower = fn (ch:u8) -> i64 { return ch >= 97 && ch <= 122 }
 let Erlang:is_upper = fn (ch:u8) -> i64 { return ch >= 65 && ch <= 90 }
-let Erlang:is_alpha = fn (ch:u8) -> i64 { return Erlang:is_lower(ch) || Erlang:is_upper(ch) }
 let Erlang:is_digit = fn (ch:u8) -> i64 { return ch >= 48 && ch <= 57 }
-let Erlang:is_ident_continue = fn (ch:u8) -> i64 {
-    return Erlang:is_alpha(ch) || Erlang:is_digit(ch) || ch == 95 || ch == 64
-}
 
 let Erlang:text_number = fn (text:u8*) -> i64 {
     if !text { return 0 }
@@ -312,7 +357,7 @@ let Erlang:Database:add_clause = fn (self:Erlang:Database*, clause:Erlang:Clause
 }
 
 // =============================================================================
-// Recursive-descent parser.
+// Phrase-backed recognition and recursive semantic construction.
 // =============================================================================
 
 record Erlang:Parser {
@@ -322,12 +367,15 @@ record Erlang:Parser {
     length:i64
     position:i64
     error:i64
+    reader:LanguageKit:SliceReader*
 }
 
 let Erlang:Parser:new = fn (state:Context*, database:Erlang:Database*, source:u8*) -> Erlang:Parser* {
     let self = alloc(Erlang:Parser)
     if !self { return cast(Erlang:Parser*, 0) }
     self.state = state; self.database = database; self.source = source; self.length = cast(i64, strlen(source)); self.position = 0; self.error = 0
+    self.reader = LanguageKit:SliceReader:new_phrases(state, Erlang:grammar(state), source, self.length, 168)
+    if !self.reader { free(cast(u8*, self)); return cast(Erlang:Parser*, 0) }
     return self
 }
 
@@ -335,45 +383,56 @@ let Erlang:Parser:fail = fn (self:Erlang:Parser*, message:u8*) -> void {
     if !self.error { self.error = 1; context:diagnostic:error(self.state, message) }
 }
 
+let Erlang:Parser:destroy = fn (self:Erlang:Parser*) -> void {
+    if !self { return }
+    self.reader.destroy()
+    free(cast(u8*, self))
+}
+
+// The position is the committed byte offset. Recognition is non-consuming;
+// only consume/match transfers the longest token's complete extent.
 let Erlang:Parser:skip = fn (self:Erlang:Parser*) -> void {
-    var scanning = 1
-    while scanning {
-        while self.position < self.length && Erlang:is_space(self.source[self.position]) { self.position += 1 }
-        if self.position < self.length && self.source[self.position] == 37 {
-            while self.position < self.length && self.source[self.position] != 10 && self.source[self.position] != 13 { self.position += 1 }
-        } else { scanning = 0 }
-    }
+    self.reader.clear()
+    self.reader.position = self.position
+    self.reader.skip_trivia()
+    self.position = self.reader.position
+    if self.reader.error { self.error = 1 }
 }
 
-let Erlang:Parser:peek = fn (self:Erlang:Parser*) -> u8 {
+let Erlang:Parser:token = fn (self:Erlang:Parser*) -> LanguageKit:SliceReader* {
     Erlang:Parser:skip(self)
-    if self.position >= self.length { return cast(u8, 0) }
-    return self.source[self.position]
+    self.reader.scan()
+    if self.reader.error { self.error = 1 }
+    return self.reader
 }
 
-let Erlang:Parser:match = fn (self:Erlang:Parser*, ch:u8) -> i64 {
-    Erlang:Parser:skip(self)
-    if self.position < self.length && self.source[self.position] == ch { self.position += 1; return 1 }
-    return 0
+let Erlang:Parser:kind = fn (self:Erlang:Parser*) -> i64 { return Erlang:Parser:token(self).kind }
+let Erlang:Parser:is = fn (self:Erlang:Parser*, text:u8*) -> i64 { return Erlang:Parser:token(self).is(text) }
+let Erlang:Parser:consume = fn (self:Erlang:Parser*) -> void {
+    let token = Erlang:Parser:token(self)
+    self.position = token.position
+    token.clear()
 }
-
-let Erlang:Parser:match_pair = fn (self:Erlang:Parser*, a:u8, b:u8) -> i64 {
-    Erlang:Parser:skip(self)
-    if self.position + 1 < self.length && self.source[self.position] == a && self.source[self.position + 1] == b {
-        self.position += 2; return 1
-    }
-    return 0
+let Erlang:Parser:match = fn (self:Erlang:Parser*, text:u8*) -> i64 {
+    if !Erlang:Parser:is(self, text) { return 0 }
+    Erlang:Parser:consume(self)
+    return 1
 }
 
 let Erlang:Parser:identifier = fn (self:Erlang:Parser*) -> u8* {
-    Erlang:Parser:skip(self)
-    if self.position >= self.length { return cast(u8*, 0) }
-    let ch = self.source[self.position]
-    if !(Erlang:is_alpha(ch) || ch == 95) { return cast(u8*, 0) }
-    let start = self.position
-    self.position += 1
-    while self.position < self.length && Erlang:is_ident_continue(self.source[self.position]) { self.position += 1 }
-    return Erlang:copy_bytes(&self.source[start], self.position - start)
+    let token = Erlang:Parser:token(self)
+    if token.kind != 1 { return cast(u8*, 0) }
+    self.position = token.position
+    return token.take_text()
+}
+
+let Erlang:Parser:integer = fn (self:Erlang:Parser*) -> i64 {
+    let token = Erlang:Parser:token(self)
+    let value = token.number_of()
+    if token.kind != 2 { Erlang:Parser:fail(self, "Erlang: expected integer"); return 0 }
+    self.position = token.position
+    token.clear()
+    return value
 }
 
 let Erlang:concat_names = fn (left:u8*, right:u8*) -> u8* {
@@ -385,90 +444,58 @@ let Erlang:concat_names = fn (left:u8*, right:u8*) -> u8* {
 }
 
 let Erlang:Parser:string = fn (self:Erlang:Parser*) -> u8* {
-    Erlang:Parser:skip(self)
-    if self.position >= self.length || self.source[self.position] != 34 { return cast(u8*, 0) }
-    self.position += 1
-    var capacity = 32; var count = 0
-    var out = malloc(capacity)
-    if !out { return cast(u8*, 0) }
-    var done = 0
-    while !done && self.position < self.length {
-        let ch = self.source[self.position]
-        self.position += 1
-        if ch == 34 { done = 1 }
-        else {
-            var actual = ch
-            if ch == 92 && self.position < self.length {
-                let esc = self.source[self.position]; self.position += 1
-                if esc == 110 { actual = 10 } else if esc == 114 { actual = 13 } else if esc == 116 { actual = 9 } else { actual = esc }
-            }
-            if count + 2 >= capacity { capacity *= 2; out = realloc(out, capacity) }
-            out[count] = actual; count += 1
-        }
-    }
-    if !done { free(out); Erlang:Parser:fail(self, "Erlang: unterminated string"); return cast(u8*, 0) }
-    out[count] = 0
-    return out
+    let token = Erlang:Parser:token(self)
+    if token.kind != 3 { return cast(u8*, 0) }
+    self.position = token.position
+    return token.take_text()
 }
 
 let Erlang:Parser:number_expr = fn (self:Erlang:Parser*) -> Erlang:Expr* {
-    Erlang:Parser:skip(self)
-    if self.position >= self.length || !Erlang:is_digit(self.source[self.position]) { return cast(Erlang:Expr*, 0) }
-    var value = 0
-    while self.position < self.length && Erlang:is_digit(self.source[self.position]) {
-        value = value * 10 + self.source[self.position] - 48; self.position += 1
-    }
-    return Erlang:Expr:integer(value)
+    return Erlang:Expr:integer(Erlang:Parser:integer(self))
 }
 
 let Erlang:Parser:number_raw = fn (self:Erlang:Parser*) -> i64 {
-    Erlang:Parser:skip(self); var value = 0
-    while self.position < self.length && Erlang:is_digit(self.source[self.position]) {
-        value = value * 10 + self.source[self.position] - 48; self.position += 1
-    }
-    return value
+    return Erlang:Parser:integer(self)
 }
 
 let Erlang:Parser:parse_pattern = fn (self:Erlang:Parser*) -> Erlang:Pattern* {
     Erlang:Parser:skip(self)
-    let ch = Erlang:Parser:peek(self)
-    if Erlang:is_digit(ch) {
+    let kind = Erlang:Parser:kind(self)
+    if kind == 2 {
         let p = Erlang:Pattern:new(3); if p { p.number = Erlang:Parser:number_raw(self) }; return p
     }
-    if ch == 123 {
-        self.position += 1
+    if Erlang:Parser:match(self, "{") {
         var capacity = 4; var count = 0
         var items = cast(Erlang:Pattern**, malloc(capacity * sizeof(Erlang:Pattern*)))
-        if !Erlang:Parser:match(self, 125) {
+        if !Erlang:Parser:match(self, "}") {
             var more = 1
             while more {
                 if count == capacity { capacity *= 2; items = cast(Erlang:Pattern**, realloc(cast(u8*, items), capacity * sizeof(Erlang:Pattern*))) }
                 items[count] = Erlang:Parser:parse_pattern(self); if !items[count] { return cast(Erlang:Pattern*, 0) }; count += 1
-                if Erlang:Parser:match(self, 44) { } else { more = 0 }
+                if Erlang:Parser:match(self, ",") { } else { more = 0 }
             }
-            if !Erlang:Parser:match(self, 125) { Erlang:Parser:fail(self, "Erlang: expected '}' in tuple pattern"); return cast(Erlang:Pattern*, 0) }
+            if !Erlang:Parser:match(self, "}") { Erlang:Parser:fail(self, "Erlang: expected '}' in tuple pattern"); return cast(Erlang:Pattern*, 0) }
         }
         let p = Erlang:Pattern:new(5); if p { p.arity = count; p.items = cast(u8*, items) }; return p
     }
-    if ch == 91 {
-        self.position += 1
+    if Erlang:Parser:match(self, "[") {
         var capacity = 4; var count = 0
         var items = cast(Erlang:Pattern**, malloc(capacity * sizeof(Erlang:Pattern*)))
-        if !Erlang:Parser:match(self, 93) {
+        if !Erlang:Parser:match(self, "]") {
             var more = 1
             while more {
                 if count == capacity { capacity *= 2; items = cast(Erlang:Pattern**, realloc(cast(u8*, items), capacity * sizeof(Erlang:Pattern*))) }
                 items[count] = Erlang:Parser:parse_pattern(self); if !items[count] { return cast(Erlang:Pattern*, 0) }; count += 1
-                if Erlang:Parser:match(self, 44) { } else { more = 0 }
+                if Erlang:Parser:match(self, ",") { } else { more = 0 }
             }
-            if !Erlang:Parser:match(self, 93) { Erlang:Parser:fail(self, "Erlang: expected ']' in list pattern"); return cast(Erlang:Pattern*, 0) }
+            if !Erlang:Parser:match(self, "]") { Erlang:Parser:fail(self, "Erlang: expected ']' in list pattern"); return cast(Erlang:Pattern*, 0) }
         }
         let p = Erlang:Pattern:new(6); if p { p.arity = count; p.items = cast(u8*, items) }; return p
     }
-    if Erlang:is_alpha(ch) || ch == 95 {
+    if Erlang:Parser:match(self, "_") { return Erlang:Pattern:new(2) }
+    if kind == 1 {
         let name = Erlang:Parser:identifier(self)
         if !name { return cast(Erlang:Pattern*, 0) }
-        if name[0] == 95 && name[1] == 0 { free(name); return Erlang:Pattern:new(2) }
         if Erlang:is_upper(name[0]) || name[0] == 95 { let p = Erlang:Pattern:new(1); if p { p.name = name; p.symbol = Erlang:categorize_symbol(self.state, "Variables", name) }; return p }
         let p = Erlang:Pattern:new(4); if p { p.name = name; p.symbol = Erlang:categorize_symbol(self.state, "Atoms", name) }; return p
     }
@@ -504,7 +531,7 @@ let Erlang:ParseCallback = fn (self:Erlang:Parser*, mode:i64) -> Erlang:Expr*
 let Erlang:Parser:parse_sequence = fn (self:Erlang:Parser*, parse:Erlang:ParseCallback) -> Erlang:Expr* {
     var left = parse(self, 0)
     if !left { return left }
-    while Erlang:Parser:match(self, 44) {
+    while Erlang:Parser:match(self, ",") {
         let right = parse(self, 0)
         if !right { return cast(Erlang:Expr*, 0) }
         left = Erlang:Expr:pair(8, left, right)
@@ -518,15 +545,11 @@ let Erlang:Parser:parse_receive = fn (self:Erlang:Parser*, parse:Erlang:ParseCal
     var done = 0
     while !done {
         Erlang:Parser:skip(self)
-        let saved = self.position
-        let word = Erlang:Parser:identifier(self)
-        if word && strcmp(word, "end") == 0 { free(word); done = 1 }
+        if Erlang:Parser:match(self, "end") { done = 1 }
         else {
-            if word { free(word) }
-            self.position = saved
             let pattern = Erlang:Parser:parse_pattern(self)
             if !pattern { return cast(Erlang:Expr*, 0) }
-            if !Erlang:Parser:match_pair(self, 45, 62) { Erlang:Parser:fail(self, "Erlang: receive clause expects '->'"); return cast(Erlang:Expr*, 0) }
+            if !Erlang:Parser:match(self, "->") { Erlang:Parser:fail(self, "Erlang: receive clause expects '->'"); return cast(Erlang:Expr*, 0) }
             let body = Erlang:Parser:parse_sequence(self, parse)
             if !body { return cast(Erlang:Expr*, 0) }
             let clause = alloc(Erlang:ReceiveClause)
@@ -534,10 +557,9 @@ let Erlang:Parser:parse_receive = fn (self:Erlang:Parser*, parse:Erlang:ParseCal
             clause.pattern = pattern; clause.body = cast(u8*, body); clause.next = cast(Erlang:ReceiveClause*, 0)
             if tail { tail.next = clause } else { head = clause }; tail = clause
             Erlang:Parser:skip(self)
-            if Erlang:Parser:match(self, 59) { } else {
-                let endword = Erlang:Parser:identifier(self)
-                if !endword || strcmp(endword, "end") != 0 { if endword { free(endword) }; Erlang:Parser:fail(self, "Erlang: receive expects ';' or end"); return cast(Erlang:Expr*, 0) }
-                free(endword); done = 1
+            if Erlang:Parser:match(self, ";") { } else {
+                if !Erlang:Parser:match(self, "end") { Erlang:Parser:fail(self, "Erlang: receive expects ';' or end"); return cast(Erlang:Expr*, 0) }
+                done = 1
             }
         }
     }
@@ -545,22 +567,22 @@ let Erlang:Parser:parse_receive = fn (self:Erlang:Parser*, parse:Erlang:ParseCal
 }
 
 let Erlang:Parser:parse_expr_mode = fn (self:Erlang:Parser*, mode:i64) -> Erlang:Expr* {
-    // mode 0: match/send, 1: add/sub, 2: multiply, 3: primary
+    // mode 0: expression, negative: binding power, 3: primary
     if mode == 3 {
         Erlang:Parser:skip(self)
-        let ch = Erlang:Parser:peek(self)
-        if Erlang:is_digit(ch) { return Erlang:Parser:number_expr(self) }
-        if ch == 34 { return Erlang:Expr:named(self.state, 4, Erlang:Parser:string(self)) }
-        if ch == 40 {
-            self.position += 1; let e = Erlang:Parser:parse_sequence(self, Erlang:Parser:parse_expr_mode)
-            if !Erlang:Parser:match(self, 41) { Erlang:Parser:fail(self, "Erlang: expected ')'") }
+        let kind = Erlang:Parser:kind(self)
+        if kind == 2 { return Erlang:Parser:number_expr(self) }
+        if kind == 3 { return Erlang:Expr:named(self.state, 4, Erlang:Parser:string(self)) }
+        if Erlang:Parser:match(self, "(") {
+             let e = Erlang:Parser:parse_sequence(self, Erlang:Parser:parse_expr_mode)
+            if !Erlang:Parser:match(self, ")") { Erlang:Parser:fail(self, "Erlang: expected ')'") }
             return e
         }
-        if ch == 123 || ch == 91 {
-            var close = 125
+        if Erlang:Parser:is(self, "{") || Erlang:Parser:is(self, "[") {
+            var close = "}"
             var kind = 5
-            if ch == 91 { close = 93; kind = 6 }
-            self.position += 1
+            if Erlang:Parser:is(self, "[") { close = "]"; kind = 6 }
+            Erlang:Parser:consume(self)
             var capacity = 4; var count = 0
             var items = cast(Erlang:Expr**, malloc(capacity * sizeof(Erlang:Expr*)))
             if !Erlang:Parser:match(self, close) {
@@ -568,41 +590,41 @@ let Erlang:Parser:parse_expr_mode = fn (self:Erlang:Parser*, mode:i64) -> Erlang
                 while more {
                     if count == capacity { capacity *= 2; items = cast(Erlang:Expr**, realloc(cast(u8*, items), capacity * sizeof(Erlang:Expr*))) }
                     items[count] = Erlang:Parser:parse_expr_mode(self, 0); if !items[count] { return cast(Erlang:Expr*, 0) }; count += 1
-                    if Erlang:Parser:match(self, 44) { } else { more = 0 }
+                    if Erlang:Parser:match(self, ",") { } else { more = 0 }
                 }
                 if !Erlang:Parser:match(self, close) { Erlang:Parser:fail(self, "Erlang: unterminated tuple/list"); return cast(Erlang:Expr*, 0) }
             }
             let e = Erlang:Expr:new(kind); if e { e.arity = count; e.items = cast(u8*, items) }; return e
         }
-        if Erlang:is_alpha(ch) || ch == 95 {
-            let first = Erlang:Parser:identifier(self)
-            if !first { return cast(Erlang:Expr*, 0) }
-            if strcmp(first, "receive") == 0 { free(first); return Erlang:Parser:parse_receive(self, Erlang:Parser:parse_expr_mode) }
-            if strcmp(first, "fun") == 0 {
-                free(first)
+        if Erlang:Parser:match(self, "_") { return Erlang:Expr:named(self.state, 3, Erlang:copy_text("_")) }
+        if kind == 1 {
+            if Erlang:Parser:match(self, "receive") { return Erlang:Parser:parse_receive(self, Erlang:Parser:parse_expr_mode) }
+            if Erlang:Parser:match(self, "fun") {
                 let fname = Erlang:Parser:identifier(self)
-                if !fname || !Erlang:Parser:match(self, 47) { Erlang:Parser:fail(self, "Erlang: fun expects name/arity"); return cast(Erlang:Expr*, 0) }
+                if !fname || !Erlang:Parser:match(self, "/") { Erlang:Parser:fail(self, "Erlang: fun expects name/arity"); return cast(Erlang:Expr*, 0) }
                 let arity = Erlang:Parser:number_raw(self)
                 let e = Erlang:Expr:named(self.state, 13, fname); if e { e.number = arity }; return e
             }
+            let first = Erlang:Parser:identifier(self)
+            if !first { return cast(Erlang:Expr*, 0) }
             var full = first
             let saved = self.position
-            if Erlang:Parser:match(self, 58) {
+            if Erlang:Parser:match(self, ":") {
                 let second = Erlang:Parser:identifier(self)
                 if second { let joined = Erlang:concat_names(first, second); free(first); free(second); full = joined }
                 else { self.position = saved }
             }
-            if Erlang:Parser:match(self, 40) {
+            if Erlang:Parser:match(self, "(") {
                 var capacity = 4; var count = 0
                 var args = cast(Erlang:Expr**, malloc(capacity * sizeof(Erlang:Expr*)))
-                if !Erlang:Parser:match(self, 41) {
+                if !Erlang:Parser:match(self, ")") {
                     var more = 1
                     while more {
                         if count == capacity { capacity *= 2; args = cast(Erlang:Expr**, realloc(cast(u8*, args), capacity * sizeof(Erlang:Expr*))) }
                         args[count] = Erlang:Parser:parse_expr_mode(self, 0); if !args[count] { return cast(Erlang:Expr*, 0) }; count += 1
-                        if Erlang:Parser:match(self, 44) { } else { more = 0 }
+                        if Erlang:Parser:match(self, ",") { } else { more = 0 }
                     }
-                    if !Erlang:Parser:match(self, 41) { Erlang:Parser:fail(self, "Erlang: expected ')' after call"); return cast(Erlang:Expr*, 0) }
+                    if !Erlang:Parser:match(self, ")") { Erlang:Parser:fail(self, "Erlang: expected ')' after call"); return cast(Erlang:Expr*, 0) }
                 }
                 let e = Erlang:Expr:named(self.state, 7, full); if e { e.arity = count; e.items = cast(u8*, args) }; return e
             }
@@ -612,36 +634,40 @@ let Erlang:Parser:parse_expr_mode = fn (self:Erlang:Parser*, mode:i64) -> Erlang
         Erlang:Parser:fail(self, "Erlang: expected expression")
         return cast(Erlang:Expr*, 0)
     }
-    if mode == 2 {
-        var left = Erlang:Parser:parse_expr_mode(self, 3)
-        while Erlang:Parser:match(self, 42) {
-            let right = Erlang:Parser:parse_expr_mode(self, 3)
-            left = Erlang:Expr:make_binary(self.state, "__mul", left, right)
-        }
-        return left
-    }
-    if mode == 1 {
-        var left = Erlang:Parser:parse_expr_mode(self, 2)
-        var scanning = 1
-        while scanning {
-            if Erlang:Parser:match(self, 43) {
-                let right = Erlang:Parser:parse_expr_mode(self, 2)
-                left = Erlang:Expr:make_binary(self.state, "__add", left, right)
-            } else if Erlang:Parser:match(self, 45) {
-                let right = Erlang:Parser:parse_expr_mode(self, 2)
-                left = Erlang:Expr:make_binary(self.state, "__sub", left, right)
+    // Nonpositive modes encode the minimum binding power. Primary/application
+    // parsing remains recursive, while every infix decision comes from phrases.
+    let minimum = 0 - mode
+    var left = Erlang:Parser:parse_expr_mode(self, 3)
+    if !left { return left }
+    var scanning = 1
+    while scanning {
+        let token = Erlang:Parser:token(self)
+        let operation = LanguageKit:infix_value(self.state, token.phrase, 0)
+        let precedence = LanguageKit:infix_value(self.state, token.phrase, 1)
+        if !operation || precedence < minimum { scanning = 0 }
+        else {
+            let right_associative = LanguageKit:infix_value(self.state, token.phrase, 2)
+            Erlang:Parser:consume(self)
+            var next = precedence + 1
+            if right_associative { next = precedence }
+            let right = Erlang:Parser:parse_expr_mode(self, 0 - next)
+            if !right { return cast(Erlang:Expr*, 0) }
+            if operation == 4 {
+                let pattern = Erlang:Expr:to_pattern(self.state, left)
+                if !pattern { Erlang:Parser:fail(self, "Erlang: invalid match pattern"); return cast(Erlang:Expr*, 0) }
+                let expression = Erlang:Expr:new(9)
+                if !expression { return expression }
+                expression.pattern = pattern; expression.right = right; left = expression
+            } else if operation == 5 { left = Erlang:Expr:pair(10, left, right) }
+            else {
+                var name = "__add"
+                if operation == 2 { name = "__sub" }
+                else if operation == 3 { name = "__mul" }
+                else if operation != 1 { Erlang:Parser:fail(self, "Erlang: unsupported infix operation"); return cast(Erlang:Expr*, 0) }
+                left = Erlang:Expr:make_binary(self.state, name, left, right)
             }
-            else { scanning = 0 }
         }
-        return left
     }
-    let left = Erlang:Parser:parse_expr_mode(self, 1)
-    if Erlang:Parser:match(self, 61) {
-        let pattern = Erlang:Expr:to_pattern(self.state, left)
-        if !pattern { Erlang:Parser:fail(self, "Erlang: left side of '=' is not a pattern"); return cast(Erlang:Expr*, 0) }
-        let e = Erlang:Expr:new(9); if e { e.pattern = pattern; e.right = Erlang:Parser:parse_expr_mode(self, 0) }; return e
-    }
-    if Erlang:Parser:match(self, 33) { return Erlang:Expr:pair(10, left, Erlang:Parser:parse_expr_mode(self, 0)) }
     return left
 }
 
@@ -652,21 +678,21 @@ let Erlang:Parser:parse_expr_mode = fn (self:Erlang:Parser*, mode:i64) -> Erlang
 let Erlang:parse_clause = fn (state:Context*, database:Erlang:Database*, parser:Erlang:Parser*) -> Erlang:Clause* {
     let name = Erlang:Parser:identifier(parser)
     if !name { Erlang:Parser:fail(parser, "Erlang: expected function name"); return cast(Erlang:Clause*, 0) }
-    if !Erlang:Parser:match(parser, 40) { free(name); Erlang:Parser:fail(parser, "Erlang: function expects '('"); return cast(Erlang:Clause*, 0) }
+    if !Erlang:Parser:match(parser, "(") { free(name); Erlang:Parser:fail(parser, "Erlang: function expects '('"); return cast(Erlang:Clause*, 0) }
     var capacity = 4; var count = 0
     var patterns = cast(Erlang:Pattern**, malloc(capacity * sizeof(Erlang:Pattern*)))
-    if !Erlang:Parser:match(parser, 41) {
+    if !Erlang:Parser:match(parser, ")") {
         var more = 1
         while more {
             if count == capacity { capacity *= 2; patterns = cast(Erlang:Pattern**, realloc(cast(u8*, patterns), capacity * sizeof(Erlang:Pattern*))) }
             patterns[count] = Erlang:Parser:parse_pattern(parser)
             if !patterns[count] { return cast(Erlang:Clause*, 0) }
             count += 1
-            if Erlang:Parser:match(parser, 44) { } else { more = 0 }
+            if Erlang:Parser:match(parser, ",") { } else { more = 0 }
         }
-        if !Erlang:Parser:match(parser, 41) { Erlang:Parser:fail(parser, "Erlang: function parameter list expects ')'"); return cast(Erlang:Clause*, 0) }
+        if !Erlang:Parser:match(parser, ")") { Erlang:Parser:fail(parser, "Erlang: function parameter list expects ')'"); return cast(Erlang:Clause*, 0) }
     }
-    if !Erlang:Parser:match_pair(parser, 45, 62) { Erlang:Parser:fail(parser, "Erlang: function clause expects '->'"); return cast(Erlang:Clause*, 0) }
+    if !Erlang:Parser:match(parser, "->") { Erlang:Parser:fail(parser, "Erlang: function clause expects '->'"); return cast(Erlang:Clause*, 0) }
     let body = Erlang:Parser:parse_sequence(parser, Erlang:Parser:parse_expr_mode)
     if !body { return cast(Erlang:Clause*, 0) }
     let clause = alloc(Erlang:Clause)
@@ -678,7 +704,7 @@ let Erlang:parse_clause = fn (state:Context*, database:Erlang:Database*, parser:
 let Erlang:parse_function_form = fn (state:Context*, database:Erlang:Database*, source:u8*) -> i64 {
     let parser = Erlang:Parser:new(state, database, source)
     if !parser { return 0 }
-    defer free(cast(u8*, parser))
+    defer Erlang:Parser:destroy(parser)
     var expected_name = cast(u8*, 0)
     var expected_symbol = 0
     var expected_arity = -1
@@ -694,7 +720,7 @@ let Erlang:parse_function_form = fn (state:Context*, database:Erlang:Database*, 
         Erlang:Database:add_clause(database, clause)
         Erlang:Parser:skip(parser)
         if parser.position < parser.length {
-            if Erlang:Parser:match(parser, 59) { }
+            if Erlang:Parser:match(parser, ";") { }
             else { Erlang:Parser:fail(parser, "Erlang: unexpected input after function clause"); return 0 }
         } else { more = 0 }
     }
@@ -1002,41 +1028,15 @@ let Erlang:dispatch = fn (state:Context*, mode:i64, a:i64, b:i64, c:i64) -> i64 
 // =============================================================================
 
 let Erlang:capture_form = fn (state:Context*) -> u8* {
-    context:source:ensure(state, 1048576)
-    let source = cast(u8*, context:source:data(state))
-    let bytes = context:source:bytes(state)
-    if bytes <= 0 { return cast(u8*, 0) }
-    var i = 0; var quote = 0; var comment = 0
-    while i < bytes {
-        let ch = source[i]
-        if comment {
-            if ch == 10 || ch == 13 { comment = 0 }
-            i += 1
-        } else if quote {
-            if ch == 92 { i += 2 }
-            else { if ch == quote { quote = 0 }; i += 1 }
-        } else if ch == 37 { comment = 1; i += 1 }
-        else if ch == 34 || ch == 39 { quote = ch; i += 1 }
-        else if ch == 46 {
-            let text = Erlang:copy_bytes(source, i)
-            context:source:advance(state, i + 1)
-            return text
-        } else { i += 1 }
-    }
-    context:diagnostic:error(state, "Erlang: top-level form is missing terminating '.'")
-    return cast(u8*, 0)
+    return LanguageKit:Source:take_form(state, Erlang:grammar(state), ".", 168, 34, 0)
 }
 
 let Erlang:source_has_more = fn (state:Context*) -> i64 {
-    context:source:ensure(state, 1048576)
-    let source = cast(u8*, context:source:data(state)); let bytes = context:source:bytes(state)
-    var i = 0
-    while i < bytes {
-        if Erlang:is_space(source[i]) { i += 1 }
-        else if source[i] == 37 { while i < bytes && source[i] != 10 && source[i] != 13 { i += 1 } }
-        else { return 1 }
-    }
-    return 0
+    let reader = LanguageKit:Reader:new_phrases(state, Erlang:grammar(state), 168)
+    if !reader { return 0 }
+    defer reader.destroy()
+    reader.skip_trivia()
+    return !LanguageKit:Source:eof(state)
 }
 
 let Erlang:run_main = fn (state:Context*) -> void {
@@ -1079,7 +1079,7 @@ let Erlang:ignore_form = phrase {
 
 // Fixed Erlang forms are real RecurLoop phrases. Only their small payload is
 // parsed here; arbitrary function bodies continue through the function-form
-// parser because Erlang expression/pattern semantics require their own AST.
+// reader. The existing actor runtime retains its expression/pattern objects.
 let Erlang:module_form = phrase {
     type = <phrase-types:elaborate>
     permanent = true
@@ -1089,15 +1089,15 @@ let Erlang:module_form = phrase {
             let database = Erlang:database(state)
             let parser = Erlang:Parser:new(state, database, source)
             if parser {
-                if Erlang:Parser:match(parser, 40) {
+                if Erlang:Parser:match(parser, "(") {
                     let name = Erlang:Parser:identifier(parser)
                     if name {
                         Erlang:categorize_symbol(state, "Modules", name)
                         free(name)
                     }
-                    if !Erlang:Parser:match(parser, 41) { context:diagnostic:error(state, "Erlang: -module expects ')' ") }
+                    if !Erlang:Parser:match(parser, ")") { context:diagnostic:error(state, "Erlang: -module expects ')' ") }
                 } else { context:diagnostic:error(state, "Erlang: -module expects '(name)'") }
-                free(cast(u8*, parser))
+                Erlang:Parser:destroy(parser)
             }
             free(source)
         }
@@ -1115,28 +1115,28 @@ let Erlang:export_form = phrase {
             let database = Erlang:database(state)
             let parser = Erlang:Parser:new(state, database, source)
             if parser {
-                if Erlang:Parser:match(parser, 40) && Erlang:Parser:match(parser, 91) {
-                    var more = !Erlang:Parser:match(parser, 93)
+                if Erlang:Parser:match(parser, "(") && Erlang:Parser:match(parser, "[") {
+                    var more = !Erlang:Parser:match(parser, "]")
                     while more {
                         let name = Erlang:Parser:identifier(parser)
                         if !name { context:diagnostic:error(state, "Erlang: -export expects function/arity entries"); more = 0 }
                         else {
-                            if Erlang:Parser:match(parser, 47) {
+                            if Erlang:Parser:match(parser, "/") {
                                 let arity = Erlang:Parser:number_raw(parser)
                                 Erlang:categorize_symbol(state, "Functions", name)
                                 Erlang:categorize_symbol(state, "Grammar", name)
                             } else { context:diagnostic:error(state, "Erlang: -export expects '/arity'"); more = 0 }
                             free(name)
                             if more {
-                                if Erlang:Parser:match(parser, 44) { }
+                                if Erlang:Parser:match(parser, ",") { }
                                 else { more = 0 }
                             }
                         }
                     }
-                    if !Erlang:Parser:match(parser, 93) { context:diagnostic:error(state, "Erlang: -export expects ']'") }
-                    if !Erlang:Parser:match(parser, 41) { context:diagnostic:error(state, "Erlang: -export expects ')'") }
+                    if !Erlang:Parser:match(parser, "]") { context:diagnostic:error(state, "Erlang: -export expects ']'") }
+                    if !Erlang:Parser:match(parser, ")") { context:diagnostic:error(state, "Erlang: -export expects ')'") }
                 } else { context:diagnostic:error(state, "Erlang: -export expects '([...])'") }
-                free(cast(u8*, parser))
+                Erlang:Parser:destroy(parser)
             }
             free(source)
         }
@@ -1152,20 +1152,12 @@ let Erlang:assert_symbol_phrase = phrase {
     type = <phrase-types:elaborate>
     permanent = true
     action = fn (state:Context*, called:Phrase*) -> void {
-        context:source:ensure(state, 4096)
-        let source = cast(u8*, context:source:data(state))
-        let bytes = context:source:bytes(state)
-        var i = 0
-        while i < bytes && Erlang:is_space(source[i]) { i += 1 }
-        let category_start = i
-        while i < bytes && Erlang:is_ident_continue(source[i]) { i += 1 }
-        let category_end = i
-        while i < bytes && Erlang:is_space(source[i]) { i += 1 }
-        let name_start = i
-        while i < bytes && !Erlang:is_space(source[i]) { i += 1 }
-        let name_end = i
-        let category = Erlang:copy_bytes(&source[category_start], category_end - category_start)
-        let name = Erlang:copy_bytes(&source[name_start], name_end - name_start)
+        let reader = LanguageKit:Reader:new_phrases(state, Erlang:grammar(state), 169)
+        if !reader { return }
+        defer reader.destroy()
+        let category = reader.take_identifier()
+        var name = cast(u8*, 0)
+        if reader.kind_of() && reader.kind_of() != 6 { name = reader.take_text() }
         if !category || !name { context:diagnostic:error(state, "erlang_assert expects CATEGORY NAME") }
         else {
             var owner_name = cast(u8*, 0)
@@ -1183,7 +1175,7 @@ let Erlang:assert_symbol_phrase = phrase {
         }
         if category { free(category) }
         if name { free(name) }
-        context:source:advance(state, name_end)
+        LanguageKit:Source:skip_line(state)
         context:source:root(state)
     }
 }
@@ -1212,5 +1204,7 @@ set strlen.serializable = false
 set strcmp.serializable = false
 set printf.serializable = false
 set install_erlang_fallback.serializable = false
+
+languagekit_native_end
 
 engine export "/tmp/recurloop-erlang-library.rli"
