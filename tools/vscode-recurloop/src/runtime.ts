@@ -21,6 +21,7 @@ class WorkspaceRuntime implements vscode.Disposable {
   public revision = 0;
   private readonly connections = new Set<RuntimeConnection>();
   private readonly inspections = new Map<string, { revision: number; source: string; promise: Promise<string>; controller: AbortController; users: number; done: boolean }>();
+  private readonly inspectionSessions = new Map<string, { connection?: RuntimeConnection; queue: Promise<void>; busy: number }>();
   private readonly executions = new Set<Promise<unknown>>();
   private executionQueue: Promise<void> = Promise.resolve();
 
@@ -41,7 +42,7 @@ class WorkspaceRuntime implements vscode.Disposable {
       const command = `${trace ? ':trace' : ':inspect'}\t${hexEncode(document.uri.fsPath)}\t${hexEncode(source)}`;
       const timeout = vscode.workspace.getConfiguration('recurloop', uri).get('analysis.timeoutMs', 5000) as number;
       entry = { revision: this.revision, source, controller, users: 0, done: false,
-        promise: this.request(this.socketPath!, command, timeout, controller.signal) };
+        promise: this.inspectRequest(document.uri.fsPath, command, timeout, controller.signal) };
       const current = entry;
       this.inspections.set(key, current);
       current.promise.then(() => { current.done = true; }, () => {
@@ -81,10 +82,50 @@ class WorkspaceRuntime implements vscode.Disposable {
     }
   }
 
+  private inspectRequest(file: string, command: string, timeout: number, signal: AbortSignal): Promise<string> {
+    let session = this.inspectionSessions.get(file);
+    if (!session) session = { queue: Promise.resolve(), busy: 0 };
+    // Keep each file's source-entry context, including while another file is
+    // analyzed. Requests on one private server session are always serialized.
+    this.inspectionSessions.delete(file);
+    this.inspectionSessions.set(file, session);
+    const current = session;
+    current.busy++;
+    const task = current.queue.then(() => {
+      signal.throwIfAborted();
+      if (!current.connection) current.connection = new RuntimeConnection(this.socketPath!, () => {
+        current.connection = undefined;
+      });
+      return current.connection.request([command], timeout, signal);
+    });
+    current.queue = task.then(() => undefined, () => undefined);
+    return task.finally(() => {
+      current.busy--;
+      // Bound retained contexts, while active requests keep their sessions.
+      for (const [key, retained] of this.inspectionSessions) {
+        if (this.inspectionSessions.size <= 8) break;
+        if (!retained.busy) { retained.connection?.close(); this.inspectionSessions.delete(key); }
+      }
+    });
+  }
+
+  public async highlight(document: vscode.TextDocument): Promise<string> {
+    if (!hasProject(document.uri)) return '';
+    const source = document.getText();
+    await this.ensureStarted(document.uri);
+    const revision = this.revision;
+    const timeout = vscode.workspace.getConfiguration('recurloop', document.uri).get('analysis.timeoutMs', 5000) as number;
+    const response = await this.inspectRequest('\0palette', `:highlight\t${hexEncode(source)}`, timeout, new AbortController().signal);
+    if (this.revision !== revision) throw new vscode.CancellationError();
+    return response;
+  }
+
   private invalidateInspections(): void {
     this.revision++;
     for (const entry of this.inspections.values()) if (!entry.done) entry.controller.abort(new vscode.CancellationError());
     this.inspections.clear();
+    for (const session of this.inspectionSessions.values()) session.connection?.close();
+    this.inspectionSessions.clear();
   }
 
   public async restart(uri?: vscode.Uri): Promise<void> {
@@ -302,6 +343,7 @@ export class RecurLoopRuntime implements vscode.Disposable {
     return operation();
   }
   inspect(document: vscode.TextDocument, trace = true, signal?: AbortSignal, uri = document.uri): Promise<string> { return this.afterMaintenance(() => this.runtime(uri).inspect(document, trace, signal, uri)); }
+  highlight(document: vscode.TextDocument): Promise<string> { return this.afterMaintenance(() => this.runtime(document.uri).highlight(document)); }
   revision(uri: vscode.Uri): number { return this.runtime(uri).revision; }
   epoch(uri: vscode.Uri): number { return this.runtime(uri).lifecycle; }
   openAnalysis(uri: vscode.Uri): Promise<RuntimeConnection> { return this.afterMaintenance(() => this.runtime(uri).openAnalysis(uri)); }

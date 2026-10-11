@@ -4,6 +4,18 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const Module = require('node:module');
+const net = require('node:net');
+const inspectedSessions = new Set();
+const originalConnect = net.createConnection;
+net.createConnection = function(...args) {
+  const socket = originalConnect.apply(this, args);
+  const write = socket.write;
+  socket.write = function(data, ...rest) {
+    if (String(data).startsWith(':trace\t')) inspectedSessions.add(socket);
+    return write.call(this, data, ...rest);
+  };
+  return socket;
+};
 const { execFileSync } = require('node:child_process');
 let terminalLibraries = ['shell', 'inferred'];
 let projectEntry = 'recurloop.project.rl';
@@ -65,6 +77,13 @@ target cycle depends [cycle] {}
   const trace = await runtime.inspect({ uri: { fsPath: path.join(root, 'main.rl') }, getText: () => 'greeting 42\n' });
   assert.ok(trace.includes(Buffer.from('greeting').toString('hex')), trace);
   assert.ok(!trace.includes(Buffer.from('undefined phrase').toString('hex')), trace);
+  const inspectedDocument = source => ({ uri: { fsPath: path.join(root, 'main.rl') }, getText: () => source });
+  for (const value of [43, 44]) await runtime.inspect(inspectedDocument(`greeting ${value}\n`));
+  const queued = await Promise.all(['queued_first', 'queued_second'].map(name =>
+    runtime.inspect(inspectedDocument(`const ${name} = 1\ngreeting ${name}\n`))));
+  assert.equal(inspectedSessions.size, 1, 'Edits must reuse one serialized private source-entry session');
+  assert.ok(!queued[0].includes(Buffer.from('queued_second').toString('hex')));
+  assert.ok(!queued[1].includes(Buffer.from('queued_first').toString('hex')), 'An earlier edited buffer must roll back');
   // Root inspection replays cached includes and replaces the lexicon graph.
   // Analysis must preserve the shared server and its console connections.
   const rootDocument = { uri: { fsPath: path.join(root, 'recurloop.project.rl') },
@@ -129,4 +148,4 @@ target check { assert ExampleApplication:advance(3, 2) == 8 }
   assert.ok(fs.existsSync(path.join(root, '.cache/recurloop/application-debug')));
   console.log('Runtime integration passed: project graph, custom syntax, targets, failure, cycle, console and restart.');
 })().catch(error => { console.error(error, log.join('\n')); process.exitCode = 1; })
-  .finally(() => { runtime.dispose(); setup.dispose(); fs.rmSync(root, { recursive: true, force: true }); });
+  .finally(() => { net.createConnection = originalConnect; runtime.dispose(); setup.dispose(); fs.rmSync(root, { recursive: true, force: true }); });

@@ -51,6 +51,8 @@ namespace recurloop {
       std::string targetPath;
       std::string targetSource;
       bool cacheBacked = false;
+      bool prepareOnly = false;
+      bool directEntry = false;
       bool insideTarget = false;
       bool reached = false;
       std::string diagnostic;
@@ -67,6 +69,10 @@ namespace recurloop {
 
     bool replayInspectionSource(context::Context &context, InspectionReplayState &state, std::string_view root, bool direct) {
       const auto executeTarget = [&](context::Context &targetContext) {
+        if (state.prepareOnly) {
+          state.reached = state.directEntry = true;
+          return;
+        }
         state.inspection = std::make_unique<Semantic::InspectionScope>(targetContext, state.targetSource, state.targetPath);
         state.insideTarget = true;
         try {
@@ -112,6 +118,16 @@ namespace recurloop {
             }
             if (state->reached) return true;
             if (nestedPath == state->targetPath) {
+              if (state->prepareOnly) {
+                // Retain only a top-level entry: scoped includes must replay
+                // their surrounding grammar and value scopes for each request.
+                state->directEntry =
+                    nestedContext.staging.dictionary.getAddress() == nestedContext.lexicon.phrase().getAddress() &&
+                    nestedContext.values().scopeDepth() == 1;
+                state->reached = true;
+                stopCurrentSource(nestedContext);
+                return true;
+              }
               state->inspection = std::make_unique<Semantic::InspectionScope>(nestedContext, state->targetSource,
                                                                                state->targetPath);
               state->insideTarget = true;
@@ -165,7 +181,7 @@ namespace recurloop {
       } catch (...) {
         if (!state.reached) state.diagnostic = "project replay failed before source";
       }
-      return state.reached && state.inspection != nullptr;
+      return state.reached && (state.prepareOnly || state.inspection != nullptr);
     }
   } // namespace
 
@@ -217,6 +233,28 @@ namespace recurloop {
                                             project_->arguments(), base->id, project_->nextId(), project_->nextId());
 
     direct = project_->restoreInspectionEntry(inspectionContextGeneration_->context(), pathCopy);
+    if (!direct && pathCopy != root) {
+      // A parent with declarations between includes cannot be represented by
+      // the append-only module images alone. Replay that prefix once in this
+      // private context, before the inspection's rollback boundary.
+      auto &context = inspectionContextGeneration_->context();
+      const auto previousIo = context.io;
+      std::ostringstream discardedOutput;
+      std::ostringstream discardedErrors;
+      context.io = {nullptr, &discardedOutput, &discardedErrors};
+      {
+        NativeIO::Scope nativeIo(context.io);
+        InspectionReplayState prefix{project_, pathCopy, {}, true};
+        prefix.prepareOnly = true;
+        direct = replayInspectionSource(context, prefix, root, false) && prefix.directEntry;
+      }
+      context.io = previousIo;
+      context.exec.status = 0;
+      if (!direct)
+        inspectionContextGeneration_ = std::make_unique<ContextGeneration>(
+            base->lexicon, project_->config(), project_->actions(), project_->arguments(), base->id, project_->nextId(),
+            project_->nextId());
+    }
     inspectionPreparedPath_ = pathCopy;
     inspectionPreparedRoot_ = root;
     inspectionPreparedRevision_ = revision;
@@ -477,7 +515,7 @@ namespace recurloop {
 
   std::string Session::highlight(std::string_view line) {
     std::lock_guard lock(mutex_);
-    if (line.empty() || line.size() > 8192) return {};
+    if (line.empty() || line.size() > 1024 * 1024) return {};
     const auto generation = contextGeneration_->generations().session;
     if (!consoleHighlighter_ || consolePaletteGeneration_ != generation) {
       consoleHighlighter_ = std::make_unique<Semantic::ConsoleHighlighter>(contextGeneration_->context());

@@ -149,6 +149,16 @@ The standalone context is created lazily per session and reused after rollback;
 a baseline change recreates it. Only the context's resources are reused, not
 previous analysis results or elaborated buffer state.
 
+Editor inspections reuse bounded private sessions per file. When a top-level
+source entry requires replaying a parent's declarations between includes, its
+prefix is prepared once before the rollback boundary. Subsequent edits reuse
+that context; graph stamps, cache revisions and publication changes invalidate
+it. Scoped entries retain ordinary replay. The `:highlight` palette provides
+initial editor colors without elaboration; full inspection then applies exact
+local metadata. Documentation-only phrase matches preserve default colors, and
+compiler names introduced by includes or declarations receive their type or
+function colors.
+
 `start` and `end` are UTF-8 character offsets; `end` is exclusive. `line` is
 one-based. `name` is the dictionary path; `version` counts older definitions of
 the same phrase, so chronological shadows remain distinct without exporting

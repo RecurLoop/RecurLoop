@@ -692,6 +692,26 @@ print exampleFn
   EXPECT_EQ(clearInspection.output.find("23303030304646"), std::string::npos);
 }
 
+TEST(RecurloopGeneration, DocumentationOnlyPhrasesPreserveIdentifierAndExternalFunctionColors) {
+  auto session = project()->openSession();
+  const auto definitions = session->evaluate("let argument = phrase { docs = \"Describes a root phrase.\" }\n"
+                                             "extern described_query(value:i64) -> i64 abi sysv-amd64\n"
+                                             "set described_query.docs = \"Describes an external function.\"\n");
+  ASSERT_EQ(definitions.status, 0) << definitions.error;
+  const std::string source = "let query = fn (argument:i64) -> i64 {\n"
+                             "    return described_query(argument)\n}\n"
+                             "let read = fn (argument:i64) -> i64 { return argument }\n";
+  const auto inspected = session->inspect(source, "/tmp/documentation-only-colors.rl", true);
+  ASSERT_EQ(inspected.output.find("E\t"), std::string::npos) << inspected.output;
+  const auto colors = inspectionColors(inspected.output);
+  const auto function = source.find("described_query");
+  const auto argument = source.find("argument)", function);
+  const auto read = source.rfind("argument");
+  EXPECT_EQ(colors.at({function, function + 15}), "23444344434141");
+  EXPECT_EQ(colors.at({argument, argument + 8}), "23394344434645");
+  EXPECT_EQ(colors.at({read, read + 8}), "23394344434645");
+}
+
 TEST(RecurloopGeneration, FunctionCallsRecordPhraseMetadataForDirectNestedAndQualifiedCalls) {
   auto session = project()->openSession();
   const std::string source = R"(let Example = phrase { dictionary = true }

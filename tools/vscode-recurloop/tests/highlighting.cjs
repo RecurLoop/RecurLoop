@@ -49,6 +49,8 @@ extern printf(format:u8*, ...) -> i64 abi sysv-amd64
 let Probe:main = fn () -> i64 {
     var distance:i64 = 0
     var tick:i64 = 1
+    var value:i64 = 2
+    value = described_query(value)
     while tick <= 3 {
         distance = Probe:advance(distance, 10)
         printf("Tick %lld: %lld km\\n", tick, distance)
@@ -56,7 +58,7 @@ let Probe:main = fn () -> i64 {
     }
     return 0
 }
-`;
+` + '// π 😀 ' + 'padding '.repeat(1100) + '\n';
 const lines = source.split('\n');
 const document = { uri: uri(path.join(root, 'main.rl')), languageId: 'recurloop', version: 1,
   getText: () => source, lineCount: lines.length, lineAt: line => ({ text: lines[line] }),
@@ -82,14 +84,45 @@ const assertLet = () => {
   assert.equal(log.length, 0);
   fs.writeFileSync(document.uri.fsPath, source);
   fs.writeFileSync(path.join(root, 'probe.rl'), `let Probe = phrase { dictionary = true permanent = true }
+let value = phrase { docs = "A root phrase unrelated to the local parameter." }
+extern described_query(value:i64) -> i64 abi sysv-amd64
+set described_query.docs = "An external function with documentation and no explicit color."
 let Probe:advance = fn (distance:i64, speed:i64) -> i64 { return distance + speed }
 `);
   const entry = path.join(root, 'recurloop.project.rl');
   fs.writeFileSync(entry, 'include "main.rl"\n');
-  await analysis.refresh(document);
+  // The host's palette must render even while complete semantic inspection is
+  // delayed, including files larger than the former console-only 8 KiB limit.
+  const inspect = runtime.inspect.bind(runtime);
+  let release;
+  const gate = new Promise(resolve => { release = resolve; });
+  runtime.inspect = async (...args) => { await gate; return inspect(...args); };
+  let painted;
+  const firstPaint = new Promise(resolve => { painted = resolve; });
+  const setDecorations = editor.setDecorations;
+  editor.setDecorations = (...args) => { setDecorations(...args); if (args[1].length) painted(); };
+  const refresh = analysis.refresh(document);
+  try {
+    await Promise.race([firstPaint, new Promise((_, reject) => {
+      const timer = setTimeout(() => reject(new Error('Palette waited for semantic inspection')), 10000);
+      timer.unref();
+    })]);
+    assertLet();
+  } finally {
+    release(); runtime.inspect = inspect; editor.setDecorations = setDecorations;
+  }
+  await refresh;
   assertLet();
   const first = palette();
   assert.ok(first.length > 0);
+  const assertWord = (word, color) => {
+    const offset = source.indexOf(word, source.indexOf('let Probe:main'));
+    const position = document.positionAt(offset);
+    assert.ok(colors.get(color)?.some(range => range.start.line === position.line && range.end.line === position.line
+      && range.start.character <= position.character && range.end.character >= position.character + word.length), word);
+  };
+  assertWord('value', '#9CDCFE');
+  assertWord('described_query', '#DCDCAA');
   // Both the editor result cache and module images must preserve the colors.
   await analysis.refresh(document);
   assert.deepEqual(palette(), first);

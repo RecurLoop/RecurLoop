@@ -186,6 +186,8 @@ export class AnalysisController implements vscode.Disposable {
   private readonly cache = new Map<string, AnalysisResult>();
   private readonly debounce = new Map<string, NodeJS.Timeout>();
   private readonly decorations = new Map<string, vscode.TextEditorDecorationType>();
+  private readonly colored = new Set<string>();
+  private disposed = false;
   private readonly disposables: vscode.Disposable[] = [];
 
   constructor(
@@ -215,6 +217,7 @@ export class AnalysisController implements vscode.Disposable {
         if (document.languageId === 'recurloop') this.schedule(document, 0);
       }),
       vscode.workspace.onDidCloseTextDocument(document => {
+        this.colored.delete(document.uri.toString());
         for (const key of this.cache.keys()) if (key.startsWith(`${document.uri.toString()}#`)) this.cache.delete(key);
         this.diagnostics.delete(document.uri);
       }),
@@ -274,9 +277,10 @@ export class AnalysisController implements vscode.Disposable {
   }
 
   private async refresh(document: vscode.TextDocument): Promise<void> {
+    void this.previewColors(document).catch(() => undefined);
     try {
       const result = await this.get(document);
-      if (document.version !== result.version) return;
+      if (this.disposed || document.version !== result.version) return;
       this.publishDiagnostic(document, result);
       for (const editor of vscode.window.visibleTextEditors) {
         if (editor.document.uri.toString() === document.uri.toString()) this.applyColors(editor, result);
@@ -290,9 +294,10 @@ export class AnalysisController implements vscode.Disposable {
   }
 
   private async refreshEditor(editor: vscode.TextEditor): Promise<void> {
+    void this.previewColors(editor.document).catch(() => undefined);
     try {
       const result = await this.get(editor.document);
-      if (editor.document.version === result.version) this.applyColors(editor, result);
+      if (!this.disposed && editor.document.version === result.version) this.applyColors(editor, result);
     } catch {
       // Diagnostic refresh reports the actual error.
     }
@@ -340,6 +345,24 @@ export class AnalysisController implements vscode.Disposable {
       }
       editor.setDecorations(decoration, ranges);
     }
+    if (groups.size) this.colored.add(editor.document.uri.toString());
+    else this.colored.delete(editor.document.uri.toString());
+  }
+
+  private async previewColors(document: vscode.TextDocument): Promise<void> {
+    const key = document.uri.toString();
+    // Existing decorations already track edits in VS Code. Preserve exact
+    // local styles while the next semantic result is pending.
+    if (this.disposed || this.colored.has(key) || !hasProject(document.uri) ||
+      !vscode.workspace.getConfiguration('recurloop', document.uri).get('analysis.enabled', true)) return;
+    const version = document.version;
+    const source = document.getText();
+    const response = await this.runtime.highlight(document);
+    if (this.disposed || this.colored.has(key) || document.version !== version || !hasProject(document.uri) ||
+      !vscode.workspace.getConfiguration('recurloop', document.uri).get('analysis.enabled', true)) return;
+    const result = parseInspection({ version, getText: () => source }, response);
+    for (const editor of vscode.window.visibleTextEditors)
+      if (editor.document.uri.toString() === key) this.applyColors(editor, result);
   }
 
   private async hover(document: vscode.TextDocument, position: vscode.Position, token?: vscode.CancellationToken): Promise<vscode.Hover | undefined> {
@@ -466,6 +489,7 @@ export class AnalysisController implements vscode.Disposable {
   }
 
   public dispose(): void {
+    this.disposed = true;
     for (const timer of this.debounce.values()) clearTimeout(timer);
     for (const decoration of this.decorations.values()) decoration.dispose();
     for (const disposable of this.disposables) disposable.dispose();

@@ -136,18 +136,21 @@ namespace recurloop {
       std::vector<Symbol> symbols;
       std::unordered_map<Size, Size> symbolIds;
       std::unordered_map<Size, std::string> names;
+      std::unordered_map<Size, std::string> dictionaries;
       bool namesDirty = false;
     };
 
     thread_local TraceState *currentTrace = nullptr;
 
-    std::unordered_map<Size, std::string> phrasePaths(context::Context &context) {
+    std::unordered_map<Size, std::string> phrasePaths(context::Context &context,
+                                                      std::unordered_map<Size, std::string> *dictionaries = nullptr) {
       std::unordered_map<Size, std::string> names;
       std::unordered_set<Size> visited;
       const auto visit = [&](lexicon::Phrase owner, std::string prefix, const auto &self) -> void {
         if (owner.isNull() || !owner.containsSubdictionary() ||
             !visited.insert(owner.getSubdictionary().getAddress()).second)
           return;
+        if (dictionaries != nullptr) dictionaries->try_emplace(owner.getSubdictionary().getAddress(), prefix);
         auto populated = [](radix::Node *, radix::Node *candidate) { return !candidate->isEmpty(); };
         for (lexicon::Dictionary node = owner.fore(populated); !node.isNull(); node = node.next(populated)) {
           lexicon::Phrase phrase = node.getPhrase();
@@ -563,9 +566,26 @@ namespace recurloop {
       if (phrase.isNull()) return 0;
       const Size address = phrase.getAddress();
       if (const auto found = trace.symbolIds.find(address); found != trace.symbolIds.end()) return found->second;
-      if (trace.namesDirty || !trace.names.contains(address)) {
-        trace.names = phrasePaths(*trace.context);
+      if (trace.namesDirty) {
+        trace.dictionaries.clear();
+        trace.names = phrasePaths(*trace.context, &trace.dictionaries);
         trace.namesDirty = false;
+      }
+      if (!trace.names.contains(address)) {
+        // An item retains its actual radix node even when it is a new phrase
+        // or declaration version. Find that dictionary's cached path instead
+        // of walking every phrase in the language after each declaration.
+        auto node = phrase.getNode();
+        while (!node.isNull() && !trace.dictionaries.contains(node.getAddress())) node = node.predecessor();
+        if (!node.isNull()) {
+          const auto &prefix = trace.dictionaries.at(node.getAddress());
+          trace.names.emplace(address, prefix.empty() ? phrase.getKey() : prefix + ':' + phrase.getKey());
+        } else {
+          trace.dictionaries.clear();
+          trace.names = phrasePaths(*trace.context, &trace.dictionaries);
+        }
+        if (trace.names.contains(address) && phrase.containsSubdictionary())
+          trace.dictionaries.try_emplace(phrase.getSubdictionary().getAddress(), trace.names.at(address));
         trace.names.try_emplace(address, phrase.getKey());
       }
       TraceState::Symbol symbol;
@@ -586,7 +606,8 @@ namespace recurloop {
       TraceState::Symbol symbol = trace.symbols.at(id - 1);
       if (symbol.address == 0) return symbol;
       if (trace.namesDirty) {
-        trace.names = phrasePaths(*trace.context);
+        trace.dictionaries.clear();
+        trace.names = phrasePaths(*trace.context, &trace.dictionaries);
         trace.namesDirty = false;
       }
       // Incomplete elaboration can roll back temporary phrases and reuse their
@@ -682,14 +703,7 @@ namespace recurloop {
       std::unordered_set<std::string> functionNames;
     };
 
-    LexicalBaselineCatalog buildLexicalBaselineCatalog(TraceState &trace) {
-      LexicalBaselineCatalog result;
-      result.phrases = lexicalPhraseStyles(trace);
-      for (std::size_t index = 0; index < result.phrases.size(); ++index) {
-        const LexicalPhraseStyle &phrase = result.phrases[index];
-        if (!phrase.key.empty())
-          result.phraseBuckets[static_cast<unsigned char>(phrase.key.front())].push_back(index);
-      }
+    void compilerNames(TraceState &trace, LexicalBaselineCatalog &result) {
       try {
         compiler::LanguageState language = trace.context->language();
         for (const compiler::TypeDescriptor &type : language.types.types())
@@ -700,6 +714,16 @@ namespace recurloop {
         // Phrase metadata and literal/comment highlighting remain useful even
         // for a deliberately tiny host that has no typed-language registry.
       }
+    }
+
+    LexicalBaselineCatalog buildLexicalBaselineCatalog(TraceState &trace) {
+      LexicalBaselineCatalog result;
+      result.phrases = lexicalPhraseStyles(trace);
+      for (std::size_t index = 0; index < result.phrases.size(); ++index) {
+        const LexicalPhraseStyle &phrase = result.phrases[index];
+        if (!phrase.key.empty()) result.phraseBuckets[static_cast<unsigned char>(phrase.key.front())].push_back(index);
+      }
+      compilerNames(trace, result);
       return result;
     }
 
@@ -749,6 +773,9 @@ namespace recurloop {
                       metadata.hasColor ? std::string_view(metadata.color) : std::string_view{},
                       metadata.hasKind ? std::string_view(metadata.kind) : std::string_view{},
                       metadata.hasDocs ? std::string_view(metadata.docs) : std::string_view{}, candidate.key);
+          // Documentation alone does not replace the token's ordinary color.
+          // Real matches below still honor explicit empty colors and scopes.
+          if (!metadata.hasColor || metadata.color.empty()) continue;
           cursor += candidate.key.size();
           phraseMatched = true;
           break;
@@ -983,7 +1010,7 @@ namespace recurloop {
     state->characterOffsets[state->source.size()] = characters;
     state->metadata = catalog(context);
     state->origins = origins(context);
-    state->names = phrasePaths(context);
+    state->names = phrasePaths(context, &state->dictionaries);
     // Source grammars legitimately use empty transition phrases, so the budget
     // is deliberately generous and scales with the inspected buffer.  It is a
     // deterministic safety bound, not a debounce or wall-clock timeout.
@@ -1004,11 +1031,30 @@ namespace recurloop {
   std::string Semantic::InspectionScope::encode(std::string_view diagnostic) const {
     auto &state = *static_cast<TraceState *>(state_);
     std::vector<Span> spans = state.spans;
+    // Includes and declarations in the edited buffer can introduce compiler
+    // names after its initial palette was built. Refresh only default colors;
+    // explicit phrase/local metadata and chronological identities still win.
+    LexicalBaselineCatalog compiled;
+    compilerNames(state, compiled);
+    for (auto &span : spans) {
+      if (span.source != Span::Source::Lexical || span.kind != "identifier" || !span.ownerKey.empty()) continue;
+      const auto begin = std::lower_bound(state.characterOffsets.begin(), state.characterOffsets.end(), span.start);
+      const auto end = std::lower_bound(state.characterOffsets.begin(), state.characterOffsets.end(), span.end);
+      const auto name = state.source.substr(begin - state.characterOffsets.begin(), end - begin);
+      if (compiled.typeNames.contains(name)) {
+        span.color = "#4EC9B0";
+        span.kind = "type";
+      } else if (compiled.functionNames.contains(name)) {
+        span.color = "#DCDCAA";
+        span.kind = "function";
+      }
+    }
     // Record identities while parsing, then resolve all metadata from the final
     // elaborated state. Declarations and earlier reads follow the same rule as
     // later uses; shadowed bindings retain their own identities.
     if (state.metadataDirty) refreshTraceCatalog(state);
-    state.names = phrasePaths(*state.context);
+    state.dictionaries.clear();
+    state.names = phrasePaths(*state.context, &state.dictionaries);
     state.namesDirty = false;
     std::unordered_map<Size, TraceState::Symbol> phraseMetadata;
     const auto metadataFor = [&](Size id) -> const TraceState::Symbol & {
