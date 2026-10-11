@@ -356,6 +356,59 @@ exampleFn()
   assert.deepEqual(rendered('#123456'), []);
   assert.deepEqual(rendered('#FF8800'), expectedGlobalRanges);
   assert.deepEqual(rendered('#008800'), expectedFunctionRanges);
+  // Resolved fields/constants must not borrow docs from a preceding cast or
+  // enclosing function. Field signatures come from the actual compiler types.
+  const fieldSource = `let Game = phrase { dictionary = true }
+const Game:Speed = 180.0
+record Game:State { ball_vx:f64 phase:i64 trail:f64[3] next:Game:State* }
+set Game:State:phase.docs = "Current phase."
+set Game:State:trail.docs = ""
+let Game:update = fn (state:Game:State*) -> f64 {
+    state.ball_vx = cast(f64, Game:Speed)
+    state.phase = 1
+    state.trail[0] = state.ball_vx
+    state.next = state
+    return state.ball_vx
+}
+set Game:update.docs = "Updates state."
+`;
+  fs.writeFileSync(path.join(root, 'main.rl'), fieldSource);
+  await runtime.reload(folder.uri); analysis.invalidate();
+  const fieldDoc = document(fieldSource);
+  const fieldFacts = parseInspection(fieldDoc, await runtime.inspect(fieldDoc));
+  assert.equal(fieldFacts.diagnostic, undefined);
+  const checkFieldHovers = async () => {
+    for (const [name, type, docs] of [['ball_vx', 'f64', ''], ['phase', 'i64', 'Current phase.'],
+      ['trail', 'f64[3]', ''], ['next', 'Game:State*', '']]) {
+      const fact = fieldFacts.symbols.find(item => item.name === `Game:State:${name}`);
+      assert.equal(fact.type, type);
+      assert.equal(fact.signature, `Game:State:${name}: ${type}`);
+      const offsets = [fieldSource.indexOf(`${name}:`),
+        ...Array.from(fieldSource.matchAll(new RegExp(`\\bstate\\.${name}\\b`, 'g')), match => match.index + 6)];
+      for (const offset of offsets) {
+        const hover = await providers.registerHoverProvider.provideHover(fieldDoc,
+          fieldDoc.positionAt(offset + 1));
+        assert.ok(hover, `${name} at ${offset}`);
+        assert.ok(hover.contents.value.includes(fact.signature), hover.contents.value);
+        assert.ok(hover.contents.value.includes(`type: ${type}`), hover.contents.value);
+        assert.ok(!hover.contents.value.includes('cast(Type'), hover.contents.value);
+        assert.ok(!hover.contents.value.includes('Updates state.'), hover.contents.value);
+        if (docs) assert.ok(hover.contents.value.includes(docs), hover.contents.value);
+        assert.equal(fieldDoc.offsetAt(hover.range.start), offset);
+        assert.equal(fieldDoc.offsetAt(hover.range.end), offset + name.length);
+      }
+    }
+    const speed = await providers.registerHoverProvider.provideHover(fieldDoc,
+      fieldDoc.positionAt(fieldSource.lastIndexOf('Speed') + 1));
+    assert.ok(!speed.contents.value.includes('cast(Type'), speed.contents.value);
+    const cast = await providers.registerHoverProvider.provideHover(fieldDoc,
+      fieldDoc.positionAt(fieldSource.indexOf('cast(') + 1));
+    assert.match(cast.contents.value, /cast/);
+    assert.match(cast.contents.value, /explicitly converts/);
+  };
+  await checkFieldHovers();
+  await runtime.restart(folder.uri); analysis.invalidate();
+  await checkFieldHovers();
   // Imported phrases retain their docs and get only an italic footer. Local
   // aliases/shadows own their definitions and must not inherit the footer.
   const imagePath = path.join(root, 'binary_[demo].rli');

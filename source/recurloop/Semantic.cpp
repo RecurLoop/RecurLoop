@@ -1101,12 +1101,13 @@ namespace recurloop {
     // can implement documentation, navigation or other analyses in .rl.
     std::unordered_map<std::string, std::string> signatures;
     std::unordered_set<std::string> types;
-    std::unordered_set<std::string> fields;
+    std::unordered_map<std::string, std::string> fields;
     try {
       compiler::LanguageState language = context.language();
       for (const auto &type : language.types.types()) {
         types.insert(type.name);
-        for (const auto &field : type.fields) fields.insert(type.name + ':' + field.name);
+        for (const auto &field : type.fields)
+          fields.emplace(type.name + ':' + field.name, language.types.get(field.type).name);
       }
       for (const auto &function : language.functions()) {
         std::ostringstream signature;
@@ -1148,8 +1149,11 @@ namespace recurloop {
         kind = "field";
       if (signatures.contains(name)) kind = "function";
       if (exported.insert(id).second) {
+        const auto field = fields.find(name);
+        const auto &type = field == fields.end() ? fact.type : field->second;
+        const auto signature = field == fields.end() ? signatures[name] : name + ": " + field->second;
         output << "P\t" << fact.version << '\t' << hex(name) << '\t' << hex(kind) << '\t' << hex(style.docs) << '\t'
-               << hex(fact.prototype) << '\t' << hex(fact.type) << '\t' << hex(signatures[name]) << '\n';
+               << hex(fact.prototype) << '\t' << hex(type) << '\t' << hex(signature) << '\n';
         const auto present = names.find(fact.address);
         const auto location = present != names.end() && present->second == name
                                   ? recurloop::definition(sourceDefinitions, phraseAt(state, fact.address))

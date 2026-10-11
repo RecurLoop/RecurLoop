@@ -361,13 +361,14 @@ export class AnalysisController implements vscode.Disposable {
     if (fact) {
       const contract = result.help.find(item => item.version === fact.version && item.name === fact.name);
       if (contract) {
-        markdown = helpMarkdown(contract, fact.docs || span?.docs);
+        markdown = helpMarkdown(contract, fact.docs);
       } else {
         markdown.appendCodeblock(fact.signature || fact.name, 'recurloop');
         const metadata = [fact.kind, fact.type ? `type: ${fact.type}` : '', fact.prototype ? `prototype: ${fact.prototype}` : ''].filter(Boolean);
         if (metadata.length) markdown.appendMarkdown(`*${metadata.join(' · ')}*\n\n`);
-        const docs = fact.kind === 'local' ? fact.docs : fact.docs || span?.docs;
-        if (docs) markdown.appendMarkdown(docs);
+        // Spans can describe an enclosing grammar construct. Once an actual
+        // symbol is resolved, its own/inherited documentation is authoritative.
+        if (fact.docs) markdown.appendMarkdown(fact.docs);
       }
     } else if (span) {
       if (span.kind) markdown.appendMarkdown(`*${span.kind}*\n\n`);
