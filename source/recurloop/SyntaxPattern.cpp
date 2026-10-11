@@ -2,6 +2,8 @@
 
 #include <recurloop/Execution.hpp>
 #include <recurloop/Functions.hpp>
+#include <recurloop/LanguageGrammar.hpp>
+#include <recurloop/PhraseNames.hpp>
 #include <recurloop/SyntaxExtension.hpp>
 
 #include <context/Context.hpp>
@@ -30,6 +32,7 @@ namespace recurloop {
     constexpr std::uint32_t PayloadMagic = 0x31584e53; // "SNX1"
     constexpr std::uint16_t PayloadVersion = 1;
     constexpr std::size_t MaximumPatternScan = 16 * 1024 * 1024;
+    constexpr std::string_view RecognitionKey{"\0syntax-recognition", 19};
     constexpr std::string_view ActionDictionary{"\0syntax-actions", 15};
 
     enum class Behavior : std::uint16_t { Rewrite = 1, Action = 2, Alias = 3 };
@@ -169,11 +172,22 @@ namespace recurloop {
       virtual bool available(std::size_t offset) = 0;
       virtual char at(std::size_t offset) = 0;
       virtual std::string slice(std::size_t begin, std::size_t end) = 0;
+      virtual context::Context *language() {
+        return nullptr;
+      }
+      lexicon::Phrase selectedGrammar;
+      lexicon::Phrase grammar() {
+        return selectedGrammar.isNull() && language() ? language()->lexicon.phrase() : selectedGrammar;
+      }
+      virtual lexicon::Phrase phrase(std::size_t) {
+        return {};
+      }
     };
 
     class StringReader final : public Reader {
     public:
-      explicit StringReader(std::string_view source) : source(source) {}
+      explicit StringReader(std::string_view source, context::Context *context = nullptr)
+          : source(source), context(context) {}
 
       bool available(std::size_t offset) override {
         return offset < source.size();
@@ -186,8 +200,31 @@ namespace recurloop {
         return std::string(source.substr(begin, end - begin));
       }
 
+      context::Context *language() override {
+        return context;
+      }
+      lexicon::Phrase phrase(std::size_t position) override {
+        if (!context || position >= source.size()) return {};
+        const auto eligible = [&](lexicon::Phrase candidate) {
+          const auto key = candidate.getKey();
+          const auto end = position + key.size();
+          return !key.empty() && (!identifierByte(static_cast<unsigned char>(key.back())) || end == source.size() ||
+                                  !identifierByte(static_cast<unsigned char>(source[end])));
+        };
+        auto selected = grammar();
+        auto matched = LanguageGrammar::matchLongest(selected, source.substr(position), eligible);
+        auto root = context->lexicon.phrase();
+        if (selected.getAddress() != root.getAddress()) {
+          auto native = LanguageGrammar::matchLongest(root, source.substr(position), eligible);
+          if (!native.isNull() && (matched.isNull() || native.getKey().size() > matched.getKey().size()))
+            matched = native;
+        }
+        return matched;
+      }
+
     private:
       std::string_view source;
+      context::Context *context;
     };
 
     class ContextReader final : public Reader {
@@ -211,6 +248,27 @@ namespace recurloop {
         return context.source.buffer.str.substr(start + begin, end - begin);
       }
 
+      context::Context *language() override {
+        return &context;
+      }
+      lexicon::Phrase phrase(std::size_t position) override {
+        const auto eligible = [&](lexicon::Phrase candidate) {
+          const auto key = candidate.getKey();
+          return !key.empty() &&
+                 (!identifierByte(static_cast<unsigned char>(key.back())) || !available(position + key.size()) ||
+                  !identifierByte(static_cast<unsigned char>(at(position + key.size()))));
+        };
+        auto selected = grammar();
+        auto matched = LanguageGrammar::peekLongest(context, selected, position, eligible);
+        auto root = context.lexicon.phrase();
+        if (selected.getAddress() != root.getAddress()) {
+          auto native = LanguageGrammar::peekLongest(context, root, position, eligible);
+          if (!native.isNull() && (matched.isNull() || native.getKey().size() > matched.getKey().size()))
+            matched = native;
+        }
+        return matched;
+      }
+
     private:
       context::Context &context;
     };
@@ -222,19 +280,145 @@ namespace recurloop {
       return true;
     }
 
+    std::string syntaxAt(Reader &reader, std::size_t position, std::string_view canonical) {
+      if (!reader.language()) return startsWith(reader, position, canonical) ? std::string(canonical) : std::string{};
+      auto phrase = reader.phrase(position);
+      auto prototype = LanguageGrammar::findInherited(reader.grammar(), canonical);
+      auto native = LanguageGrammar::find(reader.language()->lexicon.phrase(), canonical);
+      return LanguageGrammar::inherits(phrase, prototype) || LanguageGrammar::inherits(phrase, native) ? phrase.getKey()
+                                                                                                       : std::string{};
+    }
+
+    std::size_t patternEnd(Reader &reader, lexicon::Phrase phrase, std::size_t position);
+
+    // Capture boundaries come from the active phrase graph. This scanner only
+    // balances those boundaries; it neither evaluates nor owns a language AST.
+    struct CaptureCursor {
+      std::vector<std::string_view> closing;
+      bool patterns = true;
+      char quote = '\0';
+      bool escaped = false;
+      bool lineComment = false;
+      bool blockComment = false;
+
+      bool top() const {
+        return closing.empty() && quote == '\0' && !lineComment && !blockComment;
+      }
+
+      bool advance(Reader &reader, std::size_t &position) {
+        const char ch = reader.at(position);
+        if (lineComment) {
+          ++position;
+          if (ch == '\n' || ch == '\r') lineComment = false;
+          return true;
+        }
+        if (blockComment) {
+          auto ending = syntaxAt(reader, position, "*/");
+          if (ending.empty() && startsWith(reader, position, "*/")) ending = "*/";
+          if (!ending.empty()) {
+            position += ending.size();
+            blockComment = false;
+          } else
+            ++position;
+          return true;
+        }
+        if (quote != '\0') {
+          ++position;
+          if (escaped)
+            escaped = false;
+          else if (ch == '\\')
+            escaped = true;
+          else if (ch == quote)
+            quote = '\0';
+          return true;
+        }
+        auto phrase = reader.phrase(position);
+        if (patterns && !phrase.isNull()) {
+          const auto end = patternEnd(reader, phrase, position);
+          if (end > position + phrase.getKey().size()) {
+            position = end;
+            return true;
+          }
+        }
+        const auto syntax = [&](std::string_view canonical) {
+          if (!reader.language())
+            return startsWith(reader, position, canonical) ? std::string(canonical) : std::string{};
+          auto prototype = LanguageGrammar::findInherited(reader.grammar(), canonical);
+          auto native = LanguageGrammar::find(reader.language()->lexicon.phrase(), canonical);
+          return LanguageGrammar::inherits(phrase, prototype) || LanguageGrammar::inherits(phrase, native)
+                     ? phrase.getKey()
+                     : std::string{};
+        };
+        for (const auto &[opening, close] : {std::pair{"(", ")"}, {"[", "]"}, {"{", "}"}}) {
+          const auto key = syntax(opening);
+          if (!key.empty()) {
+            closing.emplace_back(close);
+            position += key.size();
+            return true;
+          }
+          const auto end = syntax(close);
+          if (!end.empty()) {
+            if (closing.empty() || closing.back() != close) return false;
+            closing.pop_back();
+            position += end.size();
+            return true;
+          }
+        }
+        const auto line = syntax("//");
+        if (!line.empty()) {
+          lineComment = true;
+          position += line.size();
+          return true;
+        }
+        const auto block = syntax("/*");
+        if (!block.empty()) {
+          blockComment = true;
+          position += block.size();
+          return true;
+        }
+        if (!phrase.isNull()) {
+          position += phrase.getKey().size();
+          return true;
+        }
+        if (ch == '"' || ch == '\'') quote = ch;
+        // A native data identifier is one atom. Its suffix must not become a
+        // word delimiter merely because no phrase starts at its first byte.
+        if (reader.language() && identifierStart(static_cast<unsigned char>(ch))) {
+          do {
+            ++position;
+          } while (reader.available(position) && identifierByte(static_cast<unsigned char>(reader.at(position))));
+        } else {
+          ++position;
+        }
+        return true;
+      }
+    };
+
     std::size_t skipLayout(Reader &reader, std::size_t position) {
       while (true) {
-        while (reader.available(position) && std::isspace(static_cast<unsigned char>(reader.at(position)))) ++position;
-        if (startsWith(reader, position, "//")) {
-          position += 2;
+        while (reader.available(position) && std::isspace(static_cast<unsigned char>(reader.at(position)))) {
+          auto registered = reader.phrase(position);
+          if (!registered.isNull() && registered.getKey().size() > 1) break;
+          ++position;
+        }
+        const auto line = syntaxAt(reader, position, "//");
+        if (!line.empty()) {
+          position += line.size();
           while (reader.available(position) && reader.at(position) != '\n') ++position;
           continue;
         }
-        if (startsWith(reader, position, "/*")) {
-          position += 2;
-          while (reader.available(position) && !startsWith(reader, position, "*/")) ++position;
-          if (!startsWith(reader, position, "*/")) THROW(, "syntax matcher: unterminated block comment")
-          position += 2;
+        const auto block = syntaxAt(reader, position, "/*");
+        if (!block.empty()) {
+          position += block.size();
+          std::string ending;
+          while (reader.available(position)) {
+            ending = syntaxAt(reader, position, "*/");
+            if (ending.empty() && startsWith(reader, position, "*/")) ending = "*/";
+            if (!ending.empty()) break;
+            ++position;
+          }
+          if (ending.empty()) THROW(, "syntax matcher: unterminated block comment")
+          position += ending.size();
           continue;
         }
         return position;
@@ -441,65 +625,14 @@ namespace recurloop {
     }
 
     std::optional<std::size_t> blockEnd(Reader &reader, std::size_t position) {
-      if (!reader.available(position) || reader.at(position) != '{') return std::nullopt;
-      std::size_t cursor = position + 1;
-      std::size_t depth = 1;
-      char quote = '\0';
-      bool escaped = false;
-      bool lineComment = false;
-      bool blockComment = false;
+      const auto opening = syntaxAt(reader, position, "{");
+      if (opening.empty()) return std::nullopt;
+      std::size_t cursor = position + opening.size();
+      CaptureCursor scan;
+      scan.closing.emplace_back("}");
       while (cursor - position <= MaximumPatternScan && reader.available(cursor)) {
-        const char ch = reader.at(cursor);
-        if (lineComment) {
-          ++cursor;
-          if (ch == '\n') lineComment = false;
-          continue;
-        }
-        if (blockComment) {
-          if (ch == '*' && reader.available(cursor + 1) && reader.at(cursor + 1) == '/') {
-            cursor += 2;
-            blockComment = false;
-          } else {
-            ++cursor;
-          }
-          continue;
-        }
-        if (quote != '\0') {
-          ++cursor;
-          if (escaped)
-            escaped = false;
-          else if (ch == '\\')
-            escaped = true;
-          else if (ch == quote)
-            quote = '\0';
-          continue;
-        }
-        if (ch == '/' && reader.available(cursor + 1) && reader.at(cursor + 1) == '/') {
-          cursor += 2;
-          lineComment = true;
-          continue;
-        }
-        if (ch == '/' && reader.available(cursor + 1) && reader.at(cursor + 1) == '*') {
-          cursor += 2;
-          blockComment = true;
-          continue;
-        }
-        if (ch == '"' || ch == '\'') {
-          quote = ch;
-          ++cursor;
-          continue;
-        }
-        if (ch == '{') {
-          ++depth;
-          ++cursor;
-          continue;
-        }
-        if (ch == '}') {
-          ++cursor;
-          if (--depth == 0) return cursor;
-          continue;
-        }
-        ++cursor;
+        if (!scan.advance(reader, cursor)) return std::nullopt;
+        if (scan.top()) return cursor;
       }
       return std::nullopt;
     }
@@ -512,65 +645,26 @@ namespace recurloop {
     using Captures = std::unordered_map<std::string, std::string>;
 
     std::optional<std::size_t> matchSequence(const std::vector<Node> &nodes, std::size_t index, Reader &reader,
-                                             std::size_t position, Captures &captures);
+                                             std::size_t position, Captures &captures, bool opaqueLayout = false);
 
     std::optional<std::size_t> matchVariableCapture(const std::vector<Node> &nodes, std::size_t index, const Node &node,
                                                     Reader &reader, std::size_t start, Captures &captures) {
       const bool last = index + 1 == nodes.size();
+      const bool opaque = node.captureType == "raw" || node.captureType == "code";
       if (last) {
         std::size_t end = start;
-        std::size_t parens = 0, brackets = 0, braces = 0;
-        char quote = '\0';
-        bool escaped = false, lineComment = false, blockComment = false;
+        CaptureCursor scan;
         while (end - start <= MaximumPatternScan && reader.available(end)) {
           const char ch = reader.at(end);
-          if (lineComment) {
-            if (ch == '\n') break;
+          if ((ch == '\n' || ch == '\r') && (opaque || scan.top() || (scan.lineComment && scan.closing.empty()))) break;
+          if (opaque)
             ++end;
-            continue;
-          }
-          if (blockComment) {
-            if (ch == '*' && reader.available(end + 1) && reader.at(end + 1) == '/') {
-              end += 2;
-              blockComment = false;
-            } else {
-              ++end;
-            }
-            continue;
-          }
-          if (quote != '\0') {
-            ++end;
-            if (escaped)
-              escaped = false;
-            else if (ch == '\\')
-              escaped = true;
-            else if (ch == quote)
-              quote = '\0';
-            continue;
-          }
-          if (ch == '/' && reader.available(end + 1) && reader.at(end + 1) == '/') {
-            lineComment = true;
-            end += 2;
-            continue;
-          }
-          if (ch == '/' && reader.available(end + 1) && reader.at(end + 1) == '*') {
-            blockComment = true;
-            end += 2;
-            continue;
-          }
-          if (ch == '"' || ch == '\'') {
-            quote = ch;
-            ++end;
-            continue;
-          }
-          if (ch == '(') ++parens;
-          else if (ch == ')' && parens != 0) --parens;
-          else if (ch == '[') ++brackets;
-          else if (ch == ']' && brackets != 0) --brackets;
-          else if (ch == '{') ++braces;
-          else if (ch == '}' && braces != 0) --braces;
-          if ((ch == '\n' || ch == '\r') && parens == 0 && brackets == 0 && braces == 0) break;
-          ++end;
+          else if (!scan.advance(reader, end))
+            break;
+        }
+        if (!opaque && (!scan.closing.empty() || scan.quote != '\0' || scan.blockComment)) {
+          if (observation && end == observation->bytes) observation->add(node, start);
+          return std::nullopt;
         }
         std::string value = captureSlice(reader, start, end, node.captureType == "code");
         if (observation && end == observation->bytes) observation->add(node, start);
@@ -580,85 +674,31 @@ namespace recurloop {
       }
 
       std::size_t cursor = start;
-      std::size_t parens = 0, brackets = 0, braces = 0;
-      char quote = '\0';
-      bool escaped = false, lineComment = false, blockComment = false;
+      CaptureCursor scan;
       while (cursor - start <= MaximumPatternScan) {
-        const bool top = quote == '\0' && !lineComment && !blockComment && parens == 0 && brackets == 0 && braces == 0;
-        if (top) {
+        if (opaque || scan.top()) {
           Captures trial = captures;
           std::string value = captureSlice(reader, start, cursor, node.captureType == "code");
           if (!(node.captureType == "expr" && value.empty())) {
             trial[node.text] = std::move(value);
-            if (const auto finish = matchSequence(nodes, index + 1, reader, cursor, trial)) {
+            if (const auto finish = matchSequence(nodes, index + 1, reader, cursor, trial, opaque)) {
               captures = std::move(trial);
               return finish;
             }
           }
         }
         if (!reader.available(cursor)) break;
-        const char ch = reader.at(cursor);
-        if (lineComment) {
+        if (opaque)
           ++cursor;
-          if (ch == '\n') lineComment = false;
-          continue;
-        }
-        if (blockComment) {
-          if (ch == '*' && reader.available(cursor + 1) && reader.at(cursor + 1) == '/') {
-            cursor += 2;
-            blockComment = false;
-          } else {
-            ++cursor;
-          }
-          continue;
-        }
-        if (quote != '\0') {
-          ++cursor;
-          if (escaped)
-            escaped = false;
-          else if (ch == '\\')
-            escaped = true;
-          else if (ch == quote)
-            quote = '\0';
-          continue;
-        }
-        if (ch == '/' && reader.available(cursor + 1) && reader.at(cursor + 1) == '/') {
-          lineComment = true;
-          cursor += 2;
-          continue;
-        }
-        if (ch == '/' && reader.available(cursor + 1) && reader.at(cursor + 1) == '*') {
-          blockComment = true;
-          cursor += 2;
-          continue;
-        }
-        if (ch == '"' || ch == '\'') {
-          quote = ch;
-          ++cursor;
-          continue;
-        }
-        if (ch == '(') ++parens;
-        else if (ch == ')') {
-          if (parens == 0) break;
-          --parens;
-        } else if (ch == '[') ++brackets;
-        else if (ch == ']') {
-          if (brackets == 0) break;
-          --brackets;
-        } else if (ch == '{') {
-          ++braces;
-        } else if (ch == '}') {
-          if (braces == 0) break;
-          --braces;
-        }
-        ++cursor;
+        else if (!scan.advance(reader, cursor))
+          break;
       }
       if (observation && cursor == observation->bytes) observation->add(node, start);
       return std::nullopt;
     }
 
     std::optional<std::size_t> matchSequence(const std::vector<Node> &nodes, std::size_t index, Reader &reader,
-                                             std::size_t position, Captures &captures) {
+                                             std::size_t position, Captures &captures, bool opaqueLayout) {
       if (observation && ++observation->steps > 65536) throw ObservationLimit{};
       if (index == nodes.size()) return position;
       const Node &node = nodes[index];
@@ -666,22 +706,22 @@ namespace recurloop {
       if (node.kind == Node::Kind::Optional) {
         if (observation) {
           Captures skipped = captures;
-          matchSequence(nodes, index + 1, reader, position, skipped);
+          matchSequence(nodes, index + 1, reader, position, skipped, opaqueLayout);
         }
         Captures trial = captures;
-        if (const auto inside = matchSequence(node.children, 0, reader, position, trial)) {
+        if (const auto inside = matchSequence(node.children, 0, reader, position, trial, opaqueLayout)) {
           if (const auto finish = matchSequence(nodes, index + 1, reader, *inside, trial)) {
             captures = std::move(trial);
             return finish;
           }
         }
-        return matchSequence(nodes, index + 1, reader, position, captures);
+        return matchSequence(nodes, index + 1, reader, position, captures, opaqueLayout);
       }
       if (node.kind == Node::Kind::Choice) {
         std::optional<std::size_t> result;
         for (const auto &alternative : node.alternatives) {
           Captures trial = captures;
-          if (const auto inside = matchSequence(alternative, 0, reader, position, trial)) {
+          if (const auto inside = matchSequence(alternative, 0, reader, position, trial, opaqueLayout)) {
             if (const auto finish = matchSequence(nodes, index + 1, reader, *inside, trial)) {
               captures = std::move(trial);
               if (!observation) return finish;
@@ -715,17 +755,32 @@ namespace recurloop {
         return matchSequence(nodes, index + 1, reader, cursor, captures);
       }
 
-      position = skipLayout(reader, position);
+      if (opaqueLayout ||
+          (node.kind == Node::Kind::Capture && (node.captureType == "raw" || node.captureType == "code"))) {
+        while (reader.available(position) && std::isspace(static_cast<unsigned char>(reader.at(position)))) ++position;
+      } else {
+        position = skipLayout(reader, position);
+      }
 
       if (node.kind == Node::Kind::Literal) {
         if (observation && position <= observation->bytes) {
           const auto remaining = reader.slice(position, observation->bytes);
           if (remaining.size() < node.text.size() && node.text.starts_with(remaining)) observation->add(node, position);
         }
-        if (!startsWith(reader, position, node.text) || !literalBoundary(reader, position, node.text)) return std::nullopt;
+        std::size_t size = node.text.size();
+        bool matched = startsWith(reader, position, node.text) && literalBoundary(reader, position, node.text);
+        if (reader.language()) {
+          auto expected = LanguageGrammar::findInherited(reader.grammar(), node.text);
+          if (!expected.isNull()) {
+            auto actual = reader.phrase(position);
+            matched = LanguageGrammar::inherits(actual, expected);
+            if (matched) size = actual.getKey().size();
+          }
+        }
+        if (!matched) return std::nullopt;
         if (observation && position == observation->requiredStart && node.text == observation->requiredLiteral)
           observation->reached = true;
-        return matchSequence(nodes, index + 1, reader, position + node.text.size(), captures);
+        return matchSequence(nodes, index + 1, reader, position + size, captures);
       }
 
       if (node.captureType == "ignore") return matchSequence(nodes, index + 1, reader, position, captures);
@@ -757,9 +812,17 @@ namespace recurloop {
       if (node.captureType == "number") {
         std::size_t cursor = position;
         if (reader.available(cursor) && (reader.at(cursor) == '+' || reader.at(cursor) == '-')) ++cursor;
-        const std::size_t digits = cursor;
-        while (reader.available(cursor) && std::isdigit(static_cast<unsigned char>(reader.at(cursor)))) ++cursor;
-        if (cursor == digits) return std::nullopt;
+        const std::size_t numberStart = cursor;
+        std::string text;
+        while (text.size() <= MaximumPatternScan && reader.available(cursor)) {
+          const auto ch = static_cast<unsigned char>(reader.at(cursor));
+          if (!std::isalnum(ch) && ch != '_' && ch != '.' && ch != '+' && ch != '-') break;
+          text.push_back(static_cast<char>(ch));
+          ++cursor;
+        }
+        const auto number = LanguageGrammar::numberLiteral(text);
+        if (number.bytes == 0) return std::nullopt;
+        cursor = numberStart + number.bytes;
         captures[node.text] = reader.slice(position, cursor);
         return matchSequence(nodes, index + 1, reader, cursor, captures);
       }
@@ -783,7 +846,8 @@ namespace recurloop {
 
       if (node.captureType == "token") {
         if (!reader.available(position)) return std::nullopt;
-        if (reader.at(position) == '"' || reader.at(position) == '\'') {
+        auto phrase = reader.phrase(position);
+        if (phrase.isNull() && (reader.at(position) == '"' || reader.at(position) == '\'')) {
           Node stringNode = node;
           stringNode.captureType = "string";
           std::vector<Node> rewritten = nodes;
@@ -791,8 +855,10 @@ namespace recurloop {
           return matchSequence(rewritten, index, reader, position, captures);
         }
         std::size_t cursor = position;
-        if (identifierStart(static_cast<unsigned char>(reader.at(cursor))) ||
-            std::isdigit(static_cast<unsigned char>(reader.at(cursor)))) {
+        if (!phrase.isNull())
+          cursor += phrase.getKey().size();
+        else if (identifierStart(static_cast<unsigned char>(reader.at(cursor))) ||
+                 std::isdigit(static_cast<unsigned char>(reader.at(cursor)))) {
           ++cursor;
           while (reader.available(cursor) && identifierByte(static_cast<unsigned char>(reader.at(cursor)))) ++cursor;
         } else {
@@ -824,13 +890,64 @@ namespace recurloop {
       return std::nullopt;
     }
 
-    std::string blockBody(std::string value) {
+    std::size_t patternEnd(Reader &reader, lexicon::Phrase phrase, std::size_t position) {
+      const auto start = position + phrase.getKey().size();
+      auto owner = patternOwner(phrase);
+      bool described = false;
+      if (owner.isNull()) {
+        owner = LanguageGrammar::findInherited(phrase, RecognitionKey);
+        described = !owner.isNull() && hasPatternPayload(owner);
+        if (!described) return start;
+      }
+      struct GrammarScope {
+        Reader &reader;
+        lexicon::Phrase previous;
+        GrammarScope(Reader &reader, lexicon::Phrase grammar) : reader(reader), previous(reader.selectedGrammar) {
+          reader.selectedGrammar = grammar;
+        }
+        ~GrammarScope() {
+          reader.selectedGrammar = previous;
+        }
+      } grammarScope(reader, described && owner.containsPrototype() ? owner.getPrototype() : lexicon::Phrase{});
+      static thread_local std::size_t depth = 0;
+      if (depth >= 64) return start;
+      struct Scope {
+        std::size_t &depth;
+        Observation *previous = observation;
+        explicit Scope(std::size_t &depth) : depth(depth) {
+          ++depth;
+          observation = nullptr;
+        }
+        ~Scope() {
+          observation = previous;
+          --depth;
+        }
+      } scope(depth);
+      const auto payload = loadPayload(owner);
+      const auto nodes = PatternParser(payload.pattern).parse();
+      Captures captures;
+      const auto end = matchSequence(nodes, 0, reader, start, captures);
+      return end ? *end : start;
+    }
+
+    std::string blockBody(context::Context &context, std::string value) {
       value = trim(std::move(value));
-      if (value.size() >= 2 && value.front() == '{' && value.back() == '}') return value.substr(1, value.size() - 2);
+      StringReader reader(value, &context);
+      const auto opening = syntaxAt(reader, 0, "{");
+      if (!opening.empty()) {
+        std::size_t position = opening.size();
+        CaptureCursor scan;
+        scan.closing.emplace_back("}");
+        while (reader.available(position)) {
+          const auto before = position;
+          if (!scan.advance(reader, position)) break;
+          if (scan.top() && position == value.size()) return value.substr(opening.size(), before - opening.size());
+        }
+      }
       return value;
     }
 
-    std::string renderTemplate(std::string_view source, const Captures &captures) {
+    std::string renderTemplate(context::Context &context, std::string_view source, const Captures &captures) {
       std::string result;
       for (std::size_t cursor = 0; cursor < source.size();) {
         if (source[cursor] != '$' || cursor + 1 >= source.size()) {
@@ -858,7 +975,8 @@ namespace recurloop {
         std::string value;
         const auto found = captures.find(selector);
         if (found != captures.end()) value = found->second;
-        if (modifier == "body") value = blockBody(std::move(value));
+        if (modifier == "body")
+          value = blockBody(context, std::move(value));
         else if (modifier == "trim" || modifier.empty()) value = modifier == "trim" ? trim(std::move(value)) : value;
         else THROW(, "syntax rewrite template uses unknown placeholder modifier '" << modifier << "'")
         result += value;
@@ -1018,58 +1136,15 @@ namespace recurloop {
         }
 
         const std::size_t begin = cursor;
-        std::size_t braces = 0, parens = 0, brackets = 0;
-        char quote = '\0';
-        bool escaped = false, lineComment = false, blockComment = false;
+        CaptureCursor scan;
+        // Captures have not been substituted yet. Balance grammar delimiters
+        // without trying to recognize a complete target-language phrase.
+        scan.patterns = false;
         while (cursor - begin <= MaximumPatternScan && reader.available(cursor)) {
           const char ch = reader.at(cursor);
-          if (lineComment) {
-            if (ch == '\n' || ch == '\r') break;
-            ++cursor;
-            continue;
-          }
-          if (blockComment) {
-            if (ch == '*' && reader.available(cursor + 1) && reader.at(cursor + 1) == '/') {
-              cursor += 2;
-              blockComment = false;
-            } else {
-              ++cursor;
-            }
-            continue;
-          }
-          if (quote != '\0') {
-            ++cursor;
-            if (escaped)
-              escaped = false;
-            else if (ch == '\\')
-              escaped = true;
-            else if (ch == quote)
-              quote = '\0';
-            continue;
-          }
-          if (ch == '/' && reader.available(cursor + 1) && reader.at(cursor + 1) == '/') {
-            lineComment = true;
-            cursor += 2;
-            continue;
-          }
-          if (ch == '/' && reader.available(cursor + 1) && reader.at(cursor + 1) == '*') {
-            blockComment = true;
-            cursor += 2;
-            continue;
-          }
-          if (ch == '"' || ch == '\'') {
-            quote = ch;
-            ++cursor;
-            continue;
-          }
-          if (ch == '{') ++braces;
-          else if (ch == '}' && braces != 0) --braces;
-          else if (ch == '(') ++parens;
-          else if (ch == ')' && parens != 0) --parens;
-          else if (ch == '[') ++brackets;
-          else if (ch == ']' && brackets != 0) --brackets;
-          if ((ch == '\n' || ch == '\r') && braces == 0 && parens == 0 && brackets == 0) break;
-          ++cursor;
+          if ((ch == '\n' || ch == '\r') && (scan.top() || scan.lineComment)) break;
+          // A rewrite may emit a closing delimiter for its surrounding syntax.
+          if (!scan.advance(reader, cursor)) ++cursor;
         }
         return trim(reader.slice(begin, cursor));
       }
@@ -1077,95 +1152,30 @@ namespace recurloop {
       void parseAction(Result &result) {
         skipLayoutLocal();
         const std::size_t signatureBegin = cursor;
-        char quote = '\0';
-        bool escaped = false;
-        std::size_t parens = 0;
-        while (reader.available(cursor)) {
-          const char ch = reader.at(cursor);
-          if (quote != '\0') {
-            ++cursor;
-            if (escaped)
-              escaped = false;
-            else if (ch == '\\')
-              escaped = true;
-            else if (ch == quote)
-              quote = '\0';
-            continue;
+        CaptureCursor signature;
+        std::string opening;
+        while (cursor - signatureBegin <= MaximumPatternScan && reader.available(cursor)) {
+          if (signature.top()) {
+            opening = syntaxAt(reader, cursor, "{");
+            if (!opening.empty()) break;
           }
-          if (ch == '"' || ch == '\'') {
-            quote = ch;
-            ++cursor;
-            continue;
-          }
-          if (ch == '(') ++parens;
-          else if (ch == ')' && parens != 0) --parens;
-          else if (ch == '{' && parens == 0) break;
-          ++cursor;
+          if (!signature.advance(reader, cursor)) fail("unbalanced syntax action signature");
         }
-        if (!reader.available(cursor) || reader.at(cursor) != '{') fail("syntax action expects a function body");
+        if (opening.empty()) fail("syntax action expects a function body");
         result.actionSignature = trim(reader.slice(signatureBegin, cursor));
         result.signatureOrigin = location(signatureBegin);
-        ++cursor;
+        cursor += opening.size();
         const std::size_t bodyBegin = cursor;
-        std::size_t depth = 1;
-        quote = '\0';
-        escaped = false;
-        bool lineComment = false, blockComment = false;
-        while (reader.available(cursor)) {
-          const char ch = reader.at(cursor);
-          if (lineComment) {
-            ++cursor;
-            if (ch == '\n') lineComment = false;
-            continue;
+        CaptureCursor body;
+        body.closing.emplace_back("}");
+        while (cursor - bodyBegin <= MaximumPatternScan && reader.available(cursor)) {
+          const auto previous = cursor;
+          if (!body.advance(reader, cursor)) fail("unbalanced syntax action body");
+          if (body.top()) {
+            result.actionBody = reader.slice(bodyBegin, previous);
+            result.bodyOrigin = location(bodyBegin);
+            return;
           }
-          if (blockComment) {
-            if (ch == '*' && reader.available(cursor + 1) && reader.at(cursor + 1) == '/') {
-              cursor += 2;
-              blockComment = false;
-            } else {
-              ++cursor;
-            }
-            continue;
-          }
-          if (quote != '\0') {
-            ++cursor;
-            if (escaped)
-              escaped = false;
-            else if (ch == '\\')
-              escaped = true;
-            else if (ch == quote)
-              quote = '\0';
-            continue;
-          }
-          if (ch == '/' && reader.available(cursor + 1) && reader.at(cursor + 1) == '/') {
-            cursor += 2;
-            lineComment = true;
-            continue;
-          }
-          if (ch == '/' && reader.available(cursor + 1) && reader.at(cursor + 1) == '*') {
-            cursor += 2;
-            blockComment = true;
-            continue;
-          }
-          if (ch == '"' || ch == '\'') {
-            quote = ch;
-            ++cursor;
-            continue;
-          }
-          if (ch == '{') {
-            ++depth;
-            ++cursor;
-            continue;
-          }
-          if (ch == '}') {
-            if (--depth == 0) {
-              result.actionBody = reader.slice(bodyBegin, cursor);
-              result.bodyOrigin = location(bodyBegin);
-              ++cursor;
-              return;
-            }
-          }
-          ++cursor;
         }
         fail("unterminated syntax action body");
       }
@@ -1180,6 +1190,7 @@ namespace recurloop {
         const std::size_t begin = cursor;
         char quote = '\0';
         bool escaped = false;
+        std::size_t interpolation = 0;
         while (reader.available(cursor)) {
           const char ch = reader.at(cursor);
           if (quote != '\0') {
@@ -1197,7 +1208,11 @@ namespace recurloop {
             ++cursor;
             continue;
           }
-          if (ch == '>') {
+          if (ch == '{')
+            ++interpolation;
+          else if (ch == '}' && interpolation != 0)
+            --interpolation;
+          if (ch == '>' && interpolation == 0) {
             std::string result = trim(reader.slice(begin, cursor));
             ++cursor;
             if (result.empty()) fail("syntax alias phrase reference cannot be empty");
@@ -1262,47 +1277,12 @@ namespace recurloop {
       std::size_t cursor = 0;
     };
 
-    std::vector<std::string> referencePath(std::string_view source) {
-      std::vector<std::string> result;
-      std::string current;
-      char quote = '\0';
-      bool escaped = false;
-      for (char ch : source) {
-        if (quote != '\0') {
-          if (escaped) {
-            current.push_back(ch);
-            escaped = false;
-          } else if (ch == '\\') {
-            escaped = true;
-          } else if (ch == quote) {
-            quote = '\0';
-          } else {
-            current.push_back(ch);
-          }
-          continue;
-        }
-        if (ch == '"' || ch == '\'') {
-          quote = ch;
-          continue;
-        }
-        if (ch == ':') {
-          if (current.empty()) THROW(, "syntax alias contains an empty phrase path component")
-          result.push_back(current);
-          current.clear();
-        } else {
-          current.push_back(ch);
-        }
-      }
-      if (quote != '\0') THROW(, "syntax alias contains an unterminated quoted path component")
-      if (current.empty()) THROW(, "syntax alias contains an empty phrase path component")
-      result.push_back(current);
-      return result;
-    }
-
-    lexicon::Phrase resolveReference(lexicon::Phrase root, std::string_view source) {
-      lexicon::Phrase current = root;
-      for (const std::string &component : referencePath(source)) {
-        current = exact(current, component);
+    lexicon::Phrase resolveReference(context::Context &context, std::string_view source) {
+      auto parsed = PhraseNames::parse(context, source);
+      parsed.path.push_back(parsed.name);
+      auto current = context.lexicon.phrase();
+      for (const auto &component : parsed.path) {
+        current = LanguageGrammar::findInherited(current, component);
         if (current.isNull()) return current;
       }
       return current;
@@ -1373,7 +1353,7 @@ namespace recurloop {
       currentMatch = &frame;
       try {
         if (payload.behavior == Behavior::Rewrite) {
-          const std::string rewritten = renderTemplate(payload.replacement, frame.captures);
+          const std::string rewritten = renderTemplate(context, payload.replacement, frame.captures);
           if (expansion) {
             SyntaxExtension::emit(context, reinterpret_cast<const std::uint8_t *>(rewritten.data()), 0, rewritten.size());
           } else if (!rewritten.empty()) {
@@ -1413,14 +1393,15 @@ namespace recurloop {
     return owner.isNull() ? std::string{} : loadPayload(owner).pattern;
   }
 
-  bool SyntaxPattern::accepts(std::string_view matcher, std::string_view value) {
+  bool SyntaxPattern::accepts(std::string_view matcher, std::string_view value, context::Context *context) {
     const auto nodes = PatternParser("<value:" + std::string(matcher) + ">").parse();
-    StringReader reader(value);
+    StringReader reader(value, context);
     const auto matched = matchPattern(nodes, reader);
     return matched && matched->bytes == value.size();
   }
 
-  std::string SyntaxPattern::insertion(std::string_view pattern, std::string_view prefix, const Expectation &item) {
+  std::string SyntaxPattern::insertion(std::string_view pattern, std::string_view prefix, const Expectation &item,
+                                       context::Context *context) {
     if (item.literal.empty()) return {};
     const auto nodes = PatternParser(pattern).parse();
     const auto before = std::string(prefix.substr(0, item.start));
@@ -1430,7 +1411,7 @@ namespace recurloop {
       state.requiredStart = before.size() + (space ? 1 : 0);
       state.requiredLiteral = item.literal;
       ObservationScope scope(state);
-      StringReader reader(candidate);
+      StringReader reader(candidate, context);
       Captures captures;
       try { matchSequence(nodes, 0, reader, 0, captures); }
       catch (const ObservationLimit &) { return false; }
@@ -1439,12 +1420,13 @@ namespace recurloop {
     return !reaches(false) && reaches(true) ? ' ' + item.literal : item.literal;
   }
 
-  std::vector<SyntaxPattern::Expectation> SyntaxPattern::expect(std::string_view pattern, std::string_view prefix) {
+  std::vector<SyntaxPattern::Expectation> SyntaxPattern::expect(std::string_view pattern, std::string_view prefix,
+                                                                context::Context *context) {
     auto nodes = PatternParser(pattern).parse();
     if (prefix.size() > MaximumPatternScan) return {};
     Observation state{prefix.size(), 0, {}};
     ObservationScope scope(state);
-    StringReader reader(prefix);
+    StringReader reader(prefix, context);
     Captures captures;
     try {
       const auto end = matchSequence(nodes, 0, reader, 0, captures);
@@ -1487,7 +1469,8 @@ namespace recurloop {
 
     lexicon::Phrase handler(&context.lexicon);
     if (definition.payload.behavior == Behavior::Alias) {
-      lexicon::Phrase target = definition.aliasTarget == "super" ? previous : resolveReference(root, definition.aliasTarget);
+      lexicon::Phrase target =
+          definition.aliasTarget == "super" ? previous : resolveReference(context, definition.aliasTarget);
       if (target.isNull()) THROW(, "syntax alias cannot find phrase '<" << definition.aliasTarget << ">'" )
       definition.payload.targetSpelling = target.getKey();
       handler = target;
@@ -1510,6 +1493,29 @@ namespace recurloop {
     context::Source::progress(context, definition.consumed * Byte::length);
   }
 
+  void SyntaxPattern::describe(context::Context &context, lexicon::Phrase phrase, std::string_view pattern,
+                               lexicon::Phrase grammar) {
+    validate(pattern);
+    if (phrase.isNull() || !phrase.containsSubdictionary() || grammar.isNull() || !grammar.containsSubdictionary())
+      THROW(, "syntax description requires phrase and grammar dictionaries")
+    auto descriptor = phrase.append(std::string(RecognitionKey)).make().setPrototype(grammar).save();
+    descriptor.setSerializable(true).save();
+    PatternPayload payload;
+    payload.pattern = std::string(pattern);
+    storePayload(descriptor, payload);
+  }
+
+  std::size_t SyntaxPattern::blockExtent(context::Context &context, std::string_view source, std::size_t position) {
+    StringReader reader(source, &context);
+    const auto end = blockEnd(reader, position);
+    return end.value_or(0);
+  }
+
+  std::size_t SyntaxPattern::extent(context::Context &context, lexicon::Phrase phrase, std::size_t relative) {
+    ContextReader reader(context);
+    return patternEnd(reader, phrase, relative) - relative;
+  }
+
   void SyntaxPattern::invoke(context::Context &context, lexicon::Phrase &invoked) {
     lexicon::Phrase owner = patternOwner(invoked);
     if (owner.isNull()) THROW(, "syntax pattern action has no declarative payload")
@@ -1517,7 +1523,7 @@ namespace recurloop {
     if (SyntaxExtension::active(context)) {
       const auto *data = SyntaxExtension::data(context);
       const std::size_t bytes = static_cast<std::size_t>(SyntaxExtension::bytes(context));
-      StringReader reader(std::string_view(reinterpret_cast<const char *>(data), bytes));
+      StringReader reader(std::string_view(reinterpret_cast<const char *>(data), bytes), &context);
       runPattern(context, owner, payload, reader, true);
       return;
     }

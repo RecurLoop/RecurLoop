@@ -17,8 +17,10 @@ utilities → radix → lexicon → context → compiler → recurloop → CLI
 5. Scoped dictionaries and value scopes are restored when their owning block
    ends.
 
-There is no independent fixed grammar above this process. The final executable
-restores its standard language from the embedded `core.rli`; source-defined
+There is no independent fixed grammar above this top-level dispatch. Native
+function elaboration still uses C++ phrase parselets and a temporary lowering
+tree; the current boundaries and remaining migration work are documented in
+[phrase processing](phrase-processing.md). The final executable restores its standard language from the embedded `core.rli`; source-defined
 phrases and the standard language use the same lookup and dispatch path. A
 private minimal C++ seed exists only for clean builds and can enter
 `engine define`; it is not the standard language and is never linked into the

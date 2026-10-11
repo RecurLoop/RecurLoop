@@ -4,6 +4,7 @@
 #include <utilities/Exception.hpp>
 
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace context {
@@ -28,6 +29,7 @@ namespace recurloop {
 
     static void registerActions(context::Context &context);
     static void setup(context::Context &context);
+    static ParsedPhraseName parse(context::Context &context, std::string_view source, SourceLocation origin = {});
     static ParsedPhraseName parseAssignment(context::Context &context, bool allowEmpty = false,
                                             bool allowMissingOperation = false);
   };

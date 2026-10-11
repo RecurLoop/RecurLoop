@@ -346,6 +346,15 @@ quoted. Common capture matchers are `expr`, `block`, `id`, `qualified-id`,
 include `<whitespaces:ignore>`, `<space:required>`, `<space:none>`, and
 `<line:newline>`.
 
+Captures use the active phrase delimiters: aliases of grouping and block
+boundaries work in patterns and `${body.body}` replacements as well as in the
+native compiler. `token` captures the longest registered phrase, and `number`
+uses the shared literal scanner. `raw` and `code` capture opaque bytes through
+the next pattern item (or the physical line end for a final capture); `code`
+preserves captured spacing. They accept syntax that does not follow the host's
+quote, comment or bracket rules. See [phrase processing](phrase-processing.md)
+for source-facing grammar APIs and current compiler boundaries.
+
 `syntax extend` adds a higher-priority pattern while preserving the previous
 definition as a fallback when the new pattern does not match. `syntax replace`
 intentionally shadows an existing spelling and treats a pattern mismatch as an
@@ -427,3 +436,10 @@ therefore depends on a development-package `libname.so` linker symlink.
 
 Run `make examples` for the complete executable tour and use
 [../examples/README.md](../examples/README.md) for focused programs.
+
+Library syntax readers can select a phrase dictionary explicitly with
+`LanguageKit:Reader:new_phrases` or `LanguageKit:SliceReader:new_phrases`. HTTP
+routing tokens live in `HttpSyntax:Grammar`; Inferred tokens live in
+`Inferred:Grammar:Tokens`. Their aliases inherit syntax identity and metadata.
+See [phrase processing](phrase-processing.md) for token descriptors, byte offsets
+and the native compilation boundary.

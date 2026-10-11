@@ -63,6 +63,7 @@ namespace recurloop {
     std::size_t consumedEnd() const;
     void recordResolved(lexicon::Phrase phrase, std::size_t start, std::size_t end);
     void recordResolved(lexicon::Phrase phrase, std::span<const SyntaxToken> path);
+    bool is(std::string_view canonical) const;
     bool accept(std::string_view canonical);
     void expect(std::string_view canonical);
     bool skipNewlines();

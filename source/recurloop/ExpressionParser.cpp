@@ -568,7 +568,9 @@ namespace recurloop {
         }
 
         while (true) {
-          lexicon::Phrase syntax = LanguageGrammar::resolve(context, postfixes, lexer.current().text);
+          lexicon::Phrase syntax = lexer.current().kind == TokenKind::Symbol
+                                       ? LanguageGrammar::resolve(context, postfixes, lexer.current().text)
+                                       : lexicon::Phrase(&context.lexicon);
           if (syntax.isNull()) break;
           result = invokePostfix(syntax, lexer.take(), std::move(result), active);
         }

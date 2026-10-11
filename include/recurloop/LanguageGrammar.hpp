@@ -7,6 +7,7 @@
 #include <initializer_list>
 #include <cstdint>
 #include <string_view>
+#include <functional>
 
 namespace recurloop::LanguageGrammar {
 
@@ -29,10 +30,16 @@ namespace recurloop::LanguageGrammar {
 
   // Match the longest phrase at the beginning of source. Unlike find(), the
   // input may contain bytes after the matched phrase.
-  lexicon::Phrase matchLongest(lexicon::Phrase dictionary, std::string_view source);
+  using MatchFilter = std::function<bool(lexicon::Phrase)>;
+  lexicon::Phrase matchLongest(lexicon::Phrase dictionary, std::string_view source, MatchFilter filter = {});
   lexicon::Phrase matchLongest(context::Context &context, std::initializer_list<lexicon::Phrase> grammars,
-                               std::string_view source);
-  lexicon::Phrase matchLongestAlias(context::Context &context, lexicon::Phrase grammar, std::string_view source);
+                               std::string_view source, MatchFilter filter = {});
+  // Non-consuming longest match over streamed Source; refill before applying
+  // filters so their views and the radix input remain valid throughout lookup.
+  lexicon::Phrase peekLongest(context::Context &context, lexicon::Phrase dictionary, std::size_t relative = 0,
+                              MatchFilter filter = {});
+  lexicon::Phrase matchLongestAlias(context::Context &context, lexicon::Phrase grammar, std::string_view source,
+                                    MatchFilter filter = {});
 
   // Resolve a grammar entry by the public phrase name or by any of its
   // prototypes. Grammar dictionaries store their canonical entries with a

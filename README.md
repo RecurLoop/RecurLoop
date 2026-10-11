@@ -525,31 +525,19 @@ different parts of RecurLoop's extension model.
 | Haskell | currying, algebraic data, pattern matching and call-by-need | a Haskell-specific parser and lazy runtime written in RecurLoop |
 | Erlang | actors, single-assignment matching, mailboxes and selective receive | an Erlang-specific parser and cooperative actor runtime written in RecurLoop |
 
-The important claim is **not** that every foreign language can be represented
-only by aliases or without a parser.
+New language implementations must recognize grammar through the active phrase
+lexicon and longest matching, then lower to native compiler operations. Temporary
+compilation trees are allowed; runtime evaluation of a foreign-language syntax
+tree does not satisfy this contract. A compiled scheduler, thunk, or unification
+runtime can provide the language's semantics without interpreting its syntax.
+See [phrase processing](docs/phrase-processing.md) for the shared APIs and the
+remaining kernel boundaries. Inferred demonstrates native specialization with
+phrase-defined delimiters, keyword aliases and operator precedence.
 
-For languages whose syntax or execution model differs substantially from
-native RecurLoop, a compatibility layer can implement its own parser, AST, or
-semantic runtime in RecurLoop source. User-visible foreign symbols can still
-be interned in the RecurLoop lexicon and used as canonical phrase identities,
-while the C++ host remains free of a dedicated implementation for that
-language.
-
-This distinction is intentional:
-
-```text
-Amber
-    mostly phrase-native imperative compatibility
-
-Prolog
-    custom logical runtime + unification + rollback
-
-Haskell
-    custom lazy runtime + currying + thunks
-
-Erlang
-    custom actor runtime + mailboxes + selective receive
-```
+The Prolog, Haskell and Erlang examples below are **legacy interpreter
+experiments**. Moving their parsers and evaluators into `.rl` did not make them
+native language compilers. They remain regression fixtures pending native
+lowering; they should not serve as templates for new language implementations.
 
 These experiments have also exposed a common architectural boundary: a foreign
 language currently shares the root RecurLoop dictionary and can collide with a

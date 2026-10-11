@@ -1278,7 +1278,8 @@ namespace recurloop {
         continue;
       std::vector<SyntaxPattern::Expectation> expected;
       try {
-        expected = SyntaxPattern::expect(patterns[address], std::string_view(state.source).substr(anchor.end));
+        expected =
+            SyntaxPattern::expect(patterns[address], std::string_view(state.source).substr(anchor.end), &context);
       } catch (...) {
         continue;
       } // Incomplete comments and edited contracts are ordinary inspection input.
@@ -1287,8 +1288,8 @@ namespace recurloop {
       auto phrase = phraseAt(state, address);
       std::ostringstream rows;
       for (const auto &item : expected) {
-        const auto insertion =
-            SyntaxPattern::insertion(patterns[address], std::string_view(state.source).substr(anchor.end), item);
+        const auto insertion = SyntaxPattern::insertion(
+            patterns[address], std::string_view(state.source).substr(anchor.end), item, &context);
         rows << "X\t" << phraseVersion(phrase) << '\t' << hex(phrasePath(names, phrase)) << '\t'
              << characterOffset(state, anchor.end + item.start) << '\t' << hex(item.name) << '\t'
              << hex(item.matcher) << '\t' << hex(item.literal) << '\t' << hex(insertion) << '\n';
@@ -1317,7 +1318,7 @@ namespace recurloop {
             }
             if (ancestor.isNull() || ancestor.getAddress() != prototype.getAddress()) continue;
           }
-          if (!SyntaxPattern::accepts(item.matcher, spelling)) continue;
+          if (!SyntaxPattern::accepts(item.matcher, spelling, &context)) continue;
           rows << "V\t" << phraseVersion(phrase) << '\t' << hex(phrasePath(names, phrase)) << '\t' << hex(item.name)
                << '\t' << hex(candidate.name) << '\t' << hex(spelling) << '\n';
         }

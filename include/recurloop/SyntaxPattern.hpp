@@ -21,6 +21,13 @@ namespace recurloop {
 
     static void registerActions(context::Context &context);
     static void define(context::Context &context, lexicon::Phrase &invoked);
+    // Non-consuming recognition, including the key; never invokes an action.
+    // End byte offset of a phrase-delimited block in bounded source, or zero.
+    // Attach declarative, non-executing recognition to a compiled phrase action.
+    static void describe(context::Context &context, lexicon::Phrase phrase, std::string_view pattern,
+                         lexicon::Phrase grammar);
+    static std::size_t blockExtent(context::Context &context, std::string_view source, std::size_t position);
+    static std::size_t extent(context::Context &context, lexicon::Phrase phrase, std::size_t relative = 0);
     static void invoke(context::Context &context, lexicon::Phrase &invoked);
 
     static const std::uint8_t *capture(context::Context &context, std::string_view name);
@@ -37,8 +44,10 @@ namespace recurloop {
     // The ordinary matcher reports continuations at EOF without executing an
     // action or evaluating captures. Optional/choice branches are all retained.
     // An empty name/matcher/literal marks a complete pattern at EOF.
-    static std::vector<Expectation> expect(std::string_view pattern, std::string_view prefix);
-    static bool accepts(std::string_view matcher, std::string_view value);
-    static std::string insertion(std::string_view pattern, std::string_view prefix, const Expectation &item);
+    static std::vector<Expectation> expect(std::string_view pattern, std::string_view prefix,
+                                           context::Context *context = nullptr);
+    static bool accepts(std::string_view matcher, std::string_view value, context::Context *context = nullptr);
+    static std::string insertion(std::string_view pattern, std::string_view prefix, const Expectation &item,
+                                 context::Context *context = nullptr);
   };
 } // namespace recurloop

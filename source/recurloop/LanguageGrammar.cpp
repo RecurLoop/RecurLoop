@@ -9,8 +9,26 @@
 namespace recurloop::LanguageGrammar {
   namespace {
 
-    thread_local context::Context *aliasContext = nullptr;
-    thread_local lexicon::Phrase *aliasGrammar = nullptr;
+    struct MatchFrame {
+      context::Context *context = nullptr;
+      lexicon::Phrase *grammar = nullptr;
+      const MatchFilter *filter = nullptr;
+    };
+    thread_local MatchFrame *currentMatch = nullptr;
+    struct MatchScope {
+      MatchFrame *previous = currentMatch;
+      explicit MatchScope(MatchFrame &frame) {
+        currentMatch = &frame;
+      }
+      ~MatchScope() {
+        currentMatch = previous;
+      }
+    };
+
+    bool accepted(radix::Node *, radix::Match *candidate) {
+      lexicon::Phrase phrase = lexicon::Dictionary(*candidate).getPhrase();
+      return !phrase.isNull() && (!currentMatch->filter || !*currentMatch->filter || (*currentMatch->filter)(phrase));
+    }
     bool populated(radix::Node *, radix::Node *candidate) {
       return !candidate->isEmpty();
     }
@@ -27,10 +45,11 @@ namespace recurloop::LanguageGrammar {
       return lexicon::Phrase(grammar.getLexicon());
     }
 
-    bool grammarAlias(radix::Node *, radix::Match *candidate) {
-      if (aliasContext == nullptr || aliasGrammar == nullptr) return false;
+    bool grammarAlias(radix::Node *owner, radix::Match *candidate) {
+      MatchFrame &frame = *currentMatch;
+      if (frame.context == nullptr || frame.grammar == nullptr || !accepted(owner, candidate)) return false;
       lexicon::Phrase phrase = lexicon::Dictionary(*candidate).getPhrase();
-      return !phrase.isNull() && !resolve(*aliasContext, *aliasGrammar, phrase.getKey()).isNull();
+      return !resolve(*frame.context, *frame.grammar, phrase.getKey()).isNull();
     }
 
   } // namespace
@@ -103,20 +122,22 @@ namespace recurloop::LanguageGrammar {
     return dictionary;
   }
 
-  lexicon::Phrase matchLongest(lexicon::Phrase dictionary, std::string_view source) {
+  lexicon::Phrase matchLongest(lexicon::Phrase dictionary, std::string_view source, MatchFilter filter) {
     if (dictionary.isNull() || !dictionary.containsSubdictionary()) return lexicon::Phrase(dictionary.getLexicon());
-    lexicon::Match match = dictionary.matchLongest(
-        Byte(const_cast<char *>(source.data())), 0, source.size() * Byte::length,
-        [](radix::Node *, radix::Match *candidate) { return !lexicon::Dictionary(*candidate).getPhrase().isNull(); });
+    MatchFrame frame{nullptr, nullptr, &filter};
+    MatchScope scope(frame);
+    lexicon::Match match =
+        dictionary.matchLongest(Byte(const_cast<char *>(source.data())), 0, source.size() * Byte::length, accepted);
     return match.isNull() ? lexicon::Phrase(dictionary.getLexicon()) : match.getPhrase();
   }
 
   lexicon::Phrase matchLongest(context::Context &context, std::initializer_list<lexicon::Phrase> grammars,
-                               std::string_view source) {
+                               std::string_view source, MatchFilter filter) {
     lexicon::Phrase result(&context.lexicon);
     std::size_t bytes = 0;
     for (lexicon::Phrase grammar : grammars) {
-      for (lexicon::Phrase candidate : {matchLongest(grammar, source), matchLongestAlias(context, grammar, source)}) {
+      for (lexicon::Phrase candidate :
+           {matchLongest(grammar, source, filter), matchLongestAlias(context, grammar, source, filter)}) {
         if (!candidate.isNull() && candidate.getKey().size() > bytes) {
           result = candidate;
           bytes = candidate.getKey().size();
@@ -126,16 +147,38 @@ namespace recurloop::LanguageGrammar {
     return result;
   }
 
-  lexicon::Phrase matchLongestAlias(context::Context &context, lexicon::Phrase grammar, std::string_view source) {
+  lexicon::Phrase peekLongest(context::Context &context, lexicon::Phrase dictionary, std::size_t relative,
+                              MatchFilter filter) {
+    if (dictionary.isNull() || !dictionary.containsSubdictionary()) return lexicon::Phrase(&context.lexicon);
+    while (relative >= context.source.buffer.bits / Byte::length && context.source.more)
+      context::Source::load(context, true);
+    while (relative < context.source.buffer.bits / Byte::length) {
+      const auto start = context.source.buffer.offset / Byte::length + relative;
+      const auto bytes = context.source.buffer.bits / Byte::length - relative;
+      auto raw = dictionary.matchLongest(
+          Byte(context.source.buffer.str.data() + start), 0, bytes * Byte::length,
+          [](radix::Node *, radix::Match *candidate) { return !lexicon::Dictionary(*candidate).getPhrase().isNull(); });
+      bool wordBoundary = false;
+      if (!raw.isNull() && raw.getBits() == bytes * Byte::length) {
+        const auto key = raw.getPhrase().getKey();
+        wordBoundary = !key.empty() && (std::isalnum(static_cast<unsigned char>(key.back())) || key.back() == '_');
+      }
+      if (context.source.more && (raw.wantsMore() || wordBoundary)) {
+        context::Source::load(context, true);
+        continue;
+      }
+      return matchLongest(dictionary, std::string_view(context.source.buffer.str.data() + start, bytes), filter);
+    }
+    return lexicon::Phrase(&context.lexicon);
+  }
+
+  lexicon::Phrase matchLongestAlias(context::Context &context, lexicon::Phrase grammar, std::string_view source,
+                                    MatchFilter filter) {
     lexicon::Phrase root = context.lexicon.phrase();
-    context::Context *previousContext = aliasContext;
-    lexicon::Phrase *previousGrammar = aliasGrammar;
-    aliasContext = &context;
-    aliasGrammar = &grammar;
+    MatchFrame frame{&context, &grammar, &filter};
+    MatchScope scope(frame);
     lexicon::Match match =
         root.matchLongest(Byte(const_cast<char *>(source.data())), 0, source.size() * Byte::length, grammarAlias);
-    aliasContext = previousContext;
-    aliasGrammar = previousGrammar;
     return match.isNull() ? lexicon::Phrase(&context.lexicon) : match.getPhrase();
   }
 

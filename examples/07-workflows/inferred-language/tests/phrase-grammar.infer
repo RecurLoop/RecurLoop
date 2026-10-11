@@ -1,0 +1,61 @@
+// Grammar aliases apply inside the native specialization compiler and its probe.
+let Inferred:Grammar:Tokens:begin = <Inferred:Grammar:Tokens:"{">
+let Inferred:Grammar:Tokens:end = <Inferred:Grammar:Tokens:"}">
+let Inferred:Grammar:Tokens:plus = phrase { dictionary = true prototype = <Inferred:Grammar:Tokens:"+"> }
+let Inferred:Grammar:Tokens:done = <Inferred:Grammar:Tokens:return>
+let Inferred:Grammar:Tokens:otherwise = <Inferred:Grammar:Tokens:else>
+let Inferred:Grammar:Tokens:choose = <Inferred:Grammar:Tokens:if>
+let Inferred:Grammar:Tokens:"#" = <Inferred:Grammar:Tokens:"//">
+let Inferred:Grammar:Tokens:"⊕" = <Inferred:Grammar:Tokens:"+">
+let Inferred:Grammar:Tokens:"\"plus" = <Inferred:Grammar:Tokens:"+">
+let Inferred:Grammar:Tokens:"  add" = <Inferred:Grammar:Tokens:"+">
+
+poly fn answer(value) begin
+    # custom comment containing fake end delimiter: end
+    choose value > 0 begin
+        done value plus 20 ⊕ 2
+    end otherwise begin
+        done 0
+    end
+end
+print answer(20)
+
+// A source-defined action can set operator precedence independently of its spelling.
+let configure = phrase {
+    type = <phrase-types:elaborate>
+    action = fn (state:Context*, called:Phrase*) -> void {
+        Inferred:define_operator(state, "plus", 1, 100)
+        let source = "# alias comment\nplus"
+        var position = 0
+        let token = LanguageKit:Cursor:phrase(state, Inferred:tokens(state), source, 20, &position, 264)
+        let expected = context:phrase:find:exact(state, Inferred:tokens(state), "plus")
+        if token != expected || position != 16 { context:diagnostic:error(state, "phrase cursor lost aliased trivia") }
+        let text = "\"}\""
+        let reader = LanguageKit:SliceReader:new(state, text, 3, 128)
+        if !reader { context:diagnostic:error(state, "could not allocate reader"); return }
+        if LanguageKit:SliceReader:is(reader, "}") { context:diagnostic:error(state, "literal contents became syntax") }
+        LanguageKit:SliceReader:destroy(reader)
+    }
+}
+configure
+poly fn precedence(value) begin done value plus 3 * 4 end
+print precedence(2)
+
+// Registered spellings take priority over quote and whitespace data fallbacks.
+poly fn quote_prefix(value) begin done value "plus 22 end
+poly fn layout_prefix(value) begin done value  add 22 end
+print quote_prefix(20)
+print layout_prefix(20)
+
+// A root phrase longer than poly must win before any whole-form probe.
+let "poly fn literal()" = phrase {
+    type = <phrase-types:elaborate>
+    action = fn (state:Context*, called:Phrase*) -> void {
+        LanguageKit:Source:skip_line(state)
+        context:source:root(state)
+    }
+}
+poly fn literal() { this is deliberately not inferred syntax }
+let native_poly = <poly>
+native_poly fn root_alias(value) begin done value plus 22 end
+print root_alias(20)

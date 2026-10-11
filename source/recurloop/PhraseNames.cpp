@@ -235,6 +235,38 @@ namespace recurloop {
     setupQuoted(doubleQuoted, "\"");
   }
 
+  ParsedPhraseName PhraseNames::parse(context::Context &context, std::string_view source, SourceLocation origin) {
+    if (origin.path.empty()) origin = {context.source.path, context.source.line, context.source.position};
+    struct Restore {
+      context::Context &context;
+      context::Source source;
+      lexicon::Phrase dictionary;
+      std::string key;
+      Size keyBits;
+      ~Restore() {
+        context.source = std::move(source);
+        context.staging.dictionary = dictionary;
+        context.workspace.key.clear();
+        context.workspace.key.append(Bit(Byte(key.data())), keyBits);
+      }
+    } restore{
+        context, std::move(context.source), context.staging.dictionary,
+        std::string(context.workspace.key.c_str(), (context.workspace.key.bits() + Byte::length - 1) / Byte::length),
+        context.workspace.key.bits()};
+    context.source = {};
+    context.source.path = origin.path;
+    context.source.line = origin.line;
+    context.source.position = origin.column;
+    context.source.more = false;
+    context.source.buffer.str.assign(source);
+    context.source.buffer.bits = source.size() * Byte::length;
+    context.staging.dictionary = context.lexicon.phrase();
+    auto result = parseAssignment(context, false, true);
+    if (!result.operation.isNull() || context.source.buffer.bits != 0)
+      THROW_AT(origin, "phrase reference contains an unquoted assignment operator")
+    return result;
+  }
+
   ParsedPhraseName PhraseNames::parseAssignment(context::Context &context, bool allowEmpty,
                                                 bool allowMissingOperation) {
     lexicon::Phrase grammar = LanguageGrammar::find(context.lexicon.phrase(), GrammarName);

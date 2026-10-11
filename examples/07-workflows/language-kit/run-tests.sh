@@ -38,4 +38,7 @@ printf '42\n' >"$TMP/smoke.expected"
 "$RECURLOOP" --import "$KIT_IMAGE" --string 'print 42' >"$TMP/smoke.out"
 diff -u "$TMP/smoke.expected" "$TMP/smoke.out"
 
-echo '[language-kit] image build/import smoke test passed'
+"$RECURLOOP" --import "$KIT_IMAGE" --file "$DIR/tests/phrase-readers.rl" >"$TMP/phrase-readers.out"
+diff -u "$TMP/smoke.expected" "$TMP/phrase-readers.out"
+
+echo '[language-kit] image build/import and phrase readers passed'

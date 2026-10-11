@@ -221,7 +221,7 @@ namespace recurloop {
         locals.emplace_back();
         lexer.skipNewlines();
         std::vector<Statement> result;
-        while (!LanguageGrammar::matches(context, lexer.current().text, "}")) {
+        while (!lexer.is("}")) {
           if (lexer.current().kind == TokenKind::End) fail({}, lexer.current().offset, "unterminated block");
           result.push_back(statement());
           lexer.skipNewlines();
@@ -236,7 +236,9 @@ namespace recurloop {
       Statement statement() {
         lexer.skipNewlines();
         const Token start = lexer.current();
-        lexicon::Phrase syntax = LanguageGrammar::resolve(context, statements, start.text);
+        lexicon::Phrase syntax = start.kind == TokenKind::Symbol || start.kind == TokenKind::Identifier
+                                     ? LanguageGrammar::resolve(context, statements, start.text)
+                                     : lexicon::Phrase(&context.lexicon);
         if (syntax.isNull()) {
           auto target = expression();
           lexicon::Phrase operation = LanguageGrammar::resolve(context, assignments, lexer.current().text);
@@ -439,9 +441,8 @@ namespace recurloop {
       void parseReturn(Statement &result, const Token &start, lexicon::Phrase syntax) {
         result.syntax = syntax;
         result.offset = start.offset;
-        if (lexer.current().kind != TokenKind::Newline && lexer.current().kind != TokenKind::End &&
-            !LanguageGrammar::matches(context, lexer.current().text, ";") &&
-            !LanguageGrammar::matches(context, lexer.current().text, "}"))
+        if (lexer.current().kind != TokenKind::Newline && lexer.current().kind != TokenKind::End && !lexer.is(";") &&
+            !lexer.is("}"))
           result.expression = expression();
       }
 
@@ -548,8 +549,8 @@ namespace recurloop {
       std::unique_ptr<Expression> postfix() {
         auto result = primary();
         while (true) {
-          if (Semantic::active(context) && result->kind == Expression::Kind::Variable &&
-              !findLocal(result->text) && !LanguageGrammar::matches(context, lexer.current().text, ":")) {
+          if (Semantic::active(context) && result->kind == Expression::Kind::Variable && !findLocal(result->text) &&
+              !lexer.is(":")) {
             const auto binding = context.values().find(result->text, scope, Semantic::valueBindings(context));
             if (binding) {
               lexer.recordResolved(LanguageGrammar::findQualified(context.lexicon.phrase(), binding->name),
@@ -563,7 +564,9 @@ namespace recurloop {
                                    result->namePath);
             }
           }
-          lexicon::Phrase syntax = LanguageGrammar::resolve(context, postfixes, lexer.current().text);
+          lexicon::Phrase syntax = lexer.current().kind == TokenKind::Symbol
+                                       ? LanguageGrammar::resolve(context, postfixes, lexer.current().text)
+                                       : lexicon::Phrase(&context.lexicon);
           if (syntax.isNull()) return result;
           result = invokePostfix(syntax, lexer.take(), std::move(result));
         }
@@ -597,7 +600,7 @@ namespace recurloop {
         result->text = token.text;
         result->kind = Expression::Kind::Variable;
         result->namePath.push_back(token);
-        if (!LanguageGrammar::matches(context, lexer.current().text, ":")) {
+        if (!lexer.is(":")) {
           if (const auto *local = findLocal(token.text)) recordLocal(local->symbol, token);
         }
         return result;

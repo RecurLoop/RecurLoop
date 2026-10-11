@@ -5,6 +5,7 @@
 #include <recurloop/Blocks.hpp>
 #include <recurloop/Functions.hpp>
 #include <recurloop/LanguageGrammar.hpp>
+#include <recurloop/PhraseNames.hpp>
 #include <recurloop/Semantic.hpp>
 #include <recurloop/Assistance.hpp>
 #include <recurloop/SyntaxCursor.hpp>
@@ -13,6 +14,7 @@
 #include <cctype>
 #include <string>
 #include <string_view>
+#include <vector>
 
 namespace recurloop {
   namespace {
@@ -34,18 +36,15 @@ namespace recurloop {
     lexicon::Phrase reference(context::Context &context, const std::string &source) {
       if (source.size() < 2 || source.front() != '<' || source.back() != '>')
         THROW(, "phrase field expects a reference enclosed in '<' and '>'")
-      std::string path = trim(source.substr(1, source.size() - 2));
-      lexicon::Phrase phrase = context.lexicon.phrase();
-      std::size_t begin = 0;
-      while (true) {
-        const std::size_t end = path.find(':', begin);
-        const std::string key = trim(path.substr(begin, end - begin));
-        if (key.empty()) THROW(, "phrase field contains an empty reference component")
-        phrase = LanguageGrammar::find(phrase, key);
-        if (phrase.isNull()) THROW(, "phrase field references an undefined phrase: '" << path << "'")
-        if (end == std::string::npos) return phrase;
-        begin = end + 1;
+      const auto name = PhraseNames::parse(context, std::string_view(source).substr(1, source.size() - 2));
+      auto phrase = context.lexicon.phrase();
+      for (const auto &component : name.path) {
+        phrase = LanguageGrammar::findInherited(phrase, component);
+        if (phrase.isNull()) THROW(, "phrase field references an undefined dictionary: '" << component << "'")
       }
+      phrase = LanguageGrammar::findInherited(phrase, name.name);
+      if (phrase.isNull()) THROW(, "phrase field references an undefined phrase: '" << name.qualified() << "'")
+      return phrase;
     }
 
     class Parser;
@@ -79,13 +78,22 @@ namespace recurloop {
           skip();
           if (cursor == source.size()) return;
           const std::size_t fieldOffset = cursor;
-          const std::string field = identifier();
+          auto fields = LanguageGrammar::find(context.lexicon.phrase(), FieldGrammarName);
+          auto syntax =
+              LanguageGrammar::matchLongest(context, {fields}, source.substr(cursor), [&](lexicon::Phrase candidate) {
+                const auto key = candidate.getKey();
+                const auto end = cursor + key.size();
+                return !key.empty() && (!(std::isalnum(static_cast<unsigned char>(key.back())) || key.back() == '_') ||
+                                        end == source.size() ||
+                                        !(std::isalnum(static_cast<unsigned char>(source[end])) || source[end] == '_'));
+              });
+          if (syntax.isNull()) fail("unknown field '" + identifier() + "'", fieldOffset);
+          const auto spelling = syntax.getKey();
+          syntax = LanguageGrammar::resolve(context, fields, spelling);
+          cursor += spelling.size();
           skip();
           expect('=');
           skip();
-          lexicon::Phrase fields = LanguageGrammar::find(context.lexicon.phrase(), FieldGrammarName);
-          lexicon::Phrase syntax = LanguageGrammar::resolve(context, fields, field);
-          if (syntax.isNull()) fail("unknown field '" + field + "'", fieldOffset);
           apply(syntax);
           skip();
           if (!accept(",")) accept(";");
@@ -272,21 +280,26 @@ namespace recurloop {
         }
       }
       bool accept(std::string_view value) {
+        const auto boundary = [&](std::string_view key) {
+          const auto end = cursor + key.size();
+          return !key.empty() && (!(std::isalnum(static_cast<unsigned char>(key.back())) || key.back() == '_') ||
+                                  end == source.size() ||
+                                  !(std::isalnum(static_cast<unsigned char>(source[end])) || source[end] == '_'));
+        };
+        auto root = context.lexicon.phrase();
+        auto canonical = LanguageGrammar::find(root, value);
         std::string spelling;
-        if (source.substr(cursor).starts_with(value)) {
+        if (canonical.isNull()) {
+          // The quote byte belongs to the native string-data primitive.
+          if (!source.substr(cursor).starts_with(value) || !boundary(value)) return false;
           spelling = std::string(value);
         } else {
-          lexicon::Phrase root = context.lexicon.phrase();
-          lexicon::Phrase matched = LanguageGrammar::matchLongest(root, source.substr(cursor));
-          lexicon::Phrase canonical = LanguageGrammar::find(root, value);
-          if (matched.isNull() || canonical.isNull() || !LanguageGrammar::inherits(matched, canonical)) return false;
+          auto matched = LanguageGrammar::matchLongest(
+              root, source.substr(cursor), [&](lexicon::Phrase candidate) { return boundary(candidate.getKey()); });
+          if (!LanguageGrammar::inherits(matched, canonical)) return false;
           spelling = matched.getKey();
         }
-        const std::size_t end = cursor + spelling.size();
-        if (!spelling.empty() &&
-            (std::isalnum(static_cast<unsigned char>(spelling.back())) || spelling.back() == '_') &&
-            end < source.size() && (std::isalnum(static_cast<unsigned char>(source[end])) || source[end] == '_'))
-          return false;
+        const auto end = cursor + spelling.size();
         cursor = end;
         return true;
       }
@@ -310,7 +323,27 @@ namespace recurloop {
       std::string referenceText() {
         if (cursor == source.size() || source[cursor] != '<') THROW(, "phrase definition expects a reference")
         const std::size_t begin = cursor++;
-        while (cursor < source.size() && source[cursor] != '>') ++cursor;
+        char quote = '\0';
+        bool escaped = false;
+        std::size_t interpolation = 0;
+        while (cursor < source.size()) {
+          const char ch = source[cursor];
+          if (escaped)
+            escaped = false;
+          else if (ch == '\\')
+            escaped = true;
+          else if (quote != '\0') {
+            if (ch == quote) quote = '\0';
+          } else if (ch == '"' || ch == '\'')
+            quote = ch;
+          else if (ch == '{')
+            ++interpolation;
+          else if (ch == '}' && interpolation != 0)
+            --interpolation;
+          else if (ch == '>' && interpolation == 0)
+            break;
+          ++cursor;
+        }
         if (cursor == source.size()) THROW(, "unterminated phrase reference")
         ++cursor;
         return std::string(source.substr(begin, cursor - begin));
@@ -559,10 +592,10 @@ namespace recurloop {
     if (cursor.current().kind == SyntaxTokenKind::End) return false;
 
     const std::size_t nameStart = cursor.current().offset;
-    std::string path = cursor.take().text;
+    std::vector<std::string> path{cursor.take().text};
     while (cursor.accept(":")) {
       if (cursor.current().kind == SyntaxTokenKind::End) return false;
-      path += ':' + cursor.take().text;
+      path.push_back(cursor.take().text);
     }
     const std::size_t nameEnd = cursor.consumedEnd();
     if (!cursor.accept(".")) return false;
@@ -583,7 +616,11 @@ namespace recurloop {
       THROW_AT(location, "phrase mutation requires a value")
     }
 
-    lexicon::Phrase phrase = reference(context, '<' + path + '>');
+    auto phrase = context.lexicon.phrase();
+    for (const auto &component : path) {
+      phrase = LanguageGrammar::findInherited(phrase, component);
+      if (phrase.isNull()) THROW(, "phrase mutation references an undefined phrase: '" << component << "'")
+    }
     cursor.recordResolved(phrase, nameStart, nameEnd);
     if (phrase.isPermanent()) {
       const SourceLocation location{context.source.path, context.source.line, context.source.position};

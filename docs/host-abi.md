@@ -111,3 +111,19 @@ happen in `.rl`/`.rli`. C++ changes are reserved for kernel bugs, platform/backe
 ports, new generic host mechanisms, or deliberate Host ABI revisions. Adding a
 new registry, parser construct or ordinary compiler collection is not a Host ABI
 revision.
+
+## Shared syntax boundaries
+
+`context:syntax:block:extent` exposes the kernel's existing phrase block matcher
+for a bounded buffer. It reports a byte extent without consuming source or
+executing actions. The grammar overload of `context:source:block:capture` uses an
+explicit phrase dictionary with native root fallback for streamed capture. These
+services share the lexicon and matcher; they introduce neither language-specific
+parsers nor persistent host semantic state. Their signatures are declared in
+`core/compiler.rl`; the direct action allowlist is unchanged.
+
+`context:syntax:describe` attaches a declarative recognition pattern and a stable
+grammar reference to a compiled phrase action. The shared matcher uses that
+schema during surrounding capture without executing the action. This lets
+source-defined DSL grammars describe their own boundaries; C++ stores no
+language-specific parser or additional semantic registry.

@@ -1312,6 +1312,24 @@ namespace recurloop {
       return checked(context, std::uint64_t{0}, [&](context::Context &value) { return SyntaxExtension::bytes(value); });
     }
 
+    extern "C" std::uint64_t contextSyntaxDescribe(context::Context *context, std::uint64_t phrase, const char *pattern,
+                                                   std::uint64_t grammar) noexcept {
+      return checked(context, std::uint64_t{0}, [&](context::Context &value) {
+        if (!pattern) return std::uint64_t{0};
+        SyntaxPattern::describe(value, phraseAt(value, phrase), pattern, phraseAt(value, grammar));
+        return std::uint64_t{1};
+      });
+    }
+
+    extern "C" std::uint64_t contextSyntaxBlockExtent(context::Context *context, const std::uint8_t *source,
+                                                      std::uint64_t bytes, std::uint64_t position) noexcept {
+      return checked(context, std::uint64_t{0}, [&](context::Context &value) {
+        if (source == nullptr || position >= bytes) return std::uint64_t{0};
+        return static_cast<std::uint64_t>(SyntaxPattern::blockExtent(
+            value, std::string_view(reinterpret_cast<const char *>(source), bytes), position));
+      });
+    }
+
     extern "C" std::uint64_t contextSyntaxAdvance(context::Context *context, std::uint64_t bytes) noexcept {
       return checked(context, std::uint64_t{0},
                      [&](context::Context &value) { return SyntaxExtension::advance(value, bytes); });
@@ -1386,6 +1404,14 @@ namespace recurloop {
     extern "C" SourceBlock *contextSourceBlockCapture(context::Context *context) noexcept {
       return checked(context, static_cast<SourceBlock *>(nullptr),
                      [&](context::Context &value) { return new SourceBlock(Blocks::capture(value)); });
+    }
+
+    extern "C" SourceBlock *contextSourceBlockCaptureIn(context::Context *context, std::uint64_t owner) noexcept {
+      return checked(context, static_cast<SourceBlock *>(nullptr), [&](context::Context &value) {
+        auto grammar = phraseAt(value, owner);
+        if (grammar.isNull() || !grammar.containsSubdictionary()) THROW(, "block capture requires a grammar dictionary")
+        return new SourceBlock(Blocks::capture(value, grammar));
+      });
     }
 
     extern "C" SourceBlock *contextSourceBlockBegin(context::Context *context) noexcept {
@@ -2292,6 +2318,12 @@ namespace recurloop {
                         reinterpret_cast<std::uintptr_t>(&contextSyntaxData));
     declareHostFunction(context, SyntaxBytes, "context:syntax:bytes", {contextPointer}, u64,
                         reinterpret_cast<std::uintptr_t>(&contextSyntaxBytes));
+    declareHostFunction(context, "context:syntax:describe", "context:syntax:describe",
+                        {contextPointer, u64, bytePointer, u64}, u64,
+                        reinterpret_cast<std::uintptr_t>(&contextSyntaxDescribe));
+    declareHostFunction(context, "context:syntax:block:extent", "context:syntax:block:extent",
+                        {contextPointer, bytePointer, u64, u64}, u64,
+                        reinterpret_cast<std::uintptr_t>(&contextSyntaxBlockExtent));
     declareHostFunction(context, SyntaxAdvance, "context:syntax:advance", {contextPointer, u64}, u64,
                         reinterpret_cast<std::uintptr_t>(&contextSyntaxAdvance));
     declareHostFunction(context, SyntaxEmit, "context:syntax:emit$text", {contextPointer, bytePointer}, u64,
@@ -2324,6 +2356,8 @@ namespace recurloop {
                         reinterpret_cast<std::uintptr_t>(&contextSyntaxCaptureExists));
     declareHostFunction(context, BlockCapture, "context:source:block:capture", {contextPointer}, sourceBlockPointer,
                         reinterpret_cast<std::uintptr_t>(&contextSourceBlockCapture));
+    declareHostFunction(context, BlockCapture, "context:source:block:capture$grammar", {contextPointer, u64},
+                        sourceBlockPointer, reinterpret_cast<std::uintptr_t>(&contextSourceBlockCaptureIn));
     declareHostFunction(context, BlockBegin, "context:source:block:begin", {contextPointer}, sourceBlockPointer,
                         reinterpret_cast<std::uintptr_t>(&contextSourceBlockBegin));
     declareHostFunction(context, BlockStreamExecute, "context:source:block:stream:execute", {contextPointer, u64}, u64,

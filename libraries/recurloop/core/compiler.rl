@@ -132,6 +132,7 @@ compiler {
   type "fn(Context*)->u8* abi sysv-amd64" function
   type "fn(Context*)->u64 abi sysv-amd64" function
   type "fn(Context*)->SourceBlock* abi sysv-amd64" function
+  type "fn(Context*,u64)->SourceBlock* abi sysv-amd64" function
   type "fn(SourceBlock*)->u8* abi sysv-amd64" function
   type "fn(SourceBlock*)->u64 abi sysv-amd64" function
   type "fn(Context*,SourceBlock*,u64)->u64 abi sysv-amd64" function
@@ -303,6 +304,7 @@ compiler {
   extern "context:source:block:body" symbol "context:source:block:body" params [ "SourceBlock*" ] result "u8*" abi "sysv-amd64" imported
   extern "context:source:block:begin" symbol "context:source:block:begin" params [ "Context*" ] result "SourceBlock*" abi "sysv-amd64" imported
   extern "context:source:block:capture" symbol "context:source:block:capture" params [ "Context*" ] result "SourceBlock*" abi "sysv-amd64" imported
+  extern "context:source:block:capture" symbol "context:source:block:capture$grammar" params [ "Context*" "u64" ] result "SourceBlock*" abi "sysv-amd64" imported
   extern "context:source:block:stream:execute" symbol "context:source:block:stream:execute" params [ "Context*" "u64" ] result "u64" abi "sysv-amd64" imported
   extern "context:source:block:stream:skip" symbol "context:source:block:stream:skip" params [ "Context*" ] result "u64" abi "sysv-amd64" imported
   extern "context:source:block:execute" symbol "context:source:block:execute" params [ "Context*" "SourceBlock*" "u64" ] result "u64" abi "sysv-amd64" imported
@@ -348,6 +350,8 @@ compiler {
   extern "context:syntax:capture:exists" symbol "context:syntax:capture:exists" params [ "Context*" "u8*" ] result "u64" abi "sysv-amd64" imported
   extern "context:syntax:copy" symbol "context:syntax:copy" params [ "Context*" "u64" ] result "u64" abi "sysv-amd64" imported
   extern "context:syntax:data" symbol "context:syntax:data" params [ "Context*" ] result "u8*" abi "sysv-amd64" imported
+  extern "context:syntax:block:extent" symbol "context:syntax:block:extent" params [ "Context*" "u8*" "u64" "u64" ] result "u64" abi "sysv-amd64" imported
+  extern "context:syntax:describe" symbol "context:syntax:describe" params [ "Context*" "u64" "u8*" "u64" ] result "u64" abi "sysv-amd64" imported
   extern "context:syntax:dictionary" symbol "context:syntax:dictionary" params [ "Context*" ] result "u64" abi "sysv-amd64" imported
   extern "context:syntax:elaborate" symbol "context:syntax:elaborate" params [ "Context*" "u64" ] result "u64" abi "sysv-amd64" imported
   extern "context:syntax:emit" symbol "context:syntax:emit$text" params [ "Context*" "u8*" ] result "u64" abi "sysv-amd64" imported

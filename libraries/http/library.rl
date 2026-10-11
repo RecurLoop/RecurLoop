@@ -1502,10 +1502,84 @@ let Http:Server:run = fn (self:Http:Server*) -> i64 {
 //
 // The phrase runs as a rewrite inside compiled RecurLoop code. At that point
 // the host has already materialized a context:syntax slice, so LanguageKit's
-// SliceLexer is used instead of a private HTTP scanner.
+// phrase-backed SliceReader resolves the selected HTTP grammar by longest match.
 // =============================================================================
 
 let HttpSyntax = phrase { dictionary = true }
+
+// All routing syntax lives in this serializable dictionary. Native inline
+// handler bodies use the shared kernel block matcher, without running actions.
+let HttpSyntax:Grammar = phrase { dictionary = true }
+let HttpSyntax:grammar = fn (state:Context*) -> u64 {
+    let owner = context:phrase:find(state, "HttpSyntax")
+    return context:phrase:find:exact(state, owner, "Grammar")
+}
+
+let HttpSyntax:install_grammar = phrase {
+    type = <phrase-types:elaborate>
+    action = fn (state:Context*, called:Phrase*) -> void {
+        let grammar = HttpSyntax:grammar(state)
+        let token_0 = LanguageKit:define_token(state, grammar, "{", 5)
+        context:phrase:set:prototype(state, token_0, context:phrase:find(state, "{"))
+        let token_1 = LanguageKit:define_token(state, grammar, "}", 5)
+        context:phrase:set:prototype(state, token_1, context:phrase:find(state, "}"))
+        let token_2 = LanguageKit:define_token(state, grammar, "(", 5)
+        context:phrase:set:prototype(state, token_2, context:phrase:find(state, "("))
+        let token_3 = LanguageKit:define_token(state, grammar, ")", 5)
+        context:phrase:set:prototype(state, token_3, context:phrase:find(state, ")"))
+        let token_4 = LanguageKit:define_token(state, grammar, "[", 5)
+        context:phrase:set:prototype(state, token_4, context:phrase:find(state, "["))
+        let token_5 = LanguageKit:define_token(state, grammar, "]", 5)
+        context:phrase:set:prototype(state, token_5, context:phrase:find(state, "]"))
+        let token_6 = LanguageKit:define_token(state, grammar, ",", 5)
+        context:phrase:set:prototype(state, token_6, context:phrase:find(state, ","))
+        let token_7 = LanguageKit:define_token(state, grammar, ":", 5)
+        context:phrase:set:prototype(state, token_7, context:phrase:find(state, ":"))
+        let token_8 = LanguageKit:define_token(state, grammar, ".", 5)
+        context:phrase:set:prototype(state, token_8, context:phrase:find(state, "."))
+        let token_9 = LanguageKit:define_token(state, grammar, ";", 5)
+        context:phrase:set:prototype(state, token_9, context:phrase:find(state, ";"))
+        let token_10 = LanguageKit:define_token(state, grammar, "=", 4)
+        context:phrase:set:prototype(state, token_10, context:phrase:find(state, "="))
+        let token_11 = LanguageKit:define_token(state, grammar, "->", 4)
+        context:phrase:set:prototype(state, token_11, context:phrase:find(state, "->"))
+        let token_12 = LanguageKit:define_token(state, grammar, "fn", 1)
+        context:phrase:set:prototype(state, token_12, context:phrase:find(state, "fn"))
+        let token_13 = LanguageKit:define_token(state, grammar, "//", 4)
+        context:phrase:set:prototype(state, token_13, context:phrase:find(state, "//"))
+        let token_14 = LanguageKit:define_token(state, grammar, "/*", 4)
+        context:phrase:set:prototype(state, token_14, context:phrase:find(state, "/*"))
+        LanguageKit:define_token(state, grammar, "*/", 4)
+        LanguageKit:define_token(state, grammar, "once", 1)
+        LanguageKit:define_token(state, grammar, "limits", 1)
+        LanguageKit:define_token(state, grammar, "B", 1)
+        LanguageKit:define_token(state, grammar, "KiB", 1)
+        LanguageKit:define_token(state, grammar, "MiB", 1)
+        LanguageKit:define_token(state, grammar, "GiB", 1)
+        LanguageKit:define_token(state, grammar, "ms", 1)
+        LanguageKit:define_token(state, grammar, "s", 1)
+        LanguageKit:define_token(state, grammar, "request_line", 1)
+        LanguageKit:define_token(state, grammar, "headers_total", 1)
+        LanguageKit:define_token(state, grammar, "header_count", 1)
+        LanguageKit:define_token(state, grammar, "body", 1)
+        LanguageKit:define_token(state, grammar, "header_timeout", 1)
+        LanguageKit:define_token(state, grammar, "body_timeout", 1)
+        LanguageKit:define_token(state, grammar, "write_timeout", 1)
+        LanguageKit:define_token(state, grammar, "workers", 1)
+        LanguageKit:define_token(state, grammar, "queue_capacity", 1)
+        LanguageKit:define_token(state, grammar, "listen_backlog", 1)
+        LanguageKit:define_token(state, grammar, "chunk_line", 1)
+        LanguageKit:define_token(state, grammar, "GET", 1)
+        LanguageKit:define_token(state, grammar, "POST", 1)
+        LanguageKit:define_token(state, grammar, "PUT", 1)
+        LanguageKit:define_token(state, grammar, "DELETE", 1)
+        LanguageKit:define_token(state, grammar, "HEAD", 1)
+        LanguageKit:define_token(state, grammar, "OPTIONS", 1)
+        LanguageKit:define_token(state, grammar, "PATCH", 1)
+    }
+}
+let __http_install_grammar = <HttpSyntax:install_grammar>
+__http_install_grammar
 
 let HttpSyntax:error = fn (state:Context*, message:u8*) -> void {
     context:diagnostic:error(state, message)
@@ -1583,32 +1657,31 @@ let HttpSyntax:take_scaled = fn (
 
 let HttpSyntax:emit_route = fn (
     state:Context*, method:u8*, source:u8*, path_start:i64, path_end:i64,
-    handler_start:i64, handler_end:i64
+    handler_start:i64, handler_end:i64, fn_end:i64
 ) -> void {
     context:syntax:emit(state, "__http_server.route(\"")
     context:syntax:emit(state, method)
     context:syntax:emit(state, "\", ")
     HttpSyntax:emit_raw(state, source, path_start, path_end)
     context:syntax:emit(state, ", ")
-    HttpSyntax:emit_raw(state, source, handler_start, handler_end)
+    if fn_end > handler_start {
+        context:syntax:emit(state, "fn")
+        HttpSyntax:emit_raw(state, source, fn_end, handler_end)
+    } else { HttpSyntax:emit_raw(state, source, handler_start, handler_end) }
     context:syntax:emit(state, ")\n")
 }
 
-let HttpSyntax:header_ends_with_limits = fn (header:u8*) -> i64 {
+let HttpSyntax:header_ends_with_limits = fn (state:Context*, header:u8*) -> i64 {
     if !header { return 0 }
-    var length = Http:strlen(header)
-    while length > 0 && (header[length - 1] == 32 || header[length - 1] == 9 || header[length - 1] == 10 || header[length - 1] == 13) {
-        length -= 1
+    let reader = LanguageKit:SliceReader:new_phrases(state, HttpSyntax:grammar(state), header, Http:strlen(header), 392)
+    if !reader { return 0 }
+    defer reader.destroy()
+    var last = 0
+    while reader.kind_of() != 0 {
+        last = reader.is("limits")
+        reader.consume()
     }
-    if length < 6 { return 0 }
-    let start = length - 6
-    if header[start] != 108 || header[start + 1] != 105 || header[start + 2] != 109 ||
-       header[start + 3] != 105 || header[start + 4] != 116 || header[start + 5] != 115 {
-        return 0
-    }
-    if start == 0 { return 1 }
-    let before = header[start - 1]
-    return before == 32 || before == 9 || before == 10 || before == 13
+    return last
 }
 
 let HttpSyntax:append_block = fn (text:LanguageKit:Text*, block:SourceBlock*) -> i64 {
@@ -1627,7 +1700,7 @@ let HttpSyntax:append_block = fn (text:LanguageKit:Text*, block:SourceBlock*) ->
 // HTTP parsing/routing syntax for both function bodies and the interactive/root
 // form while still allowing inline `fn` route handlers.
 let HttpSyntax:run_top_level = fn (state:Context*) -> void {
-    let first = context:source:block:capture(state)
+    let first = context:source:block:capture(state, HttpSyntax:grammar(state))
     if !first { HttpSyntax:error(state, "http expects a route block"); return }
     defer context:source:block:release(first)
 
@@ -1640,8 +1713,8 @@ let HttpSyntax:run_top_level = fn (state:Context*) -> void {
         return
     }
 
-    if HttpSyntax:header_ends_with_limits(context:source:block:header(first)) {
-        let routes = context:source:block:capture(state)
+    if HttpSyntax:header_ends_with_limits(state, context:source:block:header(first)) {
+        let routes = context:source:block:capture(state, HttpSyntax:grammar(state))
         if !routes { HttpSyntax:error(state, "http limits expects a route block"); return }
         defer context:source:block:release(routes)
         if !HttpSyntax:append_block(source, routes) {
@@ -1690,35 +1763,32 @@ let HttpSyntax:run_top_level = fn (state:Context*) -> void {
     context:source:root(state)
 }
 
-// A route handler is either one identifier or an inline function literal. For
-// the latter, consume through its balanced body; SliceReader already keeps
-// braces inside strings and comments out of the token stream.
+// A route handler is a data identifier or a native function literal. Parse
+// only its signature here; the shared matcher determines the complete body.
 let HttpSyntax:handler_end = fn (reader:LanguageKit:SliceReader*) -> i64 {
-    if LanguageKit:SliceReader:kind_of(reader) != 1 { return -1 }
-    if !LanguageKit:SliceReader:is(reader, "fn") {
-        LanguageKit:SliceReader:consume(reader)
-        return reader.position
-    }
+    if reader.kind_of() != 1 { return -1 }
+    if !reader.is("fn") { reader.consume(); return reader.position }
 
-    LanguageKit:SliceReader:consume(reader)
-    var body_started = 0
-    var depth = 0
-    while LanguageKit:SliceReader:kind_of(reader) != 0 {
-        if LanguageKit:SliceReader:match(reader, "{") {
-            body_started = 1
-            depth += 1
-        } else if LanguageKit:SliceReader:match(reader, "}") {
-            if !body_started { return -1 }
-            depth -= 1
-            if depth == 0 { return reader.position }
-        } else {
-            LanguageKit:SliceReader:consume(reader)
-        }
+    reader.consume()
+    let fallback = reader.fallback
+    reader.fallback = context:syntax:dictionary(reader.state)
+    var opening = -1
+    while reader.kind_of() != 0 && opening < 0 {
+        if reader.is("{") {
+            opening = reader.position - Http:strlen(reader.text_of())
+        } else { reader.consume() }
     }
-    return -1
+    reader.fallback = fallback
+    if opening < 0 { return -1 }
+    let end = cast(i64, context:syntax:block:extent(reader.state, reader.source, cast(u64, reader.length), cast(u64, opening)))
+    reader.clear()
+    if end <= opening { return -1 }
+    reader.position = end
+    return end
 }
 
 let http = phrase {
+    dictionary = true
     docs = "```recurloop\nhttp \"address\" port {\n    METHOD \"path\" -> handler\n    ...\n}\n```\n\nStarts an HTTP server with a route table. Handlers have signature `(request:Http:Request*, response:Http:Response*) -> void`; a handler may also be an inline `fn`. Add `once` after `http` to serve one request.\n\n**Example**\n\n```recurloop\nhttp \"127.0.0.1\" 8080 {\n    GET \"/\" -> home\n    POST \"/echo\" -> echo\n}\n```"
     type = <phrase-types:elaborate>
     rewrite = true
@@ -1729,7 +1799,7 @@ let http = phrase {
         }
         let source = context:syntax:data(state)
         let bytes = context:syntax:bytes(state)
-        let reader = LanguageKit:SliceReader:new(state, source, bytes, 136)
+        let reader = LanguageKit:SliceReader:new_phrases(state, HttpSyntax:grammar(state), source, bytes, 392)
         if !reader { HttpSyntax:error(state, "http could not allocate syntax reader"); return }
         defer LanguageKit:SliceReader:destroy(reader)
 
@@ -1780,7 +1850,8 @@ let http = phrase {
             while !limits_closed && LanguageKit:SliceReader:kind_of(reader) != 0 {
                 if LanguageKit:SliceReader:match(reader, "}") { limits_closed = 1 }
                 else {
-                    let key = LanguageKit:SliceReader:take_identifier(reader)
+                    var key = cast(u8*, 0)
+                    if reader.kind_of() == 1 { key = reader.take_canonical() }
                     if !key { HttpSyntax:error(state, "http limits expects name = value"); return }
                     if !LanguageKit:SliceReader:expect(reader, "=", "http limits expects =") { free(key); return }
 
@@ -1882,7 +1953,8 @@ let http = phrase {
         while !closed && LanguageKit:SliceReader:kind_of(reader) != 0 {
             if LanguageKit:SliceReader:match(reader, "}") { closed = 1 }
             else {
-                let method = LanguageKit:SliceReader:take_identifier(reader)
+                var method = cast(u8*, 0)
+                if reader.kind_of() == 1 { method = reader.take_canonical() }
                 if !method {
                     HttpSyntax:error(state, "http route expects METHOD \"/path\" -> handler")
                     return
@@ -1902,12 +1974,14 @@ let http = phrase {
                 if !LanguageKit:SliceReader:expect(reader, "->", "http route expects -> before the handler") { return }
                 LanguageKit:SliceReader:skip_trivia(reader)
                 let handler_start = reader.position
+                var fn_end = 0
+                if reader.is("fn") { fn_end = reader.position }
                 let handler_end = HttpSyntax:handler_end(reader)
                 if handler_end <= handler_start {
                     HttpSyntax:error(state, "http route needs a handler name or inline function")
                     return
                 }
-                HttpSyntax:emit_route(state, method, source, path_start, path_end, handler_start, handler_end)
+                HttpSyntax:emit_route(state, method, source, path_start, path_end, handler_start, handler_end, fn_end)
             }
         }
         if !closed { HttpSyntax:error(state, "http route block is not closed"); return }
@@ -1920,6 +1994,18 @@ let http = phrase {
         context:syntax:advance(state, reader.position)
     }
 }
+
+
+// Publish the same grammar boundaries to surrounding native block capture.
+let HttpSyntax:describe = phrase {
+    type = <phrase-types:elaborate>
+    action = fn (state:Context*, called:Phrase*) -> void {
+        context:syntax:describe(state, context:phrase:find(state, "http"),
+            "[once] [<address:string>] <port:number> [limits <limits:block>] <routes:block>", HttpSyntax:grammar(state))
+    }
+}
+let __http_describe = <HttpSyntax:describe>
+__http_describe
 
 
 set Http:Handler.docs = "Route callback receiving a borrowed request and response. Send a response before returning; do not destroy these handler arguments."

@@ -3,6 +3,8 @@
 #include <recurloop/Recurloop.hpp>
 #include <recurloop/Expressions.hpp>
 #include <recurloop/Execution.hpp>
+#include <recurloop/LanguageGrammar.hpp>
+#include <recurloop/SyntaxCursor.hpp>
 #include <lexicon/Lexicon.hpp>
 #include <utilities/Exception.hpp>
 
@@ -468,4 +470,72 @@ print result
 TEST_F(ExpressionLanguageTesting, ValidatesFunctionSignaturesAndCalls) {
   EXPECT_NE(execute("let add = fn (left:i64, right:i64) -> i64 { return left + right }\nprint add(1)\n"), 0);
   EXPECT_NE(errors.str().find("expects 2 argument"), std::string::npos);
+}
+
+TEST(ValueTesting, FiltersLongestCandidatesBeforeSelectingSyntaxAndRestoresNestedMatching) {
+  ValueHost host;
+  auto &context = host.getContext();
+  auto root = context.lexicon.phrase();
+  auto grammar = root.append("test-grammar").make().enableSubdictionary().save();
+  auto shortPhrase = grammar.append("+").make().save();
+  grammar.append("+word").make().save();
+  auto result = recurloop::LanguageGrammar::matchLongest(grammar, "+wording", [&](lexicon::Phrase candidate) {
+    // Nested matching must leave the outer candidate filter intact.
+    EXPECT_FALSE(recurloop::LanguageGrammar::matchLongest(grammar, "+word").isNull());
+    return candidate.getKey() == "+";
+  });
+  EXPECT_EQ(result.getAddress(), shortPhrase.getAddress());
+  recurloop::SyntaxCursor cursor(context, "+wording", {grammar}, {}, {});
+  EXPECT_EQ(cursor.current().text, "+");
+  EXPECT_EQ(cursor.take().text, "+");
+  EXPECT_EQ(cursor.current().text, "wording");
+  EXPECT_THROW(recurloop::LanguageGrammar::matchLongest(
+                   grammar, "+", [](lexicon::Phrase) -> bool { throw std::runtime_error("test filter"); }),
+               std::runtime_error);
+  EXPECT_EQ(recurloop::LanguageGrammar::matchLongest(grammar, "+").getAddress(), shortPhrase.getAddress());
+}
+
+TEST_F(ExpressionLanguageTesting, KeepsLiteralContentsSeparateFromSyntaxPhraseIdentity) {
+  ASSERT_EQ(execute(R"RL(
+assert str(";") == ";"
+assert str(")") == ")"
+assert str("(") == "("
+assert str("}") == "}"
+assert str("return") == "return"
+fn punctuation() -> i64 {
+  let first = ";"
+  let second = ")"
+  "return"
+  "}"
+  return first[0] + second[0]
+}
+assert punctuation() == 100
+)RL"),
+            0)
+      << errors.str();
+}
+
+TEST(ValueTesting, PeeksLongestPhraseAcrossSourceRefillsWithoutConsumingInput) {
+  ValueHost host;
+  auto &context = host.getContext();
+  auto grammar = context.lexicon.phrase().append("stream-grammar").make().enableSubdictionary().save();
+  auto shortPhrase = grammar.append("alpha").make().save();
+  auto longPhrase = grammar.append("alphabeta").make().save();
+  std::istringstream remaining("beta!");
+  context.io.in = &remaining;
+  context.source.buffer.str = "ignored alpha";
+  context.source.buffer.offset = 8 * Byte::length;
+  context.source.buffer.bits = 5 * Byte::length;
+  context.source.more = true;
+  const auto line = context.source.line;
+  const auto column = context.source.position;
+  EXPECT_EQ(recurloop::LanguageGrammar::peekLongest(context, grammar).getAddress(), longPhrase.getAddress());
+  EXPECT_EQ(context.source.line, line);
+  EXPECT_EQ(context.source.position, column);
+  EXPECT_TRUE(context.source.buffer.str.substr(context.source.buffer.offset / Byte::length).starts_with("alphabeta!"));
+  EXPECT_EQ(recurloop::LanguageGrammar::peekLongest(
+                context, grammar, 0, [](lexicon::Phrase candidate) { return candidate.getKey() == "alpha"; })
+                .getAddress(),
+            shortPhrase.getAddress());
+  context.io.in = nullptr;
 }

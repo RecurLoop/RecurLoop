@@ -10,6 +10,8 @@ namespace context {
   class Context;
 }
 
+namespace lexicon { class Phrase; }
+
 namespace recurloop {
   struct SourceBlock {
     std::string header;
@@ -28,7 +30,9 @@ namespace recurloop {
     static bool hasOpeningBrace(context::Context &context, bool followingLine = false);
     static bool hasIndentedBody(context::Context &context);
     static SourceBlock begin(context::Context &context);
+    static SourceBlock begin(context::Context &context, lexicon::Phrase grammar);
     static SourceBlock capture(context::Context &context);
+    static SourceBlock capture(context::Context &context, lexicon::Phrase grammar);
     static SourceBlock captureIndented(context::Context &context);
     static std::string peekLine(context::Context &context);
     static std::string captureExpression(context::Context &context, SourceLocation *origin = nullptr);

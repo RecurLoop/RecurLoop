@@ -19,6 +19,48 @@ let Inferred:Variables = phrase { dictionary = true permanent = true }
 let Inferred:Grammar = phrase { dictionary = true permanent = true }
 let Inferred:Specializations = phrase { dictionary = true permanent = true }
 
+// Every grammar spelling is a longest-matched phrase; aliases inherit identity.
+let Inferred:Grammar:Tokens = phrase { dictionary = true }
+let Inferred:Grammar:Tokens:"!" = phrase { dictionary = true }
+let Inferred:Grammar:Tokens:"+" = phrase { dictionary = true }
+let Inferred:Grammar:Tokens:"-" = phrase { dictionary = true }
+let Inferred:Grammar:Tokens:"*" = phrase { dictionary = true }
+let Inferred:Grammar:Tokens:"/" = phrase { dictionary = true }
+let Inferred:Grammar:Tokens:"%" = phrase { dictionary = true }
+let Inferred:Grammar:Tokens:"<" = phrase { dictionary = true }
+let Inferred:Grammar:Tokens:">" = phrase { dictionary = true }
+let Inferred:Grammar:Tokens:"<=" = phrase { dictionary = true }
+let Inferred:Grammar:Tokens:">=" = phrase { dictionary = true }
+let Inferred:Grammar:Tokens:"==" = phrase { dictionary = true }
+let Inferred:Grammar:Tokens:"!=" = phrase { dictionary = true }
+let Inferred:Grammar:Tokens:"&&" = phrase { dictionary = true }
+let Inferred:Grammar:Tokens:"||" = phrase { dictionary = true }
+let Inferred:Grammar:Tokens:"(" = phrase { dictionary = true }
+let Inferred:Grammar:Tokens:")" = phrase { dictionary = true }
+let Inferred:Grammar:Tokens:"{" = phrase { dictionary = true }
+let Inferred:Grammar:Tokens:"}" = phrase { dictionary = true }
+let Inferred:Grammar:Tokens:"," = phrase { dictionary = true }
+let Inferred:Grammar:Tokens:";" = phrase { dictionary = true }
+let Inferred:Grammar:Tokens:"=" = phrase { dictionary = true }
+let Inferred:Grammar:Tokens:"return" = phrase { dictionary = true }
+let Inferred:Grammar:Tokens:"if" = phrase { dictionary = true }
+let Inferred:Grammar:Tokens:"else" = phrase { dictionary = true }
+let Inferred:Grammar:Tokens:"let" = phrase { dictionary = true }
+let Inferred:Grammar:Tokens:"var" = phrase { dictionary = true }
+let Inferred:Grammar:Tokens:"poly" = phrase { dictionary = true }
+let Inferred:Grammar:Tokens:"fn" = phrase { dictionary = true }
+let Inferred:Grammar:Tokens:"specializations" = phrase { dictionary = true }
+
+let Inferred:Grammar:Tokens:"//" = phrase { dictionary = true }
+let Inferred:Grammar:Tokens:"/*" = phrase { dictionary = true }
+let Inferred:Grammar:Tokens:"*/" = phrase { dictionary = true }
+
+let Inferred:tokens = fn (state:Context*) -> u64 {
+    let root = context:phrase:find(state, "Inferred")
+    let grammar = context:phrase:find:exact(state, root, "Grammar")
+    return context:phrase:find:exact(state, grammar, "Tokens")
+}
+
 let Inferred:is_space = fn (ch:u8) -> i64 { return LanguageKit:is_space(ch) }
 let Inferred:is_alpha = fn (ch:u8) -> i64 { return LanguageKit:is_alpha(ch) }
 let Inferred:is_digit = fn (ch:u8) -> i64 { return LanguageKit:is_digit(ch) }
@@ -233,44 +275,57 @@ let Inferred:Parser:fail = fn (self:Inferred:Parser*, message:u8*) -> void {
 }
 
 let Inferred:Parser:skip = fn (self:Inferred:Parser*) -> void {
-    LanguageKit:Cursor:skip(self.source, self.length, &self.position, 8)
-}
-
-let Inferred:Parser:text_at = fn (self:Inferred:Parser*, text:u8*) -> i64 {
-    return LanguageKit:Cursor:text_at(self.source, self.length, self.position, text)
-}
-
-let Inferred:Parser:starts = fn (self:Inferred:Parser*, text:u8*) -> i64 {
-    return LanguageKit:Cursor:starts(self.source, self.length, &self.position, 8, text)
+    let owner = Inferred:tokens(self.state)
+    let line = context:phrase:find:exact(self.state, owner, "//")
+    let block = context:phrase:find:exact(self.state, owner, "/*")
+    let close = context:phrase:find:exact(self.state, owner, "*/")
+    var scanning = 1
+    while scanning {
+        let token = LanguageKit:Cursor:phrase_at(self.state, owner, self.source, self.length, self.position)
+        if LanguageKit:phrase_inherits(self.state, token, line) {
+            self.position += cast(i64, context:phrase:key(self.state, token, cast(u8*, 0), 0))
+            while self.position < self.length && self.source[self.position] != 10 && self.source[self.position] != 13 { self.position += 1 }
+        } else if LanguageKit:phrase_inherits(self.state, token, block) {
+            self.position += cast(i64, context:phrase:key(self.state, token, cast(u8*, 0), 0))
+            var closed = 0
+            while !closed && self.position < self.length {
+                let end = LanguageKit:Cursor:phrase_at(self.state, owner, self.source, self.length, self.position)
+                if LanguageKit:phrase_inherits(self.state, end, close) {
+                    self.position += cast(i64, context:phrase:key(self.state, end, cast(u8*, 0), 0)); closed = 1
+                } else { self.position += 1 }
+            }
+            if !closed { Inferred:Parser:fail(self, "Inferred: unterminated block comment"); return }
+        } else if !token && self.position < self.length && Inferred:is_space(self.source[self.position]) {
+            self.position += 1
+        } else { scanning = 0 }
+    }
 }
 
 let Inferred:Parser:match_text = fn (self:Inferred:Parser*, text:u8*) -> i64 {
-    return LanguageKit:Cursor:match_text(self.source, self.length, &self.position, 8, text)
-}
-
-let Inferred:Parser:match_ch = fn (self:Inferred:Parser*, value:u8) -> i64 {
-    return LanguageKit:Cursor:match_byte(self.source, self.length, &self.position, 8, value)
-}
-
-let Inferred:Parser:match_pair = fn (self:Inferred:Parser*, first:u8, second:u8) -> i64 {
-    return LanguageKit:Cursor:match_pair(self.source, self.length, &self.position, 8, first, second)
+    let owner = Inferred:tokens(self.state)
+    let expected = context:phrase:find:exact(self.state, owner, text)
+    self.skip()
+    return LanguageKit:Cursor:match_phrase(self.state, owner, self.source, self.length, &self.position, 0, expected)
 }
 
 let Inferred:Parser:keyword = fn (self:Inferred:Parser*, text:u8*) -> i64 {
-    return LanguageKit:Cursor:keyword(self.source, self.length, &self.position, 8, text)
+    return self.match_text(text)
 }
 
 let Inferred:Parser:identifier = fn (self:Inferred:Parser*) -> u8* {
-    return LanguageKit:Cursor:take_identifier(self.source, self.length, &self.position, 8)
+    self.skip()
+    return LanguageKit:Cursor:take_identifier(self.source, self.length, &self.position, 0)
 }
 
 let Inferred:Parser:string = fn (self:Inferred:Parser*) -> u8* {
-    return LanguageKit:Cursor:take_string(self.state, self.source, self.length, &self.position, 8, "Inferred: unterminated string")
+    self.skip()
+    return LanguageKit:Cursor:take_string(self.state, self.source, self.length, &self.position, 0, "Inferred: unterminated string")
 }
 
 let Inferred:Parser:number = fn (self:Inferred:Parser*) -> Inferred:Expr* {
+    self.skip()
     var found = 0
-    let value = LanguageKit:Cursor:take_integer(self.source, self.length, &self.position, 8, &found)
+    let value = LanguageKit:Cursor:take_integer(self.source, self.length, &self.position, 0, &found)
     if !found { return cast(Inferred:Expr*, 0) }
     let expr = Inferred:Expr:new(1)
     if expr { expr.number = value; expr.inferred_kind = 1 }
@@ -281,20 +336,70 @@ let Inferred:op_expr = fn (op:i64, left:Inferred:Expr*, right:Inferred:Expr*) ->
     let e = Inferred:Expr:new(5); if e { e.op = op; e.left = left; e.right = right }; return e
 }
 
+// The grammar carries stable numeric lowering operations and arbitrary positive
+// precedence values. Native addresses are never stored in these descriptors.
+let Inferred:define_operator = fn (state:Context*, text:u8*, operation:i64, precedence:i64) -> void {
+    let owner = Inferred:tokens(state)
+    let token = context:phrase:find:exact(state, owner, text)
+    if !token || precedence < 1 { context:diagnostic:error(state, "Inferred: invalid operator definition"); return }
+    let definition = cast(i64*, malloc(16))
+    if !definition { context:diagnostic:error(state, "Inferred: could not allocate operator descriptor"); return }
+    defer free(cast(u8*, definition))
+    definition[0] = operation; definition[1] = precedence
+    var metadata = context:phrase:find:exact(state, token, "infix")
+    if !metadata { metadata = context:phrase:define:data(state, token, "infix") }
+    if !metadata || !context:phrase:data(state, metadata, cast(u8*, definition), 0, 16) {
+        context:diagnostic:error(state, "Inferred: operator phrase needs its own dictionary")
+    }
+}
+
+let Inferred:install_operators = phrase {
+    type = <phrase-types:elaborate>
+    action = fn (state:Context*, called:Phrase*) -> void {
+        Inferred:define_operator(state, "+", 1, 5)
+        Inferred:define_operator(state, "-", 2, 5)
+        Inferred:define_operator(state, "*", 3, 6)
+        Inferred:define_operator(state, "/", 4, 6)
+        Inferred:define_operator(state, "%", 5, 6)
+        Inferred:define_operator(state, "<", 6, 4)
+        Inferred:define_operator(state, ">", 7, 4)
+        Inferred:define_operator(state, "<=", 8, 4)
+        Inferred:define_operator(state, ">=", 9, 4)
+        Inferred:define_operator(state, "==", 10, 3)
+        Inferred:define_operator(state, "!=", 11, 3)
+        Inferred:define_operator(state, "&&", 12, 2)
+        Inferred:define_operator(state, "||", 13, 1)
+    }
+}
+let __inferred_install_operators = <Inferred:install_operators>
+__inferred_install_operators
+
+let Inferred:Parser:infix = fn (self:Inferred:Parser*, operation:i64*, precedence:i64*) -> u64 {
+    let owner = Inferred:tokens(self.state)
+    self.skip()
+    let candidate = LanguageKit:Cursor:phrase(self.state, owner, self.source, self.length, &self.position, 0)
+    let metadata = LanguageKit:phrase_child(self.state, candidate, "infix")
+    if !metadata || context:phrase:payload:bytes(self.state, metadata) != 16 { return 0 }
+    if !context:phrase:read(self.state, metadata, 0, cast(u8*, operation), 8) { return 0 }
+    if !context:phrase:read(self.state, metadata, 8, cast(u8*, precedence), 8) { return 0 }
+    if *precedence < 1 { return 0 }
+    return candidate
+}
+
 let Inferred:Parser:parse_expr_mode = fn (self:Inferred:Parser*, mode:i64) -> Inferred:Expr* {
     // op: 1 +, 2 -, 3 *, 4 /, 5 %, 6 <, 7 >, 8 <=, 9 >=,
     // 10 ==, 11 !=, 12 &&, 13 ||, 14 specialized text concat.
-    if mode == 6 {
+    if mode == 0 {
         Inferred:Parser:skip(self)
-        if Inferred:Parser:match_ch(self, cast(u8, 33)) {
-            let e = Inferred:Expr:new(6); if e { e.op = 1; e.right = Inferred:Parser:parse_expr_mode(self, 6); e.inferred_kind = 1 }; return e
+        if Inferred:Parser:match_text(self, "!") {
+            let e = Inferred:Expr:new(6); if e { e.op = 1; e.right = Inferred:Parser:parse_expr_mode(self, 0); e.inferred_kind = 1 }; return e
         }
-        if Inferred:Parser:match_ch(self, cast(u8, 45)) {
-            let e = Inferred:Expr:new(6); if e { e.op = 2; e.right = Inferred:Parser:parse_expr_mode(self, 6); e.inferred_kind = 1 }; return e
+        if Inferred:Parser:match_text(self, "-") {
+            let e = Inferred:Expr:new(6); if e { e.op = 2; e.right = Inferred:Parser:parse_expr_mode(self, 0); e.inferred_kind = 1 }; return e
         }
-        if Inferred:Parser:match_ch(self, cast(u8, 40)) {
-            let e = Inferred:Parser:parse_expr_mode(self, 0)
-            if !Inferred:Parser:match_ch(self, cast(u8, 41)) { Inferred:Parser:fail(self, "Inferred: expected ')'") }
+        if Inferred:Parser:match_text(self, "(") {
+            let e = Inferred:Parser:parse_expr_mode(self, 1)
+            if !Inferred:Parser:match_text(self, ")") { Inferred:Parser:fail(self, "Inferred: expected ')'") }
             return e
         }
         let n = Inferred:Parser:number(self); if n { return n }
@@ -302,78 +407,49 @@ let Inferred:Parser:parse_expr_mode = fn (self:Inferred:Parser*, mode:i64) -> In
         if str { let e = Inferred:Expr:new(3); if e { e.text = str; e.inferred_kind = 2 }; return e }
         let name = Inferred:Parser:identifier(self)
         if !name { Inferred:Parser:fail(self, "Inferred: expected expression"); return cast(Inferred:Expr*, 0) }
-        if Inferred:Parser:match_ch(self, cast(u8, 40)) {
+        if Inferred:Parser:match_text(self, "(") {
             let e = Inferred:Expr:new(4); if !e { return e }
             e.text = name; e.symbol = LanguageKit:intern(self.state, name)
             var cap = 4; var count = 0; var args = cast(Inferred:Expr**, malloc(cap * sizeof(Inferred:Expr*)))
-            if !Inferred:Parser:match_ch(self, cast(u8, 41)) {
+            if !Inferred:Parser:match_text(self, ")") {
                 var more = 1
                 while more {
                     if count == cap { cap *= 2; args = cast(Inferred:Expr**, realloc(cast(u8*, args), cap * sizeof(Inferred:Expr*))) }
-                    args[count] = Inferred:Parser:parse_expr_mode(self, 0); if !args[count] { return cast(Inferred:Expr*, 0) }; count += 1
-                    if Inferred:Parser:match_ch(self, cast(u8, 44)) { } else { more = 0 }
+                    args[count] = Inferred:Parser:parse_expr_mode(self, 1); if !args[count] { return cast(Inferred:Expr*, 0) }; count += 1
+                    if Inferred:Parser:match_text(self, ",") { } else { more = 0 }
                 }
-                if !Inferred:Parser:match_ch(self, cast(u8, 41)) { Inferred:Parser:fail(self, "Inferred: expected ')' after call"); return cast(Inferred:Expr*, 0) }
+                if !Inferred:Parser:match_text(self, ")") { Inferred:Parser:fail(self, "Inferred: expected ')' after call"); return cast(Inferred:Expr*, 0) }
             }
             e.argc = count; e.args = args; return e
         }
         let e = Inferred:Expr:new(2); if e { e.text = name; e.symbol = LanguageKit:intern(self.state, name) }; return e
     }
-    if mode == 5 {
-        var left = Inferred:Parser:parse_expr_mode(self, 6); if !left { return left }
-        var more = 1
-        while more {
-            if Inferred:Parser:match_ch(self, cast(u8, 42)) { left = Inferred:op_expr(3, left, Inferred:Parser:parse_expr_mode(self, 6)) }
-            else if Inferred:Parser:match_ch(self, cast(u8, 47)) { left = Inferred:op_expr(4, left, Inferred:Parser:parse_expr_mode(self, 6)) }
-            else if Inferred:Parser:match_ch(self, cast(u8, 37)) { left = Inferred:op_expr(5, left, Inferred:Parser:parse_expr_mode(self, 6)) }
-            else { more = 0 }
-        }
-        return left
+    var left = Inferred:Parser:parse_expr_mode(self, 0)
+    if !left { return left }
+    var operation = 0
+    var precedence = 0
+    var candidate = self.infix(&operation, &precedence)
+    while candidate && precedence >= mode {
+        self.position += cast(i64, context:phrase:key(self.state, candidate, cast(u8*, 0), 0))
+        let right = Inferred:Parser:parse_expr_mode(self, precedence + 1)
+        if !right { Inferred:Expr:destroy(left, 1); return cast(Inferred:Expr*, 0) }
+        left = Inferred:op_expr(operation, left, right)
+        candidate = self.infix(&operation, &precedence)
     }
-    if mode == 4 {
-        var left = Inferred:Parser:parse_expr_mode(self, 5); if !left { return left }
-        var more = 1
-        while more {
-            if Inferred:Parser:match_ch(self, cast(u8, 43)) { left = Inferred:op_expr(1, left, Inferred:Parser:parse_expr_mode(self, 5)) }
-            else if Inferred:Parser:match_ch(self, cast(u8, 45)) { left = Inferred:op_expr(2, left, Inferred:Parser:parse_expr_mode(self, 5)) }
-            else { more = 0 }
-        }
-        return left
-    }
-    if mode == 3 {
-        var left = Inferred:Parser:parse_expr_mode(self, 4); if !left { return left }
-        if Inferred:Parser:match_pair(self, cast(u8, 60), cast(u8, 61)) { return Inferred:op_expr(8, left, Inferred:Parser:parse_expr_mode(self, 4)) }
-        if Inferred:Parser:match_pair(self, cast(u8, 62), cast(u8, 61)) { return Inferred:op_expr(9, left, Inferred:Parser:parse_expr_mode(self, 4)) }
-        if Inferred:Parser:match_ch(self, cast(u8, 60)) { return Inferred:op_expr(6, left, Inferred:Parser:parse_expr_mode(self, 4)) }
-        if Inferred:Parser:match_ch(self, cast(u8, 62)) { return Inferred:op_expr(7, left, Inferred:Parser:parse_expr_mode(self, 4)) }
-        return left
-    }
-    if mode == 2 {
-        var left = Inferred:Parser:parse_expr_mode(self, 3); if !left { return left }
-        if Inferred:Parser:match_pair(self, cast(u8, 61), cast(u8, 61)) { return Inferred:op_expr(10, left, Inferred:Parser:parse_expr_mode(self, 3)) }
-        if Inferred:Parser:match_pair(self, cast(u8, 33), cast(u8, 61)) { return Inferred:op_expr(11, left, Inferred:Parser:parse_expr_mode(self, 3)) }
-        return left
-    }
-    if mode == 1 {
-        var left = Inferred:Parser:parse_expr_mode(self, 2); if !left { return left }
-        while Inferred:Parser:match_pair(self, cast(u8, 38), cast(u8, 38)) { left = Inferred:op_expr(12, left, Inferred:Parser:parse_expr_mode(self, 2)) }
-        return left
-    }
-    var left = Inferred:Parser:parse_expr_mode(self, 1); if !left { return left }
-    while Inferred:Parser:match_pair(self, cast(u8, 124), cast(u8, 124)) { left = Inferred:op_expr(13, left, Inferred:Parser:parse_expr_mode(self, 1)) }
     return left
 }
 
-let Inferred:Parser:parse_expr = fn (self:Inferred:Parser*) -> Inferred:Expr* { return Inferred:Parser:parse_expr_mode(self, 0) }
-let Inferred:Parser:consume_semicolon = fn (self:Inferred:Parser*) -> void { let ignored = Inferred:Parser:match_ch(self, cast(u8, 59)) }
+let Inferred:Parser:parse_expr = fn (self:Inferred:Parser*) -> Inferred:Expr* { return Inferred:Parser:parse_expr_mode(self, 1) }
+
+let Inferred:Parser:consume_semicolon = fn (self:Inferred:Parser*) -> void { let ignored = Inferred:Parser:match_text(self, ";") }
 
 let Inferred:Parser:parse_statement_mode = fn (self:Inferred:Parser*, mode:i64) -> Inferred:Stmt* {
     if mode == 1 {
-        if !Inferred:Parser:match_ch(self, cast(u8, 123)) { Inferred:Parser:fail(self, "Inferred: expected '{'"); return cast(Inferred:Stmt*, 0) }
+        if !Inferred:Parser:match_text(self, "{") { Inferred:Parser:fail(self, "Inferred: expected '{'"); return cast(Inferred:Stmt*, 0) }
         var head = cast(Inferred:Stmt*, 0); var tail = cast(Inferred:Stmt*, 0); var done = 0
         while !done {
             Inferred:Parser:skip(self)
-            if Inferred:Parser:match_ch(self, cast(u8, 125)) { done = 1 }
+            if Inferred:Parser:match_text(self, "}") { done = 1 }
             else if self.position >= self.length { Inferred:Parser:fail(self, "Inferred: unterminated block"); return cast(Inferred:Stmt*, 0) }
             else {
                 let item = Inferred:Parser:parse_statement_mode(self, 0); if !item { return cast(Inferred:Stmt*, 0) }
@@ -422,17 +498,17 @@ let Inferred:parse_function = fn (state:Context*, source:u8*) -> Inferred:Functi
     let had_poly = Inferred:Parser:keyword(p, "poly")
     if !Inferred:Parser:keyword(p, "fn") { Inferred:Parser:fail(p, "Inferred: function expects 'fn'"); return cast(Inferred:Function*, 0) }
     let name = Inferred:Parser:identifier(p); if !name { Inferred:Parser:fail(p, "Inferred: function expects a name"); return cast(Inferred:Function*, 0) }
-    if !Inferred:Parser:match_ch(p, cast(u8, 40)) { Inferred:Parser:fail(p, "Inferred: function expects '('"); return cast(Inferred:Function*, 0) }
+    if !Inferred:Parser:match_text(p, "(") { Inferred:Parser:fail(p, "Inferred: function expects '('"); return cast(Inferred:Function*, 0) }
     var cap = 4; var count = 0; var params = cast(u8**, malloc(cap * sizeof(u8*))); var symbols = cast(i64*, malloc(cap * sizeof(i64)))
-    if !Inferred:Parser:match_ch(p, cast(u8, 41)) {
+    if !Inferred:Parser:match_text(p, ")") {
         var more = 1
         while more {
             let param = Inferred:Parser:identifier(p); if !param { Inferred:Parser:fail(p, "Inferred: parameter expects a name"); return cast(Inferred:Function*, 0) }
             if count == cap { cap *= 2; params = cast(u8**, realloc(cast(u8*, params), cap * sizeof(u8*))); symbols = cast(i64*, realloc(cast(u8*, symbols), cap * sizeof(i64))) }
             params[count] = param; symbols[count] = Inferred:category(state, "Variables", param); count += 1
-            if Inferred:Parser:match_ch(p, cast(u8, 44)) { } else { more = 0 }
+            if Inferred:Parser:match_text(p, ",") { } else { more = 0 }
         }
-        if !Inferred:Parser:match_ch(p, cast(u8, 41)) { Inferred:Parser:fail(p, "Inferred: expected ')' after parameters"); return cast(Inferred:Function*, 0) }
+        if !Inferred:Parser:match_text(p, ")") { Inferred:Parser:fail(p, "Inferred: expected ')' after parameters"); return cast(Inferred:Function*, 0) }
     }
     let body = Inferred:Parser:parse_block(p); if !body && p.error { return cast(Inferred:Function*, 0) }
     let f = alloc(Inferred:Function); if !f { return cast(Inferred:Function*, 0) }
@@ -990,43 +1066,65 @@ let Inferred:print_specializations = fn (state:Context*, name:u8*) -> void {
     }
 }
 
+let Inferred:source_phrase = fn (state:Context*, position:i64) -> u64 {
+    return LanguageKit:Source:phrase_at(state, Inferred:tokens(state), position)
+}
+
+let Inferred:token_is = fn (state:Context*, candidate:u64, text:u8*) -> i64 {
+    let owner = Inferred:tokens(state)
+    return LanguageKit:phrase_inherits(state, candidate, context:phrase:find:exact(state, owner, text))
+}
+
 let Inferred:balanced_extent = fn (state:Context*, open_at:i64) -> i64 {
-    var i = open_at; var depth = 0; var quote:u8 = 0; var escaped = 0; var line_comment = 0
+    var i = open_at; var depth = 0; var quote:u8 = 0; var escaped = 0
+    var line_comment = 0; var block_comment = 0
     while 1 {
         let ch = LanguageKit:Source:peek(state, i); if ch == 0 { return 0 }
-        let next = LanguageKit:Source:peek(state, i + 1)
         if line_comment { if ch == 10 || ch == 13 { line_comment = 0 }; i += 1 }
         else if quote {
             if escaped { escaped = 0; i += 1 } else if ch == 92 { escaped = 1; i += 1 } else if ch == quote { quote = 0; i += 1 } else { i += 1 }
-        } else if ch == 34 || ch == 39 { quote = ch; i += 1 }
-        else if ch == 47 && next == 47 { line_comment = 1; i += 2 }
-        else if ch == 123 { depth += 1; i += 1 }
-        else if ch == 125 { depth -= 1; i += 1; if depth == 0 { return i } }
-        else { i += 1 }
+        } else {
+            let token = Inferred:source_phrase(state, i)
+            var bytes = 0
+            if token { bytes = cast(i64, context:phrase:key(state, token, cast(u8*, 0), 0)) }
+            if block_comment {
+                if token && Inferred:token_is(state, token, "*/") { block_comment = 0; i += bytes }
+                else { i += 1 }
+            } else if token && Inferred:token_is(state, token, "//") { line_comment = 1; i += bytes }
+            else if token && Inferred:token_is(state, token, "/*") { block_comment = 1; i += bytes }
+            else if token && Inferred:token_is(state, token, "{") { depth += 1; i += bytes }
+            else if token && Inferred:token_is(state, token, "}") { depth -= 1; i += bytes; if depth == 0 { return i } }
+            else if token { i += bytes }
+            else if ch == 34 || ch == 39 { quote = ch; i += 1 }
+            else { i += 1 }
+        }
     }
     return 0
 }
 
-let Inferred:starts_word_at = fn (state:Context*, offset:i64, text:u8*) -> i64 {
-    if !LanguageKit:Source:starts_with_at(state, offset, text) { return 0 }
-    let n = cast(i64, strlen(text)); let ch = LanguageKit:Source:peek(state, offset + n)
-    return !Inferred:is_ident(ch)
-}
-
 let Inferred:accepts_form = fn (state:Context*, allow_bare_commands:i64) -> i64 {
-    var i = 0; while Inferred:is_space(LanguageKit:Source:peek(state, i)) { i += 1 }
+    var i = 0
+    while Inferred:is_space(LanguageKit:Source:peek(state, i)) && !Inferred:source_phrase(state, i) { i += 1 }
     var had_poly = 0
-    if Inferred:starts_word_at(state, i, "poly") {
+    var token = Inferred:source_phrase(state, i)
+    if Inferred:token_is(state, token, "poly") {
         had_poly = 1
-        i += 4; while Inferred:is_space(LanguageKit:Source:peek(state, i)) { i += 1 }
+        i += cast(i64, context:phrase:key(state, token, cast(u8*, 0), 0))
+        while Inferred:is_space(LanguageKit:Source:peek(state, i)) && !Inferred:source_phrase(state, i) { i += 1 }
+        token = Inferred:source_phrase(state, i)
     }
-    if Inferred:starts_word_at(state, i, "fn") {
+    if Inferred:token_is(state, token, "fn") {
         var open = i
-        while LanguageKit:Source:peek(state, open) != 0 && LanguageKit:Source:peek(state, open) != 123 && LanguageKit:Source:peek(state, open) != 10 && LanguageKit:Source:peek(state, open) != 13 { open += 1 }
-        if LanguageKit:Source:peek(state, open) != 123 { return 0 }
-        return Inferred:balanced_extent(state, open)
+        while 1 {
+            let ch = LanguageKit:Source:peek(state, open)
+            if ch == 0 || ch == 10 || ch == 13 { return 0 }
+            let current = Inferred:source_phrase(state, open)
+            if Inferred:token_is(state, current, "{") { return Inferred:balanced_extent(state, open) }
+            if current { open += cast(i64, context:phrase:key(state, current, cast(u8*, 0), 0)) }
+            else { open += 1 }
+        }
     }
-    if (had_poly || allow_bare_commands) && Inferred:starts_word_at(state, i, "specializations") {
+    if (had_poly || allow_bare_commands) && Inferred:token_is(state, token, "specializations") {
         return LanguageKit:Source:line_extent(state)
     }
     return 0
@@ -1065,12 +1163,24 @@ let Inferred:top_form = phrase {
     }
 }
 
+// Native forms enter through an ordinary root phrase. Whole-form recognition
+// determines consumption after dispatch; it does not compete with root keys.
+let poly = phrase {
+    type = <phrase-types:elaborate>
+    permanent = true
+    action = fn (state:Context*, called:Phrase*) -> void {
+        let root = context:phrase:find(state, "Inferred")
+        context:phrase:dispatch(state, context:phrase:find:exact(state, root, "top_form"))
+    }
+}
+
 let LanguageKit:Forms:Inferred = phrase {
     type = <phrase-types:elaborate>
     permanent = true
     action = fn (state:Context*, called:Phrase*) -> void {
         let probe = LanguageKit:registry_entry(state, "Forms", "Inferred")
         let explicitly_selected = LanguageKit:preferred_probe(state) == probe
+        if !explicitly_selected { return }
         let extent = Inferred:accepts_form(state, explicitly_selected)
         if extent > 0 {
             let root = context:phrase:find(state, "Inferred"); let form = context:phrase:find:exact(state, root, "top_form")
@@ -1087,7 +1197,7 @@ let Inferred:assert_phrase = phrase {
     type = <phrase-types:elaborate>
     permanent = true
     action = fn (state:Context*, called:Phrase*) -> void {
-        let reader = LanguageKit:Reader:new(state, 8); if !reader { return }; defer LanguageKit:Reader:destroy(reader)
+        let reader = LanguageKit:Reader:new_phrases(state, Inferred:tokens(state), 8); if !reader { return }; defer LanguageKit:Reader:destroy(reader)
         let category = LanguageKit:Reader:take_identifier(reader); let name = LanguageKit:Reader:take_text(reader)
         if !category || !name { context:diagnostic:error(state, "inferred_assert expects CATEGORY NAME") }
         else {
@@ -1122,7 +1232,7 @@ let LanguageKit:Selectors:"infer " = <Inferred:explicit_form>
 let LanguageKit:Overrides:Inferred = <LanguageKit:Forms:Inferred>
 
 set Inferred:print_specializations.docs = "Prints the recorded argument-kind specializations of an inferred function selected by name."
-set Inferred:execute_source.docs = "Evaluates source using the inferred-language environment and reports diagnostics through the supplied context."
+set Inferred:execute_source.docs = "Compiles definitions and specializes calls in the inferred-language environment and reports diagnostics through the supplied context."
 
 languagekit_native_end
 include "../build/export.rl"

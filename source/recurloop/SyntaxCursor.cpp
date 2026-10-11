@@ -87,8 +87,14 @@ namespace recurloop {
     }
   }
 
+  bool SyntaxCursor::is(std::string_view canonical) const {
+    return (token.kind == SyntaxTokenKind::Symbol || token.kind == SyntaxTokenKind::Identifier ||
+            token.kind == SyntaxTokenKind::Word) &&
+           LanguageGrammar::matches(context, token.text, canonical);
+  }
+
   bool SyntaxCursor::accept(std::string_view canonical) {
-    if (!LanguageGrammar::matches(context, token.text, canonical)) return false;
+    if (!is(canonical)) return false;
     take();
     return true;
   }
@@ -99,7 +105,7 @@ namespace recurloop {
 
   bool SyntaxCursor::skipNewlines() {
     bool skipped = false;
-    while (token.kind == SyntaxTokenKind::Newline || LanguageGrammar::matches(context, token.text, ";")) {
+    while (token.kind == SyntaxTokenKind::Newline || is(";")) {
       skipped = true;
       take();
     }
@@ -136,9 +142,11 @@ namespace recurloop {
     const std::string_view text = input();
     lexicon::Phrase result(&context.lexicon);
     std::size_t bytes = 0;
+    const auto boundary = [&](lexicon::Phrase phrase) { return hasIdentifierBoundary(phrase.getKey(), offset); };
     for (lexicon::Phrase grammar : grammars) {
-      for (lexicon::Phrase candidate : {LanguageGrammar::matchLongest(grammar, text.substr(offset)),
-                                        LanguageGrammar::matchLongestAlias(context, grammar, text.substr(offset))}) {
+      for (lexicon::Phrase candidate :
+           {LanguageGrammar::matchLongest(grammar, text.substr(offset), boundary),
+            LanguageGrammar::matchLongestAlias(context, grammar, text.substr(offset), boundary)}) {
         if (!candidate.isNull() && candidate.getKey().size() > bytes) {
           result = candidate;
           bytes = candidate.getKey().size();
@@ -178,21 +186,45 @@ namespace recurloop {
       std::string_view text = input();
       while (cursor < text.size()) {
         const unsigned char character = text[cursor];
-        if (character == '\n' && options.preserveNewlines) break;
         if (!std::isspace(character)) break;
+        // Layout is a fallback. A registered spelling may include leading
+        // whitespace, or even a newline, and must retain longest-match priority.
+        if (!match(cursor).isNull()) break;
+        if (options.rewriteSyntax) {
+          auto phrase = LanguageGrammar::matchLongest(
+              context.lexicon.phrase(), text.substr(cursor),
+              [&](lexicon::Phrase candidate) { return hasIdentifierBoundary(candidate.getKey(), cursor); });
+          if (!phrase.isNull() && phrase.isRewritable()) break;
+        }
+        if (character == '\n' && options.preserveNewlines) break;
         ++cursor;
       }
 
       text = input();
       token = {SyntaxTokenKind::End, {}, sourceOffset(cursor), cursor};
       if (cursor == text.size()) return;
-      if (text[cursor] == '\n' && options.preserveNewlines) {
+      if (options.rewriteSyntax && rewriteCheckedAt != cursor) {
+        rewriteCheckedAt = cursor;
+        if (rewriteCurrent()) continue;
+        text = input();
+      }
+      if (text[cursor] == '\n' && options.preserveNewlines && match(cursor).isNull()) {
         token = {SyntaxTokenKind::Newline, "\n", sourceOffset(cursor), cursor};
         ++cursor;
         return;
       }
-      if (text.substr(cursor).starts_with("//")) {
+      auto lexical =
+          LanguageGrammar::matchLongest(context.lexicon.phrase(), text.substr(cursor), [&](lexicon::Phrase candidate) {
+            return hasIdentifierBoundary(candidate.getKey(), cursor);
+          });
+      auto grammatical = match(cursor);
+      const auto comment = [&](std::string_view canonical) {
+        return !lexical.isNull() && (grammatical.isNull() || grammatical.getKey().size() < lexical.getKey().size()) &&
+               LanguageGrammar::inherits(lexical, LanguageGrammar::find(context.lexicon.phrase(), canonical));
+      };
+      if (comment("//")) {
         const std::size_t begin = cursor;
+        cursor += lexical.getKey().size();
         while (cursor < text.size() && text[cursor] != '\n') ++cursor;
         if (options.preserveNewlines) {
           token = {SyntaxTokenKind::Newline, "\n", sourceOffset(begin), begin};
@@ -203,10 +235,10 @@ namespace recurloop {
         }
         return;
       }
-      if (text.substr(cursor).starts_with("/*")) {
+      if (comment("/*")) {
         const std::size_t begin = cursor;
         bool newline = false;
-        cursor += 2;
+        cursor += lexical.getKey().size();
         while (cursor + 1 < text.size() && !text.substr(cursor).starts_with("*/")) {
           newline = newline || text[cursor] == '\n';
           ++cursor;
@@ -221,17 +253,6 @@ namespace recurloop {
         continue;
       }
 
-      if (options.rewriteSyntax && rewriteCheckedAt != cursor) {
-        rewriteCheckedAt = cursor;
-        rewriteCurrent();
-        // A replacement may begin with layout or a comment. Re-run only the
-        // layout scan at this offset; the guard prevents re-elaborating a
-        // stable same-text rewrite twice.
-        const std::string_view rewritten = input();
-        if (cursor >= rewritten.size() || std::isspace(static_cast<unsigned char>(rewritten[cursor])) ||
-            rewritten.substr(cursor).starts_with("//") || rewritten.substr(cursor).starts_with("/*"))
-          continue;
-      }
       break;
     }
 
@@ -239,6 +260,16 @@ namespace recurloop {
     const std::size_t begin = cursor;
     const std::size_t tokenOffset = sourceOffset(begin);
     const unsigned char first = text[cursor];
+    lexicon::Phrase phrase = match(cursor);
+    if (!phrase.isNull()) {
+      const std::string spelling = phrase.getKey();
+      if (hasIdentifierBoundary(spelling, cursor)) {
+        cursor += spelling.size();
+        token = {SyntaxTokenKind::Symbol, spelling, tokenOffset, begin, phrase.getAddress(), sourceOffset(cursor)};
+        return;
+      }
+    }
+
     if (options.bitStrings && text.substr(cursor).starts_with("bits\"")) {
       cursor += 5;
       std::string value;
@@ -281,16 +312,6 @@ namespace recurloop {
         }
       }
       failSource(begin, "unterminated string literal");
-    }
-
-    lexicon::Phrase phrase = match(cursor);
-    if (!phrase.isNull()) {
-      const std::string spelling = phrase.getKey();
-      if (hasIdentifierBoundary(spelling, cursor)) {
-        cursor += spelling.size();
-        token = {SyntaxTokenKind::Symbol, spelling, tokenOffset, begin, phrase.getAddress(), sourceOffset(cursor)};
-        return;
-      }
     }
 
     if (options.bareWords) {

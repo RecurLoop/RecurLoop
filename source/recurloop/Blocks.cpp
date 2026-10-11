@@ -3,6 +3,7 @@
 #include <context/Context.hpp>
 #include <recurloop/Execution.hpp>
 #include <recurloop/LanguageGrammar.hpp>
+#include <recurloop/SyntaxPattern.hpp>
 #include <utilities/Exception.hpp>
 
 #include <algorithm>
@@ -40,19 +41,31 @@ namespace recurloop {
       return std::isalnum(static_cast<unsigned char>(character)) || character == '_';
     }
 
-    std::string syntaxAt(context::Context &context, std::size_t relative, std::string_view canonical) {
-      if (!ensure(context, relative)) return {};
-      const std::size_t offset = context.source.buffer.offset / Byte::length + relative;
-      const std::size_t bytes = context.source.buffer.bits / Byte::length - relative;
-      const std::string_view source(context.source.buffer.str.data() + offset, bytes);
-      lexicon::Phrase root = context.lexicon.phrase();
-      lexicon::Phrase matched = LanguageGrammar::matchLongest(root, source);
-      lexicon::Phrase prototype = LanguageGrammar::find(root, canonical);
-      if (matched.isNull() || prototype.isNull() || !LanguageGrammar::inherits(matched, prototype)) return {};
-      const std::string key = matched.getKey();
-      if (!key.empty() && identifierCharacter(key.back()) && identifierCharacter(peek(context, relative + key.size())))
-        return {};
-      return key;
+    lexicon::Phrase phraseAt(context::Context &context, std::size_t relative, lexicon::Phrase grammar = {}) {
+      auto root = context.lexicon.phrase();
+      if (grammar.isNull()) grammar = root;
+      const auto boundary = [&](lexicon::Phrase candidate) {
+        const auto key = candidate.getKey();
+        return !key.empty() &&
+               (!identifierCharacter(key.back()) || !identifierCharacter(peek(context, relative + key.size())));
+      };
+      auto matched = LanguageGrammar::peekLongest(context, grammar, relative, boundary);
+      if (grammar.getAddress() != root.getAddress()) {
+        auto native = LanguageGrammar::peekLongest(context, root, relative, boundary);
+        if (!native.isNull() && (matched.isNull() || native.getKey().size() > matched.getKey().size()))
+          matched = native;
+      }
+      return matched;
+    }
+
+    std::string syntaxAt(context::Context &context, std::size_t relative, std::string_view canonical,
+                         lexicon::Phrase grammar = {}) {
+      auto matched = phraseAt(context, relative, grammar);
+      auto prototype = LanguageGrammar::find(context.lexicon.phrase(), canonical);
+      auto local = LanguageGrammar::findInherited(grammar, canonical);
+      return LanguageGrammar::inherits(matched, prototype) || LanguageGrammar::inherits(matched, local)
+                 ? matched.getKey()
+                 : std::string{};
     }
 
     std::string trim(std::string text) {
@@ -133,7 +146,7 @@ namespace recurloop {
       context::Context &context;
     };
 
-    void consumeBody(context::Context &context, std::string *body) {
+    void consumeBody(context::Context &context, std::string *body, lexicon::Phrase grammar = {}) {
       const auto append = [&](char character) {
         if (body != nullptr) body->push_back(character);
       };
@@ -147,18 +160,59 @@ namespace recurloop {
       bool lineComment = false;
       bool blockComment = false;
       while (depth != 0) {
+        if (blockComment) {
+          const auto closing = syntaxAt(context, 0, "*/", grammar);
+          if (!closing.empty()) {
+            context::Source::progress(context, closing.size() * Byte::length);
+            appendText(closing);
+            blockComment = false;
+            continue;
+          }
+        }
         if (!lineComment && !blockComment && quote == '\0') {
-          const std::string opening = syntaxAt(context, 0, "{");
+          auto phrase = phraseAt(context, 0, grammar);
+          if (!phrase.isNull()) {
+            const auto bytes = SyntaxPattern::extent(context, phrase);
+            if (bytes > phrase.getKey().size()) {
+              appendText(context.source.buffer.str.substr(context.source.buffer.offset / Byte::length, bytes));
+              context::Source::progress(context, bytes * Byte::length);
+              continue;
+            }
+          }
+          const std::string opening = syntaxAt(context, 0, "{", grammar);
           if (!opening.empty()) {
             context::Source::progress(context, opening.size() * Byte::length);
             ++depth;
             appendText(opening);
             continue;
           }
-          const std::string closing = syntaxAt(context, 0, "}");
+          const std::string closing = syntaxAt(context, 0, "}", grammar);
           if (!closing.empty()) {
             context::Source::progress(context, closing.size() * Byte::length);
             if (--depth != 0) appendText(closing);
+            continue;
+          }
+          const auto line = syntaxAt(context, 0, "//", grammar);
+          const auto block = syntaxAt(context, 0, "/*", grammar);
+          if (!line.empty() || !block.empty()) {
+            const auto &key = line.empty() ? block : line;
+            context::Source::progress(context, key.size() * Byte::length);
+            appendText(key);
+            lineComment = !line.empty();
+            blockComment = !block.empty();
+            continue;
+          }
+          auto atom = phraseAt(context, 0, grammar);
+          if (!atom.isNull()) {
+            const auto key = atom.getKey();
+            context::Source::progress(context, key.size() * Byte::length);
+            appendText(key);
+            continue;
+          }
+          if (std::isalpha(static_cast<unsigned char>(peek(context))) || peek(context) == '_') {
+            do {
+              append(take(context));
+            } while (identifierCharacter(peek(context)));
             continue;
           }
         }
@@ -189,15 +243,7 @@ namespace recurloop {
             quote = '\0';
           continue;
         }
-        if (character == '/' && peek(context) == '/') {
-          append(character);
-          append(take(context));
-          lineComment = true;
-        } else if (character == '/' && peek(context) == '*') {
-          append(character);
-          append(take(context));
-          blockComment = true;
-        } else if (character == '"' || character == '\'') {
+        if (character == '"' || character == '\'') {
           quote = character;
           append(character);
         } else {
@@ -309,17 +355,33 @@ namespace recurloop {
           quote = '\0';
         continue;
       }
-      if (character == '/' && peek(context, 1) == '/') {
-        result.push_back(take(context));
-        result.push_back(take(context));
-        lineComment = true;
+      auto phrase = phraseAt(context, 0);
+      if (!phrase.isNull()) {
+        const auto bytes = SyntaxPattern::extent(context, phrase);
+        if (bytes > phrase.getKey().size()) {
+          result += context.source.buffer.str.substr(context.source.buffer.offset / Byte::length, bytes);
+          context::Source::progress(context, bytes * Byte::length);
+          continue;
+        }
+      }
+      const auto line = syntaxAt(context, 0, "//");
+      const auto block = syntaxAt(context, 0, "/*");
+      if (!line.empty() || !block.empty()) {
+        const auto &key = line.empty() ? block : line;
+        result += key;
+        context::Source::progress(context, key.size() * Byte::length);
+        lineComment = !line.empty();
+        blockComment = !block.empty();
         continue;
       }
-      if (character == '/' && peek(context, 1) == '*') {
-        result.push_back(take(context));
-        result.push_back(take(context));
-        blockComment = true;
-        continue;
+      if (character == '"' || character == '\'') {
+        auto atom = phraseAt(context, 0);
+        if (!atom.isNull()) {
+          const auto key = atom.getKey();
+          result += key;
+          context::Source::progress(context, key.size() * Byte::length);
+          continue;
+        }
       }
       if (character == '"' || character == '\'') {
         quote = character;
@@ -357,7 +419,20 @@ namespace recurloop {
           continue;
         }
       }
-      result.push_back(take(context));
+      auto atom = phraseAt(context, 0);
+      if (!atom.isNull()) {
+        const auto key = atom.getKey();
+        result += key;
+        context::Source::progress(context, key.size() * Byte::length);
+        continue;
+      }
+      if (std::isalpha(static_cast<unsigned char>(character)) || character == '_') {
+        do {
+          result.push_back(take(context));
+        } while (identifierCharacter(peek(context)));
+      } else {
+        result.push_back(take(context));
+      }
     }
     if (!closing.empty()) blockFail(context, "unterminated expression group; expected '" + closing.back() + "'");
     const auto begin = std::find_if_not(result.begin(), result.end(), [](unsigned char character) {
@@ -372,6 +447,10 @@ namespace recurloop {
   }
 
   SourceBlock Blocks::begin(context::Context &context) {
+    return begin(context, context.lexicon.phrase());
+  }
+
+  SourceBlock Blocks::begin(context::Context &context, lexicon::Phrase grammar) {
     SourceBlock result;
     result.path = context.source.path;
     result.headerLine = context.source.line;
@@ -379,17 +458,59 @@ namespace recurloop {
 
     char quote = '\0';
     bool escaped = false;
+    bool lineComment = false;
+    bool blockComment = false;
     while (true) {
-      if (quote == '\0') {
-        const std::string opening = syntaxAt(context, 0, "{");
+      if (!lineComment && !blockComment && quote == '\0') {
+        const std::string opening = syntaxAt(context, 0, "{", grammar);
         if (!opening.empty()) {
           context::Source::progress(context, opening.size() * Byte::length);
           break;
         }
       }
+      if (!lineComment && !blockComment && quote == '\0') {
+        const auto line = syntaxAt(context, 0, "//", grammar);
+        const auto block = syntaxAt(context, 0, "/*", grammar);
+        if (!line.empty() || !block.empty()) {
+          const auto &key = line.empty() ? block : line;
+          result.header += key;
+          context::Source::progress(context, key.size() * Byte::length);
+          lineComment = !line.empty();
+          blockComment = !block.empty();
+          continue;
+        }
+        auto atom = phraseAt(context, 0, grammar);
+        if (!atom.isNull()) {
+          const auto key = atom.getKey();
+          result.header += key;
+          context::Source::progress(context, key.size() * Byte::length);
+          continue;
+        }
+        if (std::isalpha(static_cast<unsigned char>(peek(context))) || peek(context) == '_') {
+          do {
+            result.header.push_back(take(context));
+          } while (identifierCharacter(peek(context)));
+          continue;
+        }
+      }
+      if (blockComment) {
+        auto closing = syntaxAt(context, 0, "*/", grammar);
+        if (closing.empty() && peek(context) == '*' && peek(context, 1) == '/') closing = "*/";
+        if (!closing.empty()) {
+          result.header += closing;
+          context::Source::progress(context, closing.size() * Byte::length);
+          blockComment = false;
+          continue;
+        }
+      }
       const char character = take(context);
       if (character == '\0') blockFail(context, "expected '{'");
       result.header.push_back(character);
+      if (lineComment) {
+        if (character == '\n' || character == '\r') lineComment = false;
+        continue;
+      }
+      if (blockComment) continue;
       if (quote != '\0') {
         if (escaped)
           escaped = false;
@@ -408,8 +529,12 @@ namespace recurloop {
   }
 
   SourceBlock Blocks::capture(context::Context &context) {
-    SourceBlock result = begin(context);
-    consumeBody(context, &result.body);
+    return capture(context, context.lexicon.phrase());
+  }
+
+  SourceBlock Blocks::capture(context::Context &context, lexicon::Phrase grammar) {
+    SourceBlock result = begin(context, grammar);
+    consumeBody(context, &result.body, grammar);
     return result;
   }
 
@@ -468,38 +593,33 @@ namespace recurloop {
   bool Blocks::consume(context::Context &context, std::string_view keyword) {
     std::size_t cursor = 0;
     while (true) {
-      while (ensure(context, cursor) && std::isspace(static_cast<unsigned char>(peek(context, cursor)))) ++cursor;
-      if (peek(context, cursor) == '/' && peek(context, cursor + 1) == '/') {
-        cursor += 2;
-        while (ensure(context, cursor) && peek(context, cursor) != '\n') ++cursor;
+      auto phrase = phraseAt(context, cursor);
+      const auto line = syntaxAt(context, cursor, "//");
+      const auto block = syntaxAt(context, cursor, "/*");
+      if (!line.empty()) {
+        cursor += line.size();
+        while (ensure(context, cursor) && peek(context, cursor) != '\n' && peek(context, cursor) != '\r') ++cursor;
         continue;
       }
-      if (peek(context, cursor) == '/' && peek(context, cursor + 1) == '*') {
-        cursor += 2;
+      if (!block.empty()) {
+        cursor += block.size();
         while (ensure(context, cursor + 1) && !(peek(context, cursor) == '*' && peek(context, cursor + 1) == '/'))
           ++cursor;
         if (!ensure(context, cursor + 1)) blockFail(context, "unterminated comment");
         cursor += 2;
         continue;
       }
+      if (ensure(context, cursor) && std::isspace(static_cast<unsigned char>(peek(context, cursor))) &&
+          (phrase.isNull() || phrase.getKey().size() == 1)) {
+        ++cursor;
+        continue;
+      }
       break;
     }
-
-    lexicon::Phrase root = context.lexicon.phrase();
-    lexicon::Phrase prototype = LanguageGrammar::find(root, keyword);
-    if (prototype.isNull()) return false;
-
-    context::Source::progress(context, cursor * Byte::length);
-    std::size_t available = 0;
-    while (ensure(context, available) && peek(context, available) != '\n' && peek(context, available) != '\r')
-      ++available;
-    const std::size_t offset = context.source.buffer.offset / Byte::length;
-    lexicon::Phrase matched =
-        LanguageGrammar::matchLongest(root, std::string_view(context.source.buffer.str).substr(offset, available));
+    auto prototype = LanguageGrammar::find(context.lexicon.phrase(), keyword);
+    auto matched = phraseAt(context, cursor);
     if (matched.isNull() || !LanguageGrammar::inherits(matched, prototype)) return false;
-    const std::string key = matched.getKey();
-    if (!key.empty() && identifierCharacter(key.back()) && identifierCharacter(peek(context, key.size()))) return false;
-    context::Source::progress(context, key.size() * Byte::length);
+    context::Source::progress(context, (cursor + matched.getKey().size()) * Byte::length);
     return true;
   }
 

@@ -3,6 +3,7 @@
 #include <context/Context.hpp>
 #include <lexicon/Lexicon.hpp>
 #include <recurloop/ContextApi.hpp>
+#include <recurloop/LanguageGrammar.hpp>
 #include <recurloop/Semantic.hpp>
 #include <utilities/Byte.hpp>
 #include <utilities/Exception.hpp>
@@ -65,19 +66,21 @@ namespace recurloop {
 
     lexicon::Phrase longest(lexicon::Phrase dictionary, std::string_view source, std::size_t offset) {
       if (dictionary.isNull() || !dictionary.containsSubdictionary()) return lexicon::Phrase(dictionary.getLexicon());
-      lexicon::Match match =
-          dictionary.matchLongest(Byte(const_cast<char *>(source.data() + offset)), 0,
-                                  (source.size() - offset) * Byte::length, [](radix::Node *, radix::Match *candidate) {
-                                    lexicon::Phrase phrase = lexicon::Dictionary(*candidate).getPhrase();
-                                    return !phrase.isNull() && phrase.isRewritable();
-                                  });
-      if (match.isNull()) return lexicon::Phrase(dictionary.getLexicon());
-      lexicon::Phrase result = match.getPhrase();
-      return hasBoundary(source, offset, result.getKey()) ? result : lexicon::Phrase(dictionary.getLexicon());
+      auto result = LanguageGrammar::matchLongest(dictionary, source.substr(offset), [&](lexicon::Phrase phrase) {
+        return hasBoundary(source, offset, phrase.getKey());
+      });
+      return !result.isNull() && result.isRewritable() ? result : lexicon::Phrase(dictionary.getLexicon());
     }
 
-    std::size_t protectedEnd(std::string_view source, std::size_t cursor) {
-      if (source[cursor] == '"') {
+    std::size_t protectedEnd(context::Context &context, std::string_view source, std::size_t cursor) {
+      auto matched = LanguageGrammar::matchLongest(
+          context.lexicon.phrase(), source.substr(cursor),
+          [&](lexicon::Phrase candidate) { return hasBoundary(source, cursor, candidate.getKey()); });
+      if (!matched.isNull() && matched.isRewritable() && hasBoundary(source, cursor, matched.getKey())) return cursor;
+      const auto comment = [&](std::string_view canonical) {
+        return LanguageGrammar::inherits(matched, LanguageGrammar::find(context.lexicon.phrase(), canonical));
+      };
+      if (source[cursor] == '"' && matched.isNull()) {
         ++cursor;
         while (cursor < source.size()) {
           if (source[cursor] == '\\' && cursor + 1 < source.size()) {
@@ -88,12 +91,12 @@ namespace recurloop {
         }
         return cursor;
       }
-      if (source.substr(cursor).starts_with("//")) {
+      if (comment("//")) {
         while (cursor < source.size() && source[cursor] != '\n') ++cursor;
         return cursor;
       }
-      if (source.substr(cursor).starts_with("/*")) {
-        cursor += 2;
+      if (comment("/*")) {
+        cursor += matched.getKey().size();
         while (cursor + 1 < source.size() && !source.substr(cursor).starts_with("*/")) ++cursor;
         return std::min(source.size(), cursor + 2);
       }
@@ -110,7 +113,7 @@ namespace recurloop {
       bool changed = false;
       std::size_t cursor = 0;
       while (cursor < source.size()) {
-        const std::size_t protectedCursor = protectedEnd(source, cursor);
+        const std::size_t protectedCursor = protectedEnd(context, source, cursor);
         if (protectedCursor != cursor) {
           expanded.source.append(source.substr(cursor, protectedCursor - cursor));
           expanded.originalOffsets.insert(expanded.originalOffsets.end(), originalOffsets.begin() + cursor,
@@ -205,7 +208,7 @@ namespace recurloop {
 
     bool changed = false;
     for (std::size_t pass = 0; pass < MaximumExpansionPasses; ++pass) {
-      if (offset >= source.size() || protectedEnd(source, offset) != offset) return {changed, false};
+      if (offset >= source.size() || protectedEnd(context, source, offset) != offset) return {changed, false};
 
       lexicon::Phrase rewrite = longest(rewrites, source, offset);
       if (rewrite.isNull()) return {changed, false};

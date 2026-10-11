@@ -387,3 +387,17 @@ int main(int argc, char **argv) {
   ::testing::InitGoogleTest(&argc, argv);
   return RUN_ALL_TESTS();
 }
+
+TEST_F(RecurloopTesting, PhraseFieldsReuseThePhraseNameGrammarForQuotedReferences) {
+  const char *argv[] = {"Recurloop", "--string", R"RL(
+const part = "spaced"
+let names = [
+  "key:> spaced" = <debug:ping>
+]
+let "based on" = <prototype>
+let quoted = phrase { based on = <names:"key:> ${part}"> }
+set names:"key:> spaced".docs = "Quoted key docs"
+quoted
+)RL"};
+  EXPECT_EQ(execute(countof(argv), (char **)argv), 0);
+}
