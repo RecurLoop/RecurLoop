@@ -116,10 +116,10 @@
         "recurloop.analysis.timeoutMs": {
           "type": "number",
           "scope": "resource",
-          "default": 5000,
+          "default": 60000,
           "minimum": 500,
-          "maximum": 30000,
-          "description": "Timeout for a semantic inspection request."
+          "maximum": 120000,
+          "description": "Timeout for a semantic inspection request, including replaying project imports and compiling the edited source."
         },
         "recurloop.projectFile": {
           "type": "string",

@@ -217,6 +217,8 @@ if(ENABLE_TESTS_FEATURE)
     endif()
 
     # CLI behavior depends on the normal runtime/language surface.
+    recurloop_add_feature_test(recurloop/cli/project_cache.cmake
+        DEPENDS ${RECURLOOP_CHECK_COMMON_FILES})
     recurloop_add_feature_test(recurloop/cli/error_locations.cmake
         DEPENDS
             ${RECURLOOP_CHECK_COMMON_FILES}

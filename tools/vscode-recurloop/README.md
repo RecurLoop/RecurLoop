@@ -249,7 +249,7 @@ Common settings in VS Code's user or workspace settings:
 | `recurloop.terminal.libraries` | `["shell", "inferred"]` | Libraries shared by project analysis, execution and console sessions. |
 | `recurloop.analysis.enabled` | `true` | Enables runtime-backed language analysis. |
 | `recurloop.analysis.debounceMs` | `180` | Delay before analyzing an edited document. |
-| `recurloop.analysis.timeoutMs` | `5000` | Maximum time for a semantic inspection request. |
+| `recurloop.analysis.timeoutMs` | `60000` | Maximum time for a semantic inspection request, including project imports and compilation (configurable up to `120000`). |
 
 **RecurLoop: Show Runtime Info** identifies the selected runtime.
 **RecurLoop: Update Runtime** updates a managed installation to the release

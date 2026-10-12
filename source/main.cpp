@@ -280,7 +280,11 @@ int main(int argc, char *argv[]) {
 
     if (!command.projectEntry.empty()) {
       auto session = project->openSession();
-      auto response = session->executeFile(command.projectEntry, &std::cout, &std::cerr);
+      // Configure the session as well as the directory, so CLI loads use the
+      // same module cache and source graph as editor-triggered project loads.
+      auto response = session->evaluate(":cache");
+      if (response.status == 0)
+        response = session->executeFile(command.projectEntry, &std::cout, &std::cerr);
       writeResponse(response);
       result = response.status;
       if (result == 0 && hasInputs && !interactiveInput) {

@@ -40,7 +40,7 @@ class WorkspaceRuntime implements vscode.Disposable {
       if (entry && !entry.users && !entry.done) entry.controller.abort(new vscode.CancellationError());
       const controller = new AbortController();
       const command = `${trace ? ':trace' : ':inspect'}\t${hexEncode(document.uri.fsPath)}\t${hexEncode(source)}`;
-      const timeout = vscode.workspace.getConfiguration('recurloop', uri).get('analysis.timeoutMs', 5000) as number;
+      const timeout = vscode.workspace.getConfiguration('recurloop', uri).get('analysis.timeoutMs', 60000) as number;
       entry = { revision: this.revision, source, controller, users: 0, done: false,
         promise: this.inspectRequest(document.uri.fsPath, command, timeout, controller.signal) };
       const current = entry;
@@ -114,7 +114,7 @@ class WorkspaceRuntime implements vscode.Disposable {
     const source = document.getText();
     await this.ensureStarted(document.uri);
     const revision = this.revision;
-    const timeout = vscode.workspace.getConfiguration('recurloop', document.uri).get('analysis.timeoutMs', 5000) as number;
+    const timeout = vscode.workspace.getConfiguration('recurloop', document.uri).get('analysis.timeoutMs', 60000) as number;
     const response = await this.inspectRequest('\0palette', `:highlight\t${hexEncode(source)}`, timeout, new AbortController().signal);
     if (this.revision !== revision) throw new vscode.CancellationError();
     return response;
