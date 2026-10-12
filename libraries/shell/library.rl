@@ -1075,6 +1075,15 @@ let Shell:run_pipeline = fn (pipeline:Shell:Pipeline*) -> i64 {
     return code
 }
 
+// Embedded clients explicitly choose Context IO; ordinary standalone pipelines
+// retain their POSIX-only implementation and do not depend on a host runtime.
+let Shell:run_pipeline_in_context = fn (pipeline:Shell:Pipeline*, state:Context*) -> i64 {
+    let invocation = Shell:managed_invocation(pipeline, 2, state)
+    if !invocation { return 126 }
+    defer Shell:Invocation:destroy(invocation)
+    return invocation.exit_code()
+}
+
 let Shell:capture_pipeline = fn (pipeline:Shell:Pipeline*) -> Shell:Capture* {
     let invocation = Shell:Invocation:start(pipeline, 1)
     if !invocation { return cast(Shell:Capture*, 0) }
@@ -2342,6 +2351,8 @@ set Shell:Parallel:spawn.docs = "Starts a pipeline in a child process and adds i
 set Shell:Parallel:wait.docs = "Waits for all jobs and returns the first nonzero exit code, or 0 when all succeed. Clears the group's pending jobs."
 set Shell:Parallel:destroy.docs = "Waits for outstanding jobs and frees the group. Accepts null."
 set Shell:stringify.docs = "Returns an allocated text representation of an integer, or a copy of a text argument. Release the returned string with free."
+
+set Shell:run_pipeline_in_context.docs = "Runs a pipeline with output streamed through the supplied Context. Requires a live RecurLoop host; pipeline ownership remains with the caller."
 
 languagekit_native_end
 include "../build/export.rl"

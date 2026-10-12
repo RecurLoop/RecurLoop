@@ -29,6 +29,9 @@
 #include <exception>
 #include <filesystem>
 #include <limits>
+#include <memory>
+#include <sstream>
+#include <streambuf>
 #include <string>
 #include <string_view>
 #include <unordered_set>
@@ -1936,6 +1939,162 @@ namespace recurloop {
       return contextTypeFunction(context, firstParameter, result, convention, Variadic ? 1 : 0);
     }
 
+    // Embedded clients use the same Context without accessing C++ stream or exception layouts.
+    thread_local context::Context *activeEvaluation = nullptr;
+
+    class EvaluationScope {
+      context::Context &context;
+      context::IOStreams streams;
+      context::Lookup lookup;
+      context::Source::CompletionRequest *completion;
+      lexicon::Phrase *invoked;
+      int status;
+      context::Context *previous;
+
+    public:
+      explicit EvaluationScope(context::Context &value)
+          : context(value), streams(value.io), lookup(value.lookup), completion(value.source.completion),
+            invoked(value.exec.invoked), status(value.exec.status), previous(activeEvaluation) {
+        activeEvaluation = &value;
+        value.exec.status = 0;
+      }
+      ~EvaluationScope() {
+        context.exec.pendingException = {};
+        context.exec.invoked = invoked;
+        context.exec.status = status;
+        context.io = streams;
+        context.lookup = std::move(lookup);
+        context.source.completion = completion;
+        activeEvaluation = previous;
+      }
+    };
+
+    class CaptureOutput : public std::streambuf {
+      std::ostream *terminal;
+      std::uint8_t *output;
+      std::size_t capacity;
+      std::size_t used = 0;
+
+    public:
+      CaptureOutput(std::ostream *stream, std::uint8_t *bytes, std::size_t size)
+          : terminal(stream), output(bytes), capacity(size - 1) {
+        output[0] = 0;
+      }
+      std::streamsize xsputn(const char *data, std::streamsize count) override {
+        if (count <= 0) return count;
+        if (terminal) {
+          terminal->write(data, count);
+          terminal->flush();
+        }
+        const auto bytes = static_cast<std::size_t>(count);
+        const auto kept = std::min(bytes, capacity);
+        const auto old = std::min(used, capacity - kept);
+        std::memmove(output, output + used - old, old);
+        std::memcpy(output + old, data + bytes - kept, kept);
+        used = old + kept;
+        output[used] = 0;
+        return count;
+      }
+      int overflow(int ch) override {
+        if (ch != traits_type::eof()) {
+          const char byte = ch;
+          xsputn(&byte, 1);
+        }
+        return traits_type::not_eof(ch);
+      }
+    };
+
+    void reportEvaluationError(context::Context &context, std::ostream &output) {
+      auto error = std::exchange(context.exec.pendingException, {});
+      if (!error) return;
+      try {
+        std::rethrow_exception(error);
+      } catch (const std::exception &exception) {
+        output << exception.what() << '\n';
+      } catch (...) {
+        output << "RecurLoop evaluation failed\n";
+      }
+    }
+
+    extern "C" context::Context *contextIoActive() noexcept {
+      return activeEvaluation;
+    }
+
+    extern "C" std::int64_t contextSourceEvaluate(context::Context *context, const std::uint8_t *source,
+                                                  const std::uint8_t *path, std::uint8_t *output,
+                                                  std::uint64_t capacity) noexcept {
+      if (output && capacity) output[0] = 0;
+      if (!context || context->exec.pendingException || !source || !output || !capacity) return 1;
+      try {
+        EvaluationScope scope(*context);
+        CaptureOutput buffer(context->io.out, output, capacity);
+        std::ostream stream(&buffer);
+        context->io.out = context->io.err = &stream;
+        NativeIO::Scope native(context->io);
+        std::int64_t status = 0;
+        try {
+          contextSourceRoot(context);
+          SourceBlock block;
+          block.path = path ? reinterpret_cast<const char *>(path) : "<evaluate>";
+          block.body = std::string(reinterpret_cast<const char *>(source)) + '\n';
+          Blocks::execute(*context, block, false);
+          status = context->exec.pendingException ? 1 : context->exec.status;
+          reportEvaluationError(*context, stream);
+        } catch (const std::exception &exception) {
+          stream << exception.what() << '\n';
+          status = 1;
+        } catch (...) {
+          stream << "RecurLoop evaluation failed\n";
+          status = 1;
+        }
+        reportEvaluationError(*context, stream);
+        return status;
+      } catch (...) {
+        return 1;
+      }
+    }
+
+    extern "C" std::uint8_t *contextCompletionRequest(context::Context *context, std::uint64_t provider,
+                                                      const std::uint8_t *source, std::uint64_t cursor) noexcept {
+      if (!context || context->exec.pendingException || !provider || !source) return nullptr;
+      try {
+        auto request = std::make_unique<context::Source::CompletionRequest>();
+        request->line = reinterpret_cast<const char *>(source);
+        request->cursor = std::min<std::uint64_t>(cursor, request->line.size());
+        EvaluationScope scope(*context);
+        std::ostringstream quiet;
+        context->io.out = context->io.err = &quiet;
+        context->source.completion = request.get();
+        NativeIO::Scope native(context->io);
+        contextSourceRoot(context);
+        if (!contextPhraseCall(context, provider, context_phrase::Elaborate) || context->exec.pendingException ||
+            request->result.start > request->cursor)
+          return nullptr;
+        return reinterpret_cast<std::uint8_t *>(request.release());
+      } catch (...) {
+        return nullptr;
+      }
+    }
+
+    extern "C" std::uint64_t contextCompletionResultStart(std::uint8_t *handle) noexcept {
+      auto *request = reinterpret_cast<context::Source::CompletionRequest *>(handle);
+      return request ? request->result.start : 0;
+    }
+    extern "C" std::uint64_t contextCompletionResultCount(std::uint8_t *handle) noexcept {
+      auto *request = reinterpret_cast<context::Source::CompletionRequest *>(handle);
+      return request ? request->result.candidates.size() : 0;
+    }
+    extern "C" const std::uint8_t *contextCompletionResultCandidate(std::uint8_t *handle,
+                                                                    std::uint64_t index) noexcept {
+      auto *request = reinterpret_cast<context::Source::CompletionRequest *>(handle);
+      return request && index < request->result.candidates.size()
+                 ? reinterpret_cast<const std::uint8_t *>(request->result.candidates[index].c_str())
+                 : nullptr;
+    }
+    extern "C" void contextCompletionResultRelease(std::uint8_t *handle) noexcept {
+      delete reinterpret_cast<context::Source::CompletionRequest *>(handle);
+    }
+
     thread_local bool requireExistingHostDeclarations = false;
 
     void declareHostFunction(context::Context &context, std::string_view name, std::string_view symbol,
@@ -1992,6 +2151,24 @@ namespace recurloop {
     const compiler::TypeId i64 = language.types.find("i64");
     const compiler::TypeId u64 = language.types.find("u64");
     const compiler::TypeId voidType = language.types.find("void");
+      declareHostFunction(context, "context:source:evaluate", "context:source:evaluate",
+                          {contextPointer, bytePointer, bytePointer, bytePointer, u64}, i64,
+                          reinterpret_cast<std::uintptr_t>(&contextSourceEvaluate));
+      declareHostFunction(context, "context:io:active", "context:io:active", {}, contextPointer,
+                          reinterpret_cast<std::uintptr_t>(&contextIoActive));
+      declareHostFunction(context, "context:completion:request", "context:completion:request",
+                          {contextPointer, u64, bytePointer, u64}, bytePointer,
+                          reinterpret_cast<std::uintptr_t>(&contextCompletionRequest));
+      declareHostFunction(context, "context:completion:result:start", "context:completion:result:start", {bytePointer},
+                          u64, reinterpret_cast<std::uintptr_t>(&contextCompletionResultStart));
+      declareHostFunction(context, "context:completion:result:count", "context:completion:result:count", {bytePointer},
+                          u64, reinterpret_cast<std::uintptr_t>(&contextCompletionResultCount));
+      declareHostFunction(context, "context:completion:result:candidate", "context:completion:result:candidate",
+                          {bytePointer, u64}, bytePointer,
+                          reinterpret_cast<std::uintptr_t>(&contextCompletionResultCandidate));
+      declareHostFunction(context, "context:completion:result:release", "context:completion:result:release",
+                          {bytePointer}, voidType, reinterpret_cast<std::uintptr_t>(&contextCompletionResultRelease));
+
     declareHostFunction(context, FindPhrase, "context:phrase:find$root-text", {contextPointer, bytePointer}, u64,
                         reinterpret_cast<std::uintptr_t>(&contextPhraseFindText));
     declareHostFunction(context, FindPhrase, "context:phrase:find$root", {contextPointer, bytePointer, u64, u64}, u64,

@@ -156,6 +156,12 @@ compiler {
   type "fn(u64)->void abi sysv-amd64" function
   type "fn(Context*,Phrase*)->u64 abi sysv-amd64" function
 
+  type "fn(Context*,u8*,u8*,u8*,u64)->i64 abi sysv-amd64" function
+  type "fn()->Context* abi sysv-amd64" function
+  type "fn(Context*,u64,u8*,u64)->u8* abi sysv-amd64" function
+  type "fn(u8*)->u64 abi sysv-amd64" function
+  type "fn(u8*,u64)->u8* abi sysv-amd64" function
+  type "fn(u8*)->void abi sysv-amd64" function
   extern "Context:phrase_define_data" symbol "Context:phrase_define_data" params [ "Context*" "u64" "u8*" ] result "u64" abi "sysv-amd64" imported
   extern "Context:phrase_define_data" symbol "Context:phrase_define_data$root" params [ "Context*" "u8*" ] result "u64" abi "sysv-amd64" imported
   extern "Context:phrase_define_dictionary" symbol "Context:phrase_define_dictionary" params [ "Context*" "u64" "u8*" ] result "u64" abi "sysv-amd64" imported
@@ -188,6 +194,13 @@ compiler {
   extern "context:process:track" symbol "context:process:track" params [ "u64" ] result "void" abi "sysv-amd64" imported
   extern "context:process:release" symbol "context:process:release" params [ "u64" ] result "void" abi "sysv-amd64" imported
   extern "context:io:write_bytes" symbol "context:io:write-bytes" params [ "Context*" "u8*" "u64" ] result "u64" abi "sysv-amd64" imported
+  extern "context:source:evaluate" symbol "context:source:evaluate" params [ "Context*" "u8*" "u8*" "u8*" "u64" ] result "i64" abi "sysv-amd64" imported
+  extern "context:io:active" symbol "context:io:active" params [  ] result "Context*" abi "sysv-amd64" imported
+  extern "context:completion:request" symbol "context:completion:request" params [ "Context*" "u64" "u8*" "u64" ] result "u8*" abi "sysv-amd64" imported
+  extern "context:completion:result:start" symbol "context:completion:result:start" params [ "u8*" ] result "u64" abi "sysv-amd64" imported
+  extern "context:completion:result:count" symbol "context:completion:result:count" params [ "u8*" ] result "u64" abi "sysv-amd64" imported
+  extern "context:completion:result:candidate" symbol "context:completion:result:candidate" params [ "u8*" "u64" ] result "u8*" abi "sysv-amd64" imported
+  extern "context:completion:result:release" symbol "context:completion:result:release" params [ "u8*" ] result "void" abi "sysv-amd64" imported
   extern "context:io:write" symbol "context:io:write" params [ "Context*" "u8*" ] result "u64" abi "sysv-amd64" imported
   extern "context:memory:allocate" symbol "context:memory:allocate" params [ "Context*" "u64" ] result "u8*" abi "sysv-amd64" imported
   extern "context:memory:reallocate" symbol "context:memory:reallocate" params [ "Context*" "u8*" "u64" ] result "u8*" abi "sysv-amd64" imported

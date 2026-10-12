@@ -127,3 +127,31 @@ grammar reference to a compiled phrase action. The shared matcher uses that
 schema during surrounding capture without executing the action. This lets
 source-defined DSL grammars describe their own boundaries; C++ stores no
 language-specific parser or additional semantic registry.
+
+## Embedded evaluation and completion
+
+`context:source:evaluate(Context*, source:u8*, path:u8*, output:u8*, capacity:u64)`
+executes null-terminated source in the caller's Context without a value scope, so
+new bindings survive the request. It returns the request exit status (nonzero on
+parse/runtime errors), consumes request-local pending exceptions into diagnostics,
+and restores the caller's streams, lookup, invocation, exit status and completion
+request. The output buffer receives a null-terminated tail of at most
+`capacity - 1` bytes; all output still streams to the caller's output sink. A
+capacity of one captures an empty string; zero capacity or null pointers fail.
+A null path uses `<evaluate>`. Native formatted output follows the same sink.
+
+`context:io:active()` returns the Context of the innermost embedded evaluation
+or completion on the current thread, or null outside those operations. Embedded clients
+can pass it to `Shell:run_pipeline_in_context` to stream subprocess output
+through the active sink in direct CLI runs. Ordinary standalone Shell output
+continues to use POSIX without requiring host symbols.
+
+`context:completion:request(Context*, provider:u64, source:u8*, cursor:u64)`
+elaborates a source-defined provider against a fresh request with the cursor
+clamped to the input length. It suppresses provider output, contains provider
+errors and restores caller state. The returned opaque `u8*` is null on failure.
+`context:completion:result:start`, `:count`, and `:candidate(handle, index)` expose
+its results. Candidate strings are borrowed until `:release(handle)`; an invalid
+index returns null and releasing null is allowed. Sorting, duplicate removal,
+common-prefix calculation and presentation belong to RecurLoop clients.
+These process-local handles must never be persisted in engine images.

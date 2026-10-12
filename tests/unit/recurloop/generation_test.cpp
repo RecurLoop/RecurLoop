@@ -1447,3 +1447,126 @@ const dynamic_value = side_effect()
   EXPECT_EQ(defined.output, "constant-side-effect\n");
   EXPECT_EQ(session->evaluate("print grid_size()").output, "10\n");
 }
+
+TEST(RecurloopGeneration, EmbeddedSourceEvaluationCapturesOutputAndRecoversWithoutLosingCallerState) {
+  auto session = project()->openSession();
+  const auto setup = session->evaluate(R"rl(
+extern malloc(bytes:u64) -> u8* abi sysv-amd64
+extern free(pointer:u8*) -> void abi sysv-amd64
+extern strcmp(left:u8*, right:u8*) -> i32 abi sysv-amd64
+extern strstr(text:u8*, needle:u8*) -> u8* abi sysv-amd64
+let api = phrase { dictionary = true }
+let api:inner = phrase {
+  type = <phrase-types:elaborate>
+  action = fn (state:Context*, called:Phrase*) -> void {
+    if context:io:active() != state { context:diagnostic:error(state, "missing active context"); return }
+    let bytes = malloc(8)
+    defer free(bytes)
+    let status = context:source:evaluate(state, "print 42", "<inner>", &bytes[0], 8)
+    if status != 0 || strcmp(&bytes[0], "42\n") != 0 || context:io:active() != state {
+      context:diagnostic:error(state, "nested evaluation did not restore its caller")
+    }
+    context:source:root(state)
+  }
+}
+let "api:inner" = <api:inner>
+let api:check = phrase {
+  type = <phrase-types:elaborate>
+  action = fn (state:Context*, called:Phrase*) -> void {
+    let bytes = malloc(512)
+    defer free(bytes)
+    if context:io:active() != cast(Context*, 0) { context:diagnostic:error(state, "leaked active context"); return }
+    let before = state.exec.status
+    if context:source:evaluate(state, "var embedded_value = 41\napi:inner", "<embedded>", &bytes[0], 512) != 0 || strcmp(&bytes[0], "42\n") != 0 {
+      context:diagnostic:error(state, "embedded output or definitions failed"); return
+    }
+    if context:source:evaluate(state, "print embedded_value + 2", "<embedded>", &bytes[0], 512) != 0 || strcmp(&bytes[0], "43\n") != 0 {
+      context:diagnostic:error(state, "embedded value did not persist"); return
+    }
+    if context:source:evaluate(state, "print missing_embedded_value", "<bad-input>", &bytes[0], 512) == 0 || !strstr(&bytes[0], "<bad-input>") {
+      context:diagnostic:error(state, "error did not carry source origin"); return
+    }
+    if context:source:evaluate(state, "print 44", "<recovered>", &bytes[0], 512) != 0 || strcmp(&bytes[0], "44\n") != 0 {
+      context:diagnostic:error(state, "evaluation did not recover"); return
+    }
+    let tail = malloc(4)
+    defer free(tail)
+    if context:source:evaluate(state, "print \"abcdefgh\"", "<bounded>", &tail[0], 4) != 0 || strcmp(&tail[0], "gh\n") != 0 {
+      context:diagnostic:error(state, "capture did not bound its tail"); return
+    }
+    var empty:u8 = 99
+    if context:source:evaluate(state, "print 45", "<empty>", &empty, 1) != 0 || empty != 0 {
+      context:diagnostic:error(state, "one-byte capture failed"); return
+    }
+    if state.exec.status != before || context:io:active() != cast(Context*, 0) {
+      context:diagnostic:error(state, "evaluation leaked execution state"); return
+    }
+    context:io:write(state, "SOURCE API OK\n")
+    context:source:root(state)
+  }
+}
+let "api:check" = <api:check>
+)rl");
+  ASSERT_EQ(setup.status, 0) << setup.error;
+  const auto result = session->evaluate("api:check\nprint embedded_value\n");
+  ASSERT_EQ(result.status, 0) << result.error << result.output;
+  EXPECT_NE(result.output.find("SOURCE API OK\n41\n"), std::string::npos);
+  EXPECT_EQ(session->evaluate("print embedded_value + 1\n").output, "42\n");
+  EXPECT_NE(project()->openSession()->evaluate("print embedded_value\n").status, 0);
+}
+
+TEST(RecurloopGeneration, EmbeddedCompletionOwnsCandidatesAndContainsProviderErrors) {
+  auto session = project()->openSession();
+  const auto setup = session->evaluate(R"rl(
+extern malloc(bytes:u64) -> u8* abi sysv-amd64
+extern free(pointer:u8*) -> void abi sysv-amd64
+extern strcmp(left:u8*, right:u8*) -> i32 abi sysv-amd64
+let api = phrase { dictionary = true }
+let api:provider = phrase {
+  type = <phrase-types:elaborate>
+  action = fn (state:Context*, called:Phrase*) -> void {
+    if strcmp(context:completion:source(state), "hello wo") != 0 || context:completion:cursor(state) != 8 {
+      context:diagnostic:error(state, "wrong completion input"); return
+    }
+    context:completion:start(state, 6)
+    context:completion:add(state, "world")
+    context:completion:add(state, "work")
+    context:io:write(state, "provider noise")
+  }
+}
+let api:broken = phrase {
+  type = <phrase-types:elaborate>
+  action = fn (state:Context*, called:Phrase*) -> void { context:diagnostic:error(state, "provider failed") }
+}
+let api:check = phrase {
+  type = <phrase-types:elaborate>
+  action = fn (state:Context*, called:Phrase*) -> void {
+    let owner = context:phrase:find(state, "api")
+    let provider = context:phrase:find:exact(state, owner, "provider")
+    let broken = context:phrase:find:exact(state, owner, "broken")
+    if context:completion:request(state, broken, "hello wo", 8) {
+      context:diagnostic:error(state, "broken provider succeeded"); return
+    }
+    let request = context:completion:request(state, provider, "hello wo", 99)
+    if !request { context:diagnostic:error(state, "completion failed after provider error"); return }
+    defer context:completion:result:release(request)
+    if context:completion:result:start(request) != 6 || context:completion:result:count(request) != 2 || strcmp(context:completion:result:candidate(request, 0), "world") != 0 || context:completion:result:candidate(request, 2) {
+      context:diagnostic:error(state, "completion results failed"); return
+    }
+    let bytes = malloc(16)
+    defer free(bytes)
+    if context:source:evaluate(state, "print 42", "<after-completion>", &bytes[0], 16) != 0 || strcmp(context:completion:result:candidate(request, 1), "work") != 0 {
+      context:diagnostic:error(state, "completion ownership failed"); return
+    }
+    context:io:write(state, "COMPLETION API OK\n")
+    context:source:root(state)
+  }
+}
+let "api:check" = <api:check>
+)rl");
+  ASSERT_EQ(setup.status, 0) << setup.error;
+  const auto result = session->evaluate("api:check\nprint 7\n");
+  ASSERT_EQ(result.status, 0) << result.error;
+  EXPECT_EQ(result.output, "42\nCOMPLETION API OK\n7\n");
+  EXPECT_TRUE(result.error.empty());
+}
