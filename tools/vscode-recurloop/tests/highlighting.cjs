@@ -91,6 +91,10 @@ let Probe:advance = fn (distance:i64, speed:i64) -> i64 { return distance + spee
 `);
   const entry = path.join(root, 'recurloop.project.rl');
   fs.writeFileSync(entry, 'include "main.rl"\n');
+  // Cold startup imports libraries, compiles the project and publishes it.
+  // Wait for protocol readiness before timing palette rendering; startup has
+  // no fixed deadline and is tested separately in startup.cjs.
+  await runtime.restart(folder.uri);
   // The host's palette must render even while complete semantic inspection is
   // delayed, including files larger than the former console-only 8 KiB limit.
   const inspect = runtime.inspect.bind(runtime);
@@ -102,13 +106,15 @@ let Probe:advance = fn (distance:i64, speed:i64) -> i64 { return distance + spee
   const setDecorations = editor.setDecorations;
   editor.setDecorations = (...args) => { setDecorations(...args); if (args[1].length) painted(); };
   const refresh = analysis.refresh(document);
+  let paintTimer;
   try {
     await Promise.race([firstPaint, new Promise((_, reject) => {
-      const timer = setTimeout(() => reject(new Error('Palette waited for semantic inspection')), 10000);
-      timer.unref();
+      paintTimer = setTimeout(() => reject(new Error('Palette waited for semantic inspection')), 10000);
+      paintTimer.unref();
     })]);
     assertLet();
   } finally {
+    clearTimeout(paintTimer);
     release(); runtime.inspect = inspect; editor.setDecorations = setDecorations;
   }
   await refresh;
