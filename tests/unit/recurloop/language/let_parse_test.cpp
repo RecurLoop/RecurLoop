@@ -1,4 +1,5 @@
 #include <gtest/gtest.h>
+#include <recurloop/Execution.hpp>
 #include <recurloop/Recurloop.hpp>
 
 #include <sys/mman.h>
@@ -32,6 +33,32 @@ TEST_F(RecurloopTesting, LetParseStaging) {
 
   EXPECT_EQ(context.staging.phrase.getKey(), "Hello, Recurloop!");
   EXPECT_EQ(result, 0);
+}
+
+TEST_F(RecurloopTesting, DictionaryDefinitionsPreserveTheEnclosingFallback) {
+  const char *argv[] = {"Recurloop", "--string", ""};
+  ASSERT_EQ(execute(countof(argv), (char **)argv), 0);
+  const auto child = [](lexicon::Phrase dictionary, std::string_view name) {
+    return dictionary.matchExact(Byte(const_cast<char *>(name.data())), 0, name.size() * Byte::length).getPhrase();
+  };
+  auto original = child(context.lexicon.phrase(), "");
+  ASSERT_FALSE(original.isNull());
+  ASSERT_TRUE(original.isElaboratable());
+  for (const auto *source :
+       {"let Empty = []\n", "let Outer = [ nested = [] ping = <debug:ping> ]\n", "let Outer:nested:Deep = []\n"}) {
+    ASSERT_NO_THROW(recurloop::executeSource(context, source, "<dictionary-test>", 1));
+    auto fallback = child(context.lexicon.phrase(), "");
+    EXPECT_EQ(fallback.getAddress(), original.getAddress()) << source;
+    EXPECT_EQ(fallback.getPrototype().getAddress(), original.getPrototype().getAddress()) << source;
+    EXPECT_EQ(fallback.getAction(), original.getAction()) << source;
+  }
+  auto outer = child(context.lexicon.phrase(), "Outer");
+  ASSERT_FALSE(outer.isNull());
+  EXPECT_FALSE(child(outer, "ping").isNull());
+  auto nested = child(outer, "nested");
+  ASSERT_FALSE(nested.isNull());
+  EXPECT_FALSE(child(nested, "Deep").isNull());
+  EXPECT_TRUE(child(context.lexicon.phrase(), "Empty").containsSubdictionary());
 }
 
 TEST_F(RecurloopTesting, InterpolatesStringExpressionsIntoPhraseNamesAndReferences) {

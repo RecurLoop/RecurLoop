@@ -11,6 +11,7 @@ namespace context {
     std::vector<lexicon::Phrase> stack;
     lexicon::Phrase dictionary;
     lexicon::Draft phrase;
+    lexicon::Phrase completedDictionary;
     std::unordered_map<std::size_t, std::pair<SourceLocation, SourceLocation>> definitions;
 
     DECLARATION static void push(Context &context, lexicon::Phrase &phrase);

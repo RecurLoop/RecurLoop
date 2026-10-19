@@ -286,10 +286,13 @@ namespace recurloop {
 
       finalize_staged_code(context, invoked);
 
-      if (!context.staging.phrase.containsType() && !context.staging.phrase.containsPrototype())
+      if (context.staging.completedDictionary.isNull() && !context.staging.phrase.containsType() &&
+          !context.staging.phrase.containsPrototype())
         context.staging.phrase.setType(lexicon::phrase::type::getData(invoked));
 
-      lexicon::Phrase &saved = context.staging.phrase.save();
+      lexicon::Phrase saved = context.staging.completedDictionary;
+      context.staging.completedDictionary = {};
+      if (saved.isNull()) saved = context.staging.phrase.save();
       Assembler::commitNative(context, saved);
       Functions::commitVariant(context, saved);
       applyPhraseOptions(context, saved);
@@ -520,8 +523,12 @@ namespace recurloop {
 
     void action_dictionary_leave(context::Context &context, lexicon::Phrase &invoked) {
       DEBUG_PROFILE_SCOPE(DictionaryLeave);
+      lexicon::Phrase dictionary = context.staging.dictionary;
       context::Lookup::leave(context, invoked, 1);
       context::Staging::pop(context, 1);
+      // The dictionary was saved on entry and its children are now complete.
+      // The enclosing commit must use it, not the parent's empty staging slot.
+      context.staging.completedDictionary = dictionary;
       context.workspace.key.clear();
     }
 
@@ -538,10 +545,12 @@ namespace recurloop {
 
       finalize_staged_code(context, invoked);
 
-      if (!context.staging.phrase.containsType())
+      if (context.staging.completedDictionary.isNull() && !context.staging.phrase.containsType())
         context.staging.phrase.setType(lexicon::phrase::type::getData(invoked));
 
-      lexicon::Phrase &saved = context.staging.phrase.save();
+      lexicon::Phrase saved = context.staging.completedDictionary;
+      context.staging.completedDictionary = {};
+      if (saved.isNull()) saved = context.staging.phrase.save();
       Assembler::commitNative(context, saved);
       applyPhraseOptions(context, saved);
 
