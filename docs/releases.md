@@ -1,25 +1,85 @@
 # Production releases
 
-## Publishing RecurLoop 0.2.9 and the VS Code extension 0.2.9
+## One release version
 
-After local verification succeeds, tag the final release commit on `main` as
-`v0.2.9`, then publish the branch and tag explicitly:
+The `project(RecurLoop VERSION ...)` declaration in `CMakeLists.txt` is the only
+version to edit. CMake uses it for the host, language version constants and Linux
+packages. Extension compilation and packaging run `tools/sync-version.cjs` to
+update both extension manifests (`package.json` and the root entries in
+`package-lock.json`). The bundled installer metadata uses that same version.
+Dependency versions and historical changelog entries are independent.
+
+After changing the CMake version, synchronize and verify the derived files:
 
 ```sh
-git tag -a v0.2.9 -m "RecurLoop 0.2.9; VS Code extension 0.2.9"
-git push origin main
-git push origin v0.2.9
+node tools/sync-version.cjs
+node tools/sync-version.cjs --check
 ```
 
-The tag starts `.github/workflows/ci.yml`, which builds and verifies the runtime,
-libraries and VSIX, then publishes their assets to GitHub Releases. Wait for the
-workflow to complete successfully before publishing the extension to Marketplace:
-extension 0.2.9 downloads the runtime assets from the `v0.2.9` release.
+Commit the release changes, then tag and push the branch and tag together:
 
-For manual Marketplace publication, upload
-`tools/vscode-recurloop/recurloop-vscode-0.2.9.vsix` through the publisher management
-page for publisher `recurloop`. This package contains the installer, not the runtime
-binary; new users need access to GitHub Releases to install the runtime.
+```sh
+version="$(node tools/sync-version.cjs --check)"
+git tag -a "v$version" -m "RecurLoop $version"
+git push --atomic origin main "v$version"
+```
+
+For the first release, push `main` first, complete the identity setup below,
+then push the version tag. Later releases can use the atomic push above.
+
+The tag starts `.github/workflows/ci.yml`, which rejects a tag that differs from
+the CMake version, builds and verifies the runtime, libraries and VSIX, and
+publishes their assets to GitHub Releases. Only after that release succeeds does
+the `marketplace` job publish the same verified VSIX to VS Code Marketplace.
+The runtime release is available before new extension installations request it.
+The VSIX contains the installer, not the runtime binary.
+
+Marketplace publication uses Microsoft Entra ID through GitHub OIDC. A failed
+Marketplace job can be rerun independently after fixing identity configuration;
+`--skip-duplicate` also allows retrying an already published extension version.
+
+## Configure Microsoft Entra ID / OIDC once
+
+Follow the official [Azure Login OIDC setup](https://learn.microsoft.com/en-us/azure/developer/github/connect-from-azure-openid-connect)
+and [VS Code identity publishing guide](https://code.visualstudio.com/api/working-with-extensions/publishing-extension#secure-automated-publishing-to-visual-studio-marketplace):
+
+1. In Azure, create a user-assigned managed identity and grant it the **Reader**
+   role on the subscription used by Azure Login. Record its client ID, directory
+   (tenant) ID and subscription ID.
+2. Add a federated credential to that identity for GitHub Actions, with entity
+   type **Environment** and environment name **vscode-marketplace**. For this
+   repository the credential values are:
+
+   ```text
+   Issuer:   https://token.actions.githubusercontent.com
+   Subject:  repo:RecurLoop/RecurLoop:environment:vscode-marketplace
+   Audience: api://AzureADTokenExchange
+   ```
+
+   The subject must exactly match the GitHub OIDC token. Adapt the owner and
+   repository when using a fork.
+3. In GitHub, open **Settings → Environments → vscode-marketplace** and add
+   environment **variables** named `AZURE_CLIENT_ID`, `AZURE_TENANT_ID` and
+   `AZURE_SUBSCRIPTION_ID` with those values. No client secret is required.
+4. After pushing the workflow to `main`, run **Actions → Marketplace identity
+   setup → Run workflow**. Its summary shows the identity's Marketplace profile
+   ID. It uses the federation above and runs only this read operation:
+
+   ```sh
+   az rest --url https://app.vssps.visualstudio.com/_apis/profile/profiles/me \
+     --resource 499b84ac-1321-427f-aa17-267ca6975798 --query id --output tsv
+   ```
+
+5. In the [Marketplace publisher management page](https://marketplace.visualstudio.com/manage/publishers/),
+   open publisher **recurloop** and add that Marketplace profile ID as a member
+   with the **Contributor** role. Azure subscription permissions alone do not
+   grant permission to publish extensions.
+
+The release job exchanges its short-lived GitHub OIDC token through
+`azure/login`, then runs `vsce publish --azure-credential --packagePath ...`.
+Missing identity variables fail with a link to these instructions. Actual
+authentication and publication require the identity and publisher membership
+to be configured in those services.
 
 To rebuild just the VSIX without running tests:
 
@@ -28,9 +88,10 @@ npm ci --prefix tools/vscode-recurloop
 npm run package --prefix tools/vscode-recurloop
 ```
 
-`npm run package` compiles TypeScript through `vscode:prepublish` and creates the
-VSIX in that directory. Marketplace publication is manual; the release workflow
-only publishes GitHub Release assets.
+`npm run package` synchronizes versions, compiles TypeScript through
+`vscode:prepublish` and creates the VSIX in that directory. To publish manually
+after authenticating an authorized identity with Azure CLI, run
+`npm run publish --prefix tools/vscode-recurloop`; it also uses Entra ID.
 
 ## CI build caches
 

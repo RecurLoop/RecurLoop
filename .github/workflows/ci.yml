@@ -21,6 +21,21 @@ jobs:
       SCCACHE_GHA_ENABLED: "true"
     steps:
       - uses: actions/checkout@v7
+      - name: Set up Node.js for the VS Code extension
+        uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: tools/vscode-recurloop/package-lock.json
+      - name: Synchronize release versions and validate tag
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "$GITHUB_REF_TYPE" == tag ]]; then
+            node tools/sync-version.cjs --tag "$GITHUB_REF_NAME"
+          else
+            node tools/sync-version.cjs
+          fi
       - name: Restore official LLVM archive cache
         uses: actions/cache@v4
         with:
@@ -89,12 +104,6 @@ jobs:
           set -euo pipefail
           [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
           test "$(build/CI/bin/recurloop --version | sed -n 's/^Recurloop v//p')" = "${TAG#v}"
-      - name: Set up Node.js for the VS Code extension
-        uses: actions/setup-node@v7
-        with:
-          node-version: '22'
-          cache: npm
-          cache-dependency-path: tools/vscode-recurloop/package-lock.json
       - name: Build and stage the VS Code release asset
         shell: bash
         run: |
@@ -172,3 +181,61 @@ jobs:
           gh release create "${GITHUB_REF_NAME}" dist/* \
             --repo "${GITHUB_REPOSITORY}" --verify-tag \
             --title "RecurLoop ${GITHUB_REF_NAME}" --generate-notes
+
+  marketplace:
+    name: Publish verified VSIX to VS Code Marketplace
+    needs: release
+    if: github.ref_type == 'tag'
+    runs-on: ubuntu-24.04
+    environment: vscode-marketplace
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: tools/vscode-recurloop/package-lock.json
+      - name: Validate Marketplace identity configuration
+        env:
+          AZURE_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
+          AZURE_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
+          AZURE_SUBSCRIPTION_ID: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          for name in AZURE_CLIENT_ID AZURE_TENANT_ID AZURE_SUBSCRIPTION_ID; do
+            if [[ -z "${!name}" ]]; then
+              echo "::error::Configure $name for the vscode-marketplace environment; see docs/releases.md"
+              exit 1
+            fi
+          done
+      - uses: actions/download-artifact@v7
+        with:
+          name: release-assets
+          path: dist
+      - name: Install locked publishing tools
+        run: npm ci --prefix tools/vscode-recurloop
+      - name: Validate release VSIX checksum and version
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="$(node tools/sync-version.cjs --tag "$GITHUB_REF_NAME")"
+          asset="recurloop-vscode-${version}.vsix"
+          (cd dist && sha256sum -c "$asset.sha256")
+      - name: Sign in to Microsoft Entra ID using GitHub OIDC
+        uses: azure/login@v3
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+      - name: Publish the tested VSIX using Microsoft Entra ID
+        working-directory: tools/vscode-recurloop
+        shell: bash
+        run: |
+          set -euo pipefail
+          asset="recurloop-vscode-${GITHUB_REF_NAME#v}.vsix"
+          npx --no-install vsce publish --azure-credential \
+            --packagePath "../../dist/$asset" --skip-duplicate

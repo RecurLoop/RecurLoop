@@ -238,10 +238,10 @@
     "compile": "node scripts/prepare-runtime.cjs && tsc -p ./",
     "watch": "node scripts/prepare-runtime.cjs && tsc -watch -p ./",
     "check": "tsc -p ./ --noEmit",
-    "package": "vsce package --no-dependencies",
-    "publish": "vsce publish --no-dependencies",
+    "package": "node ../sync-version.cjs && vsce package --no-dependencies",
+    "publish": "node ../sync-version.cjs && vsce publish --no-dependencies --azure-credential",
     "test": "npm run compile && npm run test:compiled",
-    "test:compiled": "node tests/progress.cjs && node tests/transport.cjs && node tests/default-terminal.cjs && node tests/setup.cjs && node tests/startup.cjs && node tests/project.cjs && node tests/runtime.cjs && node tests/navigation.cjs && node tests/editor.cjs && node tests/assistance.cjs && node tests/highlighting.cjs",
+    "test:compiled": "node tests/version.cjs && node tests/progress.cjs && node tests/transport.cjs && node tests/default-terminal.cjs && node tests/setup.cjs && node tests/startup.cjs && node tests/project.cjs && node tests/runtime.cjs && node tests/navigation.cjs && node tests/editor.cjs && node tests/assistance.cjs && node tests/highlighting.cjs",
     "test:project": "tsc -p ./ && node tests/project.cjs",
     "test:setup": "npm run compile && node tests/setup.cjs"
   },

@@ -1,4 +1,5 @@
 cmake_minimum_required(VERSION 3.25)
+# Release version source of truth; extension manifests sync during compile/package.
 project(RecurLoop VERSION 0.2.10 DESCRIPTION "An extensible programming language and runtime for source-defined language extensions"
         LANGUAGES C CXX)
 
