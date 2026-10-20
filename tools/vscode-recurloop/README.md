@@ -236,9 +236,9 @@ After **RecurLoop: Restart Language Runtime**, reopen consoles to reconnect.
 The extension selects an explicitly configured executable first, then
 `recurloop` on the workspace host's `PATH`, then its managed installation.
 Managed installs require no administrator access and do not modify your shell
-`PATH`. This extension version requires RecurLoop 0.2.10 or a newer patch in the
-0.2 series. Downloads are pinned to the release bundled with the extension and
-verified against the archive checksum and file manifest.
+`PATH`. The runtime must match the extension's release version or be a newer
+patch in the same minor series. Downloads are pinned to the release bundled
+with the extension and verified against the archive checksum and file manifest.
 
 Common settings in VS Code's user or workspace settings:
 
