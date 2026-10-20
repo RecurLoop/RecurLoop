@@ -3,7 +3,6 @@
 #include <recurloop/ContextApi.hpp>
 #include <recurloop/EmbeddedCore.hpp>
 #include <recurloop/EngineImage.hpp>
-#include <recurloop/LexiconTransaction.hpp>
 #include <recurloop/Recurloop.hpp>
 #include <recurloop/Session.hpp>
 #include <radix/node/Data.hpp>
@@ -22,7 +21,7 @@
 
 namespace recurloop {
   namespace {
-    constexpr std::string_view CacheMagic{"recurloop-project-module-cache-v14"};
+    constexpr std::string_view CacheMagic{"recurloop-project-module-cache-v16"};
     constexpr std::uint64_t FnvOffset = 1469598103934665603ULL;
     constexpr std::uint64_t FnvPrime = 1099511628211ULL;
 
@@ -119,6 +118,7 @@ namespace recurloop {
       std::uint64_t baseline = 0;
       bool linked = true;
       bool directEntry = true;
+      std::uint64_t inputPrefixHash = 0;
       std::string source;
       ProjectCacheStamp sourceStamp;
       ProjectCacheStamp imageStamp;
@@ -134,8 +134,8 @@ namespace recurloop {
       int directEntry = 0;
       std::size_t dependencyCount = 0;
       std::size_t inputCount = 0;
-      if (!(input >> magic >> std::hex >> manifest.baseline >> std::dec >> linked >> directEntry >> manifest.sourceStamp.size >>
-            manifest.sourceStamp.mtime >> manifest.sourceStamp.hash >> manifest.imageStamp.size >> manifest.imageStamp.mtime >>
+      if (!(input >> magic >> std::hex >> manifest.baseline >> std::dec >> linked >> directEntry >> manifest.inputPrefixHash >>
+            manifest.sourceStamp.size >> manifest.sourceStamp.mtime >> manifest.sourceStamp.hash >> manifest.imageStamp.size >> manifest.imageStamp.mtime >>
             manifest.imageStamp.hash >> std::quoted(manifest.source) >> dependencyCount >> inputCount))
         return false;
       if (magic != CacheMagic || (linked != 0 && linked != 1) || (directEntry != 0 && directEntry != 1) ||
@@ -160,7 +160,7 @@ namespace recurloop {
     }
 
     bool writeManifest(const std::filesystem::path &path, std::uint64_t baseline, bool linked, bool directEntry,
-                       const std::string &source, const ProjectCacheStamp &sourceStamp, const ProjectCacheStamp &imageStamp,
+                       std::uint64_t inputPrefixHash, const std::string &source, const ProjectCacheStamp &sourceStamp, const ProjectCacheStamp &imageStamp,
                        const std::unordered_map<std::string, ProjectCacheStamp> &dependencies,
                        const std::vector<std::pair<std::string, ProjectCacheStamp>> &inputImages) {
       std::vector<std::pair<std::string, ProjectCacheStamp>> ordered(dependencies.begin(), dependencies.end());
@@ -169,7 +169,8 @@ namespace recurloop {
       std::ofstream file(path, std::ios::trunc);
       if (!file.is_open()) return false;
       file << CacheMagic << ' ' << std::hex << baseline << std::dec << ' ' << (linked ? 1 : 0) << ' '
-           << (directEntry ? 1 : 0) << ' ' << sourceStamp.size << ' ' << sourceStamp.mtime << ' ' << sourceStamp.hash << ' '
+           << (directEntry ? 1 : 0) << ' ' << inputPrefixHash << ' ' << sourceStamp.size << ' ' << sourceStamp.mtime << ' '
+           << sourceStamp.hash << ' '
            << imageStamp.size << ' ' << imageStamp.mtime << ' ' << imageStamp.hash << ' ' << std::quoted(source) << ' ' << ordered.size()
            << ' ' << inputImages.size() << '\n';
       for (const auto &[dependency, stamp] : ordered)
@@ -231,6 +232,13 @@ namespace recurloop {
         const Size payloadSize = contentSize - offset;
         if (payloadSize != 0) hashBytes(hash, item.content(offset, payloadSize).toPtr(), payloadSize);
       }
+      return hash == 0 ? 1 : hash;
+    }
+
+    std::uint64_t semanticImageHash(context::Context &context) {
+      const auto image = EngineImage::encode(context);
+      std::uint64_t hash = FnvOffset;
+      hashBytes(hash, image.data(), image.size());
       return hash == 0 ? 1 : hash;
     }
 
@@ -482,8 +490,20 @@ namespace recurloop {
         return false;
       }
 
+      // Source-owned prefixes are not represented by inputImages. A full child
+      // snapshot is reusable only against the same semantic input, including
+      // parent edits and repeated includes at different points in one file.
+      if (!manifest.directEntry && manifest.inputPrefixHash != semanticImageHash(context)) {
+        cacheMisses_.fetch_add(1, std::memory_order_relaxed);
+        return false;
+      }
       if (nested) beforeCacheDependency(state, context);
-      LexiconTransaction transaction(context.lexicon);
+      // Imports may replace the complete graph while loading a standalone
+      // dependency. Restore bytes and context state on a miss, not just an
+      // append watermark into a potentially different lexicon.
+      Generations cacheGenerations;
+      std::vector<std::uint8_t> rollbackBuffer;
+      RequestGeneration transaction(context, cacheGenerations, 0, rollbackBuffer);
       // Linked modules always compose like normal imports. A standalone fallback
       // is also loaded as an overlay when nested; at the direct root exact mode
       // may replace the graph because the caller has explicitly requested it.
@@ -494,6 +514,7 @@ namespace recurloop {
       state.observed.insert(manifest.dependencies.begin(), manifest.dependencies.end());
       if (nested && !state.modules.empty()) {
         state.modules.back().dependencies.insert(manifest.dependencies.begin(), manifest.dependencies.end());
+        if (!manifest.linked) state.modules.back().linked = false;
         afterCacheDependency(state, context);
       }
       ++state.step;
@@ -524,6 +545,11 @@ namespace recurloop {
       module.directEntry = std::all_of(state.modules.begin(), state.modules.end(), [](const auto &parent) {
         return parent.directEntry && parent.linked;
       });
+      // A child reached after its parent contributed source-owned state cannot
+      // link to that prefix: there is no parent image until the include returns.
+      // Capture this child's prerequisites in a standalone snapshot instead.
+      module.linked = module.directEntry;
+      if (!module.directEntry) module.inputPrefixHash = semanticImageHash(context);
       module.source = absolute;
       module.sourceStamp = stamp;
       module.dependencies.emplace(absolute, stamp);
@@ -588,8 +614,8 @@ namespace recurloop {
       else EngineImage::saveFull(context, imageTemporary.string());
       ProjectCacheStamp imageStamp;
       if (!sourceStamp(imageTemporary.string(), imageStamp) || !inputsUnchanged()) return false;
-      if (!writeManifest(manifestTemporary, baselineHash(), module.linked, module.directEntry, module.source,
-                         module.sourceStamp, imageStamp, module.dependencies, module.inputImages)) return false;
+      if (!writeManifest(manifestTemporary, baselineHash(), module.linked, module.directEntry,
+                         module.inputPrefixHash, module.source, module.sourceStamp, imageStamp, module.dependencies, module.inputImages)) return false;
 
       fs::rename(imageTemporary, imagePath, error);
       if (error) return false;
@@ -603,6 +629,10 @@ namespace recurloop {
       state.observed.insert(module.dependencies.begin(), module.dependencies.end());
       if (!state.modules.empty()) {
         state.modules.back().dependencies.insert(module.dependencies.begin(), module.dependencies.end());
+        // A standalone dependency already contains its preceding source graph.
+        // Exporting its children separately can load a child before that graph.
+        // Keep the enclosing cache entry standalone all the way to the root.
+        if (!module.linked) state.modules.back().linked = false;
         afterCacheDependency(state, context);
       } else {
         state.active = false;
@@ -824,7 +854,9 @@ namespace recurloop {
         if (!sameStamp(image, expected) || !fs::is_regular_file(image, error) || error) return false;
       }
 
-      LexiconTransaction transaction(context.lexicon);
+      Generations cacheGenerations;
+      std::vector<std::uint8_t> rollbackBuffer;
+      RequestGeneration transaction(context, cacheGenerations, 0, rollbackBuffer);
       for (const auto &[image, _] : manifest.inputImages) EngineImage::load(context, image);
       transaction.commit();
       return true;
@@ -854,7 +886,12 @@ namespace recurloop {
         if (!sameStamp(image, expected)) return false;
       if (!fs::is_regular_file(imagePath, error) || error || fs::file_size(imagePath, error) == 0 || error)
         return false;
+      if (!manifest.directEntry && manifest.inputPrefixHash != semanticImageHash(context)) return false;
+      Generations cacheGenerations;
+      std::vector<std::uint8_t> rollbackBuffer;
+      RequestGeneration transaction(context, cacheGenerations, 0, rollbackBuffer);
       EngineImage::load(context, imagePath.string());
+      transaction.commit();
       return true;
     } catch (...) {
       return false;

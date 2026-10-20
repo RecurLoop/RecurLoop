@@ -30,8 +30,10 @@ namespace recurloop {
   // One project cache walk. Cached project sources are ordinary linked .rli
   // modules: one source path maps to one image path and images depend on other
   // source images/imported libraries instead of embedding cumulative project
-  // checkpoints. A small source stack is kept only while a cache miss is being
-  // evaluated so nested includes can be compiled into their own modules.
+  // checkpoints. Source prefixes and standalone dependencies require full
+  // snapshots through their enclosing modules. A small source stack is kept
+  // only while a cache miss is evaluated, so nested includes can be compiled
+  // into their own modules.
   struct ProjectCacheState {
     struct Module {
       std::string source;
@@ -43,6 +45,7 @@ namespace recurloop {
       std::vector<std::pair<std::string, ProjectCacheStamp>> inputImages;
       Size segmentUsed = 0;
       std::uint64_t semanticPrefix = 0;
+      std::uint64_t inputPrefixHash = 0;
       bool linked = true;
       bool directEntry = true;
     };

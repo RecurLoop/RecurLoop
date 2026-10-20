@@ -1,6 +1,7 @@
 #include <gtest/gtest.h>
 
 #include <recurloop/Project.hpp>
+#include <recurloop/EngineImage.hpp>
 #include <recurloop/Execution.hpp>
 #include <recurloop/Recurloop.hpp>
 #include <recurloop/Session.hpp>
@@ -1111,6 +1112,118 @@ TEST(RecurloopGeneration, ProjectFileCacheWritesAndRestoresLinkedRliModules) {
   EXPECT_EQ(state->cacheHits(), hitsBeforeChange);
 
   fs::remove_all(root, error);
+}
+
+TEST(RecurloopGeneration, ProjectFileCacheRestoresChildrenThatDependOnParentSourcePrefixes) {
+  namespace fs = std::filesystem;
+  const auto root = fs::temp_directory_path() / ("recurloop-cache-source-prefix-" + std::to_string(getpid()));
+  fs::remove_all(root);
+  ASSERT_TRUE(fs::create_directories(root));
+  const auto main = root / "main.rl";
+  const auto parent = root / "parent.rl";
+  const auto child = root / "child.rl";
+  std::ofstream(main) << "include \"parent.rl\"\n";
+  std::ofstream(parent) << "let CacheKind = phrase { dictionary = true permanent = true }\n"
+                           "const CacheKind:value = 41\n"
+                           "include \"child.rl\"\n";
+  std::ofstream(child) << "let cached_kind = <CacheKind>\n"
+                          "let cached_read = fn () -> i64 { return CacheKind:value + 1 }\n";
+  auto state = project();
+  state->configureCache((root / "cache").string());
+  const auto load = [&] {
+    auto session = state->openSession();
+    EXPECT_EQ(session->evaluate(":cache-exact").status, 0);
+    const auto loaded = session->executeFile(main.string());
+    EXPECT_EQ(loaded.status, 0) << loaded.error;
+    return session;
+  };
+  auto cold = load();
+  EXPECT_EQ(cold->evaluate("print cached_read()").output, "42\n");
+  const auto writes = state->cacheWrites();
+  const auto hits = state->cacheHits();
+  auto warm = load();
+  EXPECT_EQ(warm->evaluate("print cached_read()").output, "42\n");
+  EXPECT_EQ(state->cacheHits(), hits + 1);
+  EXPECT_EQ(state->cacheWrites(), writes);
+
+  // Changing a descendant must rebuild its ancestors, retaining the prefix.
+  std::ofstream(child) << "let cached_kind = <CacheKind>\n"
+                          "let cached_read = fn () -> i64 { return CacheKind:value + 2 }\n";
+  auto changed = load();
+  EXPECT_EQ(changed->evaluate("print cached_read()").output, "43\n");
+  const auto changedWrites = state->cacheWrites();
+  auto changedWarm = load();
+  EXPECT_EQ(changedWarm->evaluate("print cached_read()").output, "43\n");
+  EXPECT_EQ(state->cacheWrites(), changedWrites);
+
+  // A child snapshot must not restore an obsolete version of the parent prefix.
+  std::ofstream(parent) << "let CacheKind = phrase { dictionary = true permanent = true }\n"
+                           "const CacheKind:value = 61\n"
+                           "include \"child.rl\"\n";
+  auto changedParent = load();
+  EXPECT_EQ(changedParent->evaluate("print CacheKind:value").output, "61\n");
+  EXPECT_EQ(changedParent->evaluate("print cached_read()").output, "63\n");
+
+  // The same source path can also be entered twice with distinct prefixes.
+  std::ofstream(parent) << "var cache_prefix:i64 = 1\n"
+                           "include \"child.rl\"\n"
+                           "cache_prefix = 2\n"
+                           "include \"child.rl\"\n";
+  std::ofstream(child) << "let cached_prefix = cache_prefix\n";
+  auto repeated = load();
+  EXPECT_EQ(repeated->evaluate("print cached_prefix").output, "2\n");
+  auto repeatedWarm = load();
+  EXPECT_EQ(repeatedWarm->evaluate("print cached_prefix").output, "2\n");
+  fs::remove_all(root);
+}
+
+TEST(RecurloopGeneration, FailedCacheRestoreRollsBackRebuiltDependencyLexicons) {
+  namespace fs = std::filesystem;
+  const auto root = fs::temp_directory_path() / ("recurloop-cache-restore-rollback-" + std::to_string(getpid()));
+  fs::remove_all(root);
+  ASSERT_TRUE(fs::create_directories(root));
+  const auto source = root / "source.rl";
+  const std::string body = "let cached_alias = <uncached_prerequisite>\n";
+  std::ofstream(source) << body;
+  char program[] = "recurloop-test";
+  char *argv[] = {program};
+  recurloop::Recurloop producer;
+  producer.initialize(1, argv);
+  auto &context = producer.getContext();
+  auto state = recurloop::Project::create(context, {program});
+  state->configureCache((root / "cache").string());
+
+  // The dependency rebuilds the graph before resolution of a later external
+  // reference fails. A radix append watermark cannot undo that replacement.
+  recurloop::executeSource(context, "let CacheDependency = <debug:ping>\n"
+                                    "set CacheDependency.docs = \"Dependency metadata.\"\n", "<dependency>", 1);
+  const auto dependency = root / "dependency.rli";
+  recurloop::EngineImage::saveFull(context, dependency.string());
+  recurloop::EngineImage::rememberDependency(context, dependency.string());
+  recurloop::executeSource(context, "let uncached_prerequisite = <debug:ping>\n", "<prerequisite>", 1);
+  recurloop::ProjectCacheState cache;
+  state->beginCache(cache);
+  state->beginCacheStep(cache, source.string(), context);
+  recurloop::executeSource(context, body, source.string(), 1);
+  state->commitCacheStep(cache, context);
+  ASSERT_EQ(state->cacheWrites(), 1u);
+
+  recurloop::Recurloop consumer;
+  consumer.initialize(1, argv);
+  auto &restored = consumer.getContext();
+  recurloop::executeSource(restored, "let CacheSentinel = <debug:ping>\n"
+                                     "set CacheSentinel.docs = \"Must survive a cache miss.\"\n", "<sentinel>", 1);
+  const auto before = recurloop::EngineImage::encode(restored);
+  const auto used = restored.lexicon.memoryUsed();
+  std::vector<std::uint8_t> bytes(used);
+  std::memcpy(bytes.data(), restored.lexicon.getMemory().toPtr(), used);
+  state->beginCache(cache);
+  EXPECT_FALSE(state->restoreCacheStep(cache, restored, source.string()));
+  EXPECT_EQ(restored.lexicon.memoryUsed(), used);
+  EXPECT_EQ(std::memcmp(bytes.data(), restored.lexicon.getMemory().toPtr(), used), 0);
+  EXPECT_EQ(recurloop::EngineImage::encode(restored), before);
+  EXPECT_NO_THROW(recurloop::executeSource(restored, "CacheSentinel\n", "<after-cache-miss>", 1));
+  fs::remove_all(root);
 }
 
 TEST(RecurloopGeneration, ProjectFileCacheExactUsesLinkedModuleOverlay) {

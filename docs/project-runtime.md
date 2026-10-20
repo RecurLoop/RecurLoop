@@ -109,10 +109,19 @@ tree rather than with one particular execution order.
 
 Most source files can be emitted as small linked images. If a file mutates
 pre-existing semantic state in place, or contributes semantic state before a
-later dependency boundary, that single file falls back to a self-contained
-image because an append-only linked delta cannot represent the ordering safely.
-The fallback is local to that file; it does not reintroduce cumulative
-step/fragment snapshots for the rest of the project.
+later dependency boundary, it falls back to a self-contained image because an
+append-only linked delta cannot represent the ordering safely. Children entered
+after such a source prefix also capture their prerequisites in full. A standalone
+child makes its enclosing modules standalone, so a later restore never loads a
+child before the parent definitions it needs. Files whose dependencies precede
+all declarations retain small linked images; there is still one image per file.
+Context-dependent children also record a hash of their semantic input before
+source execution. Parent edits and repeated includes with different source
+prefixes therefore cannot reuse a snapshot from an incompatible context.
+
+Cache restore is transactional, including imports that replace the whole lexicon.
+If a dependency or external reference cannot be restored, the original lexicon
+bytes and context state are recovered before source evaluation resumes.
 
 `:cache` and `:cache-exact` both use this module graph. The latter remains a
 compatibility command for older IDE clients; linked module hits intentionally
