@@ -119,6 +119,12 @@ Context-dependent children also record a hash of their semantic input before
 source execution. Parent edits and repeated includes with different source
 prefixes therefore cannot reuse a snapshot from an incompatible context.
 
+The server's opt-in `:load-file-progress\tPATH` command streams project activity
+in `T` frames alongside the usual `O` output, `S` status and `P` completion
+frames. It reports file loading/completion, cache restores and library imports;
+ordinary `:load-file` clients retain their existing protocol. The VS Code
+extension displays this activity and counts the remaining publication stages.
+
 Cache restore is transactional, including imports that replace the whole lexicon.
 If a dependency or external reference cannot be restored, the original lexicon
 bytes and context state are recovered before source evaluation resumes.

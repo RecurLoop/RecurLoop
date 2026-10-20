@@ -524,44 +524,52 @@ namespace recurloop {
     return consoleHighlighter_->highlight(line);
   }
 
-  SessionResponse Session::executeFile(const std::string &path, std::ostream *out, std::ostream *err) {
+  SessionResponse Session::executeFile(const std::string &path, std::ostream *out, std::ostream *err,
+                                       std::ostream *progress) {
     const std::string absolute = std::filesystem::absolute(path).lexically_normal().string();
     bool restored = false;
     bool started = false;
     SessionResponse response = runRequest([&](context::Context &context) {
+      if (progress) *progress << "Loading " << absolute << '\n' << std::flush;
       if (cacheEnabled_ && project_->restoreCacheStep(cacheState_, context, absolute)) {
         restored = true;
+        if (progress) *progress << "Restored from cache " << absolute << '\n' << std::flush;
         return;
       }
 
       std::ifstream input(absolute, std::ios::binary);
       if (!input.is_open()) THROW(, "cannot open file '" << absolute << "'")
-      if (!cacheEnabled_) {
-        executeStream(context, input, absolute, 1, 1);
-        return;
-      }
-
-      project_->beginCacheStep(cacheState_, absolute, context);
+      if (cacheEnabled_) project_->beginCacheStep(cacheState_, absolute, context);
       started = cacheState_.active;
       struct CacheObserverBridge {
         Session *session;
-      } bridge{this};
+        std::ostream *progress;
+      } bridge{this, progress};
       SourceObserverScope observer(
           &bridge,
           [](void *user, context::Context &context, std::string_view source) {
             auto *bridge = static_cast<CacheObserverBridge *>(user);
-            if (!bridge->session->project_->commitCacheNestedModule(bridge->session->cacheState_, context, source))
+            if (bridge->session->cacheEnabled_ &&
+                !bridge->session->project_->commitCacheNestedModule(bridge->session->cacheState_, context, source))
               bridge->session->project_->observeCacheSource(bridge->session->cacheState_, source);
+            if (bridge->progress) *bridge->progress << "Processed " << source << '\n' << std::flush;
           },
           [](void *user, context::Context &context, std::string_view source) {
             auto *bridge = static_cast<CacheObserverBridge *>(user);
-            if (bridge->session->project_->restoreCacheNestedModule(bridge->session->cacheState_, context, source))
+            if (bridge->progress) *bridge->progress << "Loading " << source << '\n' << std::flush;
+            if (!bridge->session->cacheEnabled_) return false;
+            if (bridge->session->project_->restoreCacheNestedModule(bridge->session->cacheState_, context, source)) {
+              if (bridge->progress) *bridge->progress << "Restored from cache " << source << '\n' << std::flush;
               return true;
+            }
             bridge->session->project_->beginCacheNestedModule(bridge->session->cacheState_, source, context);
             return false;
           },
           [](void *user, context::Context &context, std::string_view path, bool complete) {
             auto *bridge = static_cast<CacheObserverBridge *>(user);
+            if (bridge->progress)
+              *bridge->progress << (complete ? "Imported " : "Importing ") << path << '\n' << std::flush;
+            if (!bridge->session->cacheEnabled_) return;
             if (complete)
               bridge->session->project_->completeCacheImageDependency(bridge->session->cacheState_, context, path);
             else
@@ -570,12 +578,15 @@ namespace recurloop {
       executeStream(context, input, absolute, 1, 1);
     }, out, err);
 
-    if (restored) return response;
-    if (!started) return response;
-    if (response.status == 0)
-      project_->commitCacheStep(cacheState_, contextGeneration_->context());
-    else
-      project_->abortCacheStep(cacheState_);
+    if (!restored && started) {
+      if (response.status == 0) {
+        if (progress) *progress << "Saving project cache " << absolute << '\n' << std::flush;
+        project_->commitCacheStep(cacheState_, contextGeneration_->context());
+      } else {
+        project_->abortCacheStep(cacheState_);
+      }
+    }
+    if (progress) *progress << (response.status == 0 ? "Loaded " : "Failed ") << absolute << '\n' << std::flush;
     return response;
   }
 

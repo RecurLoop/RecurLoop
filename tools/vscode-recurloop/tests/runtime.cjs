@@ -38,7 +38,9 @@ const log = [];
 const output = { appendLine: text => log.push(text), append: text => log.push(text) };
 const setup = new RuntimeSetup({ globalStorageUri: { fsPath: path.join(root, 'extension-storage') },
   asAbsolutePath: relative => path.join(__dirname, '..', relative) }, output);
-const runtime = new RecurLoopRuntime(output, uri => setup.ensureExecutable(uri));
+const progress = [];
+const runtime = new RecurLoopRuntime(output, uri => setup.ensureExecutable(uri),
+  async (_uri, _title, task) => task(message => progress.push(message)));
 const project = new ProjectController(runtime);
 (async () => {
   await runtime.restart(folder.uri);
@@ -57,6 +59,11 @@ target bad { assert false }
 target cycle depends [cycle] {}
 `);
   assert.equal((await project.targets(folder.uri)).length, 4);
+  assert.ok(progress.some(message => message.includes('Loading ') && message.includes('grammar.rl')), progress.join('\n'));
+  assert.ok(progress.some(message => message.includes('Processed ') && message.includes('main.rl')), progress.join('\n'));
+  assert.ok(progress.some(message => message.startsWith('4/4 stages complete; 0 remaining')));
+  await runtime.reload(folder.uri);
+  assert.ok(progress.some(message => message.includes('Restored from cache ')), progress.join('\n'));
   await project.run(folder.uri, 'check'); // dependency state must survive in the same session
   await assert.rejects(project.run(folder.uri, 'bad'));
   await assert.rejects(project.run(folder.uri, 'cycle'), /Cyclic/);

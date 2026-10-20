@@ -45,7 +45,7 @@ namespace recurloop {
     };
 
     static CommandResult handle(Session &session, std::string_view line, std::ostream *out = nullptr,
-                                std::ostream *err = nullptr);
+                                std::ostream *err = nullptr, std::ostream *progress = nullptr);
     int runStdio();
     void openUnix();
     void removeUnixSocket() noexcept;

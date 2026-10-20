@@ -7,6 +7,7 @@ import { ProjectController, TargetRunAdapter } from './project';
 import { RecurLoopRuntime } from './runtime';
 import { RuntimeSetup } from './runtimeSetup';
 import { TerminalDefaults } from './terminalDefaults';
+import { runtimeProgress } from './progress';
 import { hasProject, projectFile, resolveExecutable, shellQuote, workspaceRoot } from './util';
 
 async function explainProjectRequirement(): Promise<void> {
@@ -81,7 +82,7 @@ function createProjectFeatures(context: vscode.ExtensionContext) {
   const output = vscode.window.createOutputChannel('RecurLoop');
   const setup = new RuntimeSetup(context, output);
   const prepareExecutable = (uri?: vscode.Uri, override?: string) => setup.ensureExecutable(uri, override);
-  const runtime = new RecurLoopRuntime(output, prepareExecutable);
+  const runtime = new RecurLoopRuntime(output, prepareExecutable, runtimeProgress(output));
   const analysis = new AnalysisController(runtime, output);
   const project = new ProjectController(runtime);
   const debugFactory = new DebugFactory(output, project);
@@ -254,6 +255,7 @@ export function activate(context: vscode.ExtensionContext): void {
       active.output.appendLine(active.runtime.info(uri));
       active.output.show(true);
     })),
+    vscode.commands.registerCommand('recurloop.showProcessingLog', () => features?.output.show(true)),
     vscode.workspace.onDidChangeConfiguration(event => {
       if (!event.affectsConfiguration('recurloop')) return;
       const active = synchronize();

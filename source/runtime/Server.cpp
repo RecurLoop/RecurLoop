@@ -51,7 +51,8 @@ namespace recurloop {
 
     class SocketOutput : public std::streambuf {
     public:
-      SocketOutput(int fd, bool framed, std::mutex &mutex) : fd_(fd), framed_(framed), mutex_(mutex) {}
+      SocketOutput(int fd, bool framed, std::mutex &mutex, char kind = 'O')
+          : fd_(fd), framed_(framed), mutex_(mutex), kind_(kind) {}
 
     protected:
       std::streamsize xsputn(const char *data, std::streamsize size) override {
@@ -60,7 +61,7 @@ namespace recurloop {
         while (written < size) {
           const auto count = std::min<std::streamsize>(size - written, 4096);
           const std::string_view chunk(data + written, static_cast<std::size_t>(count));
-          if (!(framed_ ? sendFrame(fd_, 'O', chunk) : sendBytes(fd_, chunk))) break;
+          if (!(framed_ ? sendFrame(fd_, kind_, chunk) : sendBytes(fd_, chunk))) break;
           written += count;
         }
         return written;
@@ -76,6 +77,7 @@ namespace recurloop {
       int fd_;
       bool framed_;
       std::mutex &mutex_;
+      char kind_;
     };
 
     class ConsoleFrames {
@@ -337,7 +339,8 @@ namespace recurloop {
     for (int fd : clientFds_) shutdown(fd, SHUT_RDWR);
   }
 
-  Server::CommandResult Server::handle(Session &session, std::string_view line, std::ostream *out, std::ostream *err) {
+  Server::CommandResult Server::handle(Session &session, std::string_view line, std::ostream *out, std::ostream *err,
+                                      std::ostream *progress) {
     try {
       std::string decoded;
       if (line.starts_with(":evaluate\t")) {
@@ -345,6 +348,7 @@ namespace recurloop {
         line = decoded;
       }
       constexpr std::string_view loadFilePrefix = ":load-file\t";
+      constexpr std::string_view loadProgressPrefix = ":load-file-progress\t";
       constexpr std::string_view inspectPrefix = ":inspect\t";
       constexpr std::string_view tracePrefix = ":trace\t";
       constexpr std::string_view inspectFilePrefix = ":inspect-file\t";
@@ -375,10 +379,11 @@ namespace recurloop {
         response = session.runTarget(unhex(line.substr(13)), false, out, err);
       } else if (line.starts_with(":project-debug-prepare\t")) {
         response = session.runTarget(unhex(line.substr(23)), true, out, err);
-      } else if (line.starts_with(loadFilePrefix)) {
-        const std::string_view path = line.substr(loadFilePrefix.size());
+      } else if (line.starts_with(loadFilePrefix) || line.starts_with(loadProgressPrefix)) {
+        const bool reporting = line.starts_with(loadProgressPrefix);
+        const std::string_view path = line.substr(reporting ? loadProgressPrefix.size() : loadFilePrefix.size());
         if (path.empty()) return {"load-file requires a path\nstatus=1\n", false, 1};
-        response = session.executeFile(std::string(path), out, err);
+        response = session.executeFile(std::string(path), out, err, reporting ? progress : nullptr);
       } else if (line.starts_with(inspectPrefix) || line.starts_with(tracePrefix) ||
                  line.starts_with(inspectFilePrefix) || line.starts_with(traceFilePrefix)) {
         const bool standalone = line.starts_with(inspectFilePrefix) || line.starts_with(traceFilePrefix);
@@ -568,13 +573,17 @@ namespace recurloop {
         std::mutex outputMutex;
         SocketOutput socketOutput(fd, framed, outputMutex);
         std::ostream output(&socketOutput);
+        // Only :load-file-progress opts in to T frames; existing clients keep
+        // their O/S/P protocol and program output is never parsed as progress.
+        SocketOutput progressOutput(fd, framed, outputMutex, 'T');
+        std::ostream progress(&progressOutput);
         if (interruptBuffered) {
           processes.interrupt();
           interruptBuffered = false;
         }
         auto request = std::async(std::launch::async, [&] {
           ProcessControl::Scope scope(processes);
-          return handle(*session, line, &output, &output);
+          return handle(*session, line, &output, &output, &progress);
         });
         const auto drainTerminal = [&] {
           if (processes.terminalMaster() < 0) return;

@@ -5,7 +5,8 @@ import * as path from 'path';
 import * as vscode from 'vscode';
 import { setTimeout as retryDelay } from 'timers/promises';
 import { hasProject, hexEncode, libraryArguments, projectFile, requireProject, resolveExecutable, workspaceRoot } from './util';
-import { RuntimeConnection } from './transport';
+import { RuntimeConnection, RuntimeObserver } from './transport';
+import { ReportProgress, RuntimeProgress } from './progress';
 export { projectFile } from './util';
 
 class WorkspaceRuntime implements vscode.Disposable {
@@ -26,7 +27,8 @@ class WorkspaceRuntime implements vscode.Disposable {
   private executionQueue: Promise<void> = Promise.resolve();
 
   constructor(private readonly output: vscode.OutputChannel,
-    private readonly prepareExecutable: (uri: vscode.Uri) => Promise<string>) {}
+    private readonly prepareExecutable: (uri: vscode.Uri) => Promise<string>,
+    private readonly progress: RuntimeProgress) {}
 
   public async inspect(document: vscode.TextDocument, trace = true, signal?: AbortSignal, uri = document.uri): Promise<string> {
     signal?.throwIfAborted();
@@ -185,12 +187,10 @@ class WorkspaceRuntime implements vscode.Disposable {
     await this.ensureStarted(uri);
     return this.enqueue(async () => {
       signal?.throwIfAborted();
-      const entry = projectFile(uri);
-      const commands = [':baseline', ':cache'];
-      if (fs.existsSync(entry)) commands.push(`:load-file\t${entry}`);
-      commands.push(':publish');
-      await this.request(this.socketPath!, commands, 120000, signal);
-      this.invalidateInspections();
+      await this.progress(uri, 'Reloading project', async report => {
+        await this.loadProject(uri, this.socketPath!, report, signal);
+        this.invalidateInspections();
+      });
     });
   }
 
@@ -206,13 +206,15 @@ class WorkspaceRuntime implements vscode.Disposable {
     if (this.disposed) throw new Error('RecurLoop runtime is disposed');
     if (this.starting) return this.starting;
     if (this.process && !this.process.killed && this.socketPath && fs.existsSync(this.socketPath)) return;
-    this.starting = this.start(uri).finally(() => { this.starting = undefined; });
+    this.starting = this.progress(uri, 'Starting project', report => this.start(uri, report))
+      .finally(() => { this.starting = undefined; });
     return this.starting;
   }
 
-  private async start(uri: vscode.Uri): Promise<void> {
+  private async start(uri: vscode.Uri, report: ReportProgress): Promise<void> {
     this.stop();
     const lifecycle = this.lifecycle;
+    report('Preparing runtime');
     const executable = await this.prepareExecutable(uri);
     if (this.disposed) throw new Error('RecurLoop runtime is disposed');
     if (lifecycle !== this.lifecycle) throw new Error('RecurLoop server startup cancelled');
@@ -222,7 +224,6 @@ class WorkspaceRuntime implements vscode.Disposable {
     this.socketDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'rl-vscode-'));
     const socketPath = path.join(this.socketDirectory, 'runtime.sock');
 
-    const project = projectFile(uri);
     const args = ['--library', 'project', ...libraryArguments(uri), '--project-cache',
       path.join(root, '.cache', 'recurloop'), '--serve', '--unix', socketPath, '--no-stdio'];
     this.output.appendLine(`[analysis] starting ${executable} --serve --unix ${socketPath} --no-stdio`);
@@ -260,9 +261,10 @@ class WorkspaceRuntime implements vscode.Disposable {
     try {
       // A bound socket is not proof that the server is accepting clients. Its
       // protocol greeting is the readiness signal; elapsed time never is.
+      report('Waiting for runtime connection');
       await this.waitForServer(socketPath, startup.signal);
       requireProject(uri);
-      await this.request(socketPath, [':baseline', ':cache', `:load-file\t${project}`, ':publish'], 120000, startup.signal);
+      await this.loadProject(uri, socketPath, report, startup.signal);
       this.output.appendLine('[analysis] server ready; project published');
     } catch (error) {
       this.stop();
@@ -270,6 +272,31 @@ class WorkspaceRuntime implements vscode.Disposable {
     } finally {
       if (this.startup === startup) this.startup = undefined;
     }
+  }
+
+  private async loadProject(uri: vscode.Uri, socketPath: string, report: ReportProgress, signal?: AbortSignal): Promise<void> {
+    const stages = ['Restoring baseline', 'Preparing project cache', 'Loading project files', 'Publishing project'];
+    const commands = [':baseline', ':cache', `:load-file-progress\t${projectFile(uri)}`, ':publish'];
+    let completed = 0;
+    let pending = '';
+    const status = (detail?: string) => {
+      report(`${completed}/${stages.length} stages complete; ${stages.length - completed} remaining — ${detail ?? stages[completed] ?? 'Ready'}`);
+    };
+    status();
+    await this.request(socketPath, commands, 120000, signal, {
+      output: text => { if (text) this.output.append(text); },
+      progress: text => {
+        pending += text;
+        for (;;) {
+          const end = pending.indexOf('\n');
+          if (end < 0) break;
+          const line = pending.slice(0, end);
+          pending = pending.slice(end + 1);
+          if (line) status(line);
+        }
+      },
+      completed: count => { completed = count; status(); }
+    });
   }
 
   private async waitForServer(socketPath: string, signal: AbortSignal): Promise<void> {
@@ -289,9 +316,10 @@ class WorkspaceRuntime implements vscode.Disposable {
     }
   }
 
-  private async request(socketPath: string, command: string | string[], timeoutMs?: number, signal?: AbortSignal): Promise<string> {
+  private async request(socketPath: string, command: string | string[], timeoutMs?: number, signal?: AbortSignal,
+    observer?: RuntimeObserver): Promise<string> {
     const connection = new RuntimeConnection(socketPath);
-    try { return await connection.request(Array.isArray(command) ? command : [command], timeoutMs, signal); }
+    try { return await connection.request(Array.isArray(command) ? command : [command], timeoutMs, signal, observer); }
     finally { connection.close(); }
   }
 
@@ -331,11 +359,12 @@ export class RecurLoopRuntime implements vscode.Disposable {
   private readonly workspaces = new Map<string, WorkspaceRuntime>();
   private maintenance?: Promise<void>;
   constructor(private readonly output: vscode.OutputChannel,
-    private readonly prepareExecutable: (uri: vscode.Uri) => Promise<string> = async uri => resolveExecutable(uri)) {}
+    private readonly prepareExecutable: (uri: vscode.Uri) => Promise<string> = async uri => resolveExecutable(uri),
+    private readonly progress: RuntimeProgress = async (_uri, _title, task) => task(() => {})) {}
   private runtime(uri: vscode.Uri): WorkspaceRuntime {
     const key = workspaceRoot(uri);
     let runtime = this.workspaces.get(key);
-    if (!runtime) { runtime = new WorkspaceRuntime(this.output, this.prepareExecutable); this.workspaces.set(key, runtime); }
+    if (!runtime) { runtime = new WorkspaceRuntime(this.output, this.prepareExecutable, this.progress); this.workspaces.set(key, runtime); }
     return runtime;
   }
   private afterMaintenance<T>(operation: () => Promise<T>): Promise<T> {

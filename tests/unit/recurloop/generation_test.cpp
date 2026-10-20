@@ -1114,6 +1114,33 @@ TEST(RecurloopGeneration, ProjectFileCacheWritesAndRestoresLinkedRliModules) {
   fs::remove_all(root, error);
 }
 
+TEST(RecurloopGeneration, ProjectProgressReportsIncludesWithoutChangingProgramOutput) {
+  namespace fs = std::filesystem;
+  const auto root = fs::temp_directory_path() / ("recurloop-progress-" + std::to_string(getpid()));
+  fs::remove_all(root);
+  fs::create_directories(root);
+  const auto main = root / "main.rl";
+  const auto child = root / "child.rl";
+  std::ofstream(main) << "include \"child.rl\"\nprint 42\n";
+  std::ofstream(child) << "print 41\n";
+  auto state = project();
+  auto session = state->openSession();
+  std::ostringstream progress;
+  const auto response = session->executeFile(main.string(), nullptr, nullptr, &progress);
+  EXPECT_EQ(response.status, 0) << response.error;
+  EXPECT_EQ(response.output, "41\n42\n");
+  EXPECT_NE(progress.str().find("Loading " + child.string()), std::string::npos);
+  EXPECT_NE(progress.str().find("Processed " + child.string()), std::string::npos);
+  EXPECT_NE(progress.str().find("Loaded " + main.string()), std::string::npos);
+  std::ofstream(child) << "missing_progress_phrase\n";
+  progress.str("");
+  const auto failed = session->executeFile(main.string(), nullptr, nullptr, &progress);
+  EXPECT_NE(failed.status, 0);
+  EXPECT_NE(progress.str().find("Failed " + main.string()), std::string::npos);
+  EXPECT_EQ(progress.str().find("Loaded " + main.string()), std::string::npos);
+  fs::remove_all(root);
+}
+
 TEST(RecurloopGeneration, ProjectFileCacheRestoresChildrenThatDependOnParentSourcePrefixes) {
   namespace fs = std::filesystem;
   const auto root = fs::temp_directory_path() / ("recurloop-cache-source-prefix-" + std::to_string(getpid()));
@@ -1165,15 +1192,17 @@ TEST(RecurloopGeneration, ProjectFileCacheRestoresChildrenThatDependOnParentSour
   EXPECT_EQ(changedParent->evaluate("print cached_read()").output, "63\n");
 
   // The same source path can also be entered twice with distinct prefixes.
-  std::ofstream(parent) << "var cache_prefix:i64 = 1\n"
+  // Includes see phrase definitions, while runtime locals belong to their file.
+  // The second prefix adds a constant that an older child snapshot must retain.
+  std::ofstream(parent) << "let CachePrefix = phrase { dictionary = true permanent = true }\n"
                            "include \"child.rl\"\n"
-                           "cache_prefix = 2\n"
+                           "const CachePrefix:value = 2\n"
                            "include \"child.rl\"\n";
-  std::ofstream(child) << "let cached_prefix = cache_prefix\n";
+  std::ofstream(child) << "let cached_prefix = <CachePrefix>\n";
   auto repeated = load();
-  EXPECT_EQ(repeated->evaluate("print cached_prefix").output, "2\n");
+  EXPECT_EQ(repeated->evaluate("print CachePrefix:value").output, "2\n");
   auto repeatedWarm = load();
-  EXPECT_EQ(repeatedWarm->evaluate("print cached_prefix").output, "2\n");
+  EXPECT_EQ(repeatedWarm->evaluate("print CachePrefix:value").output, "2\n");
   fs::remove_all(root);
 }
 

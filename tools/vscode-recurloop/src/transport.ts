@@ -1,4 +1,11 @@
 import * as net from 'net';
+import { StringDecoder } from 'string_decoder';
+
+export interface RuntimeObserver {
+  output?: (text: string) => void;
+  progress?: (text: string) => void;
+  completed?: (commands: number) => void;
+}
 
 /** One private server session. Callers serialize requests; cancellation destroys it. */
 export class RuntimeConnection {
@@ -36,7 +43,7 @@ export class RuntimeConnection {
     });
   }
 
-  request(commands: string[], timeoutMs?: number, signal?: AbortSignal): Promise<string> {
+  request(commands: string[], timeoutMs?: number, signal?: AbortSignal, observer?: RuntimeObserver): Promise<string> {
     if (signal?.aborted) return Promise.reject(signal.reason);
     if (this.failure) return Promise.reject(this.failure);
     if (this.receive) return Promise.reject(new Error('Concurrent request on a private RecurLoop session'));
@@ -45,6 +52,8 @@ export class RuntimeConnection {
       let status: number | undefined;
       let chunks: Buffer[] = [];
       const replies: string[] = [];
+      let outputDecoder = new StringDecoder('utf8');
+      let progressDecoder = new StringDecoder('utf8');
       const abort = () => this.close(signal!.reason);
       const timer = timeoutMs === undefined ? undefined : setTimeout(() =>
         this.close(new Error(`RecurLoop analysis request timed out after ${timeoutMs} ms`)), timeoutMs);
@@ -61,11 +70,20 @@ export class RuntimeConnection {
       this.reject = finish;
       this.begin = send;
       this.receive = (kind, payload) => {
-        if (kind === 79) chunks.push(payload);
-        else if (kind === 83 && /^-?\d+$/.test(payload.toString('ascii'))) status = Number(payload.toString('ascii'));
+        if (kind === 79) {
+          chunks.push(payload);
+          if (observer?.output) observer.output(outputDecoder.write(payload));
+        } else if (kind === 84) {
+          if (observer?.progress) observer.progress(progressDecoder.write(payload));
+        } else if (kind === 83 && /^-?\d+$/.test(payload.toString('ascii'))) status = Number(payload.toString('ascii'));
         else if (kind === 80 && !payload.length && status !== undefined) {
           const reply = Buffer.concat(chunks).toString('utf8');
+          if (observer?.output) observer.output(outputDecoder.end());
+          if (observer?.progress) observer.progress(progressDecoder.end());
+          outputDecoder = new StringDecoder('utf8');
+          progressDecoder = new StringDecoder('utf8');
           if (status !== 0) { this.close(new Error(`${reply}\nstatus=${status}`)); return; }
+          observer?.completed?.(command);
           replies.push(reply); chunks = []; status = undefined; send();
         } else this.close(new Error('Invalid RecurLoop response frame'));
       };

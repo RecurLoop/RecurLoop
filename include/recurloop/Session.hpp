@@ -43,7 +43,8 @@ namespace recurloop {
     // the published project's processing graph.
     SessionResponse inspect(std::string_view source, std::string_view path = {}, bool trace = false,
                             bool standalone = false);
-    SessionResponse executeFile(const std::string &path, std::ostream *out = nullptr, std::ostream *err = nullptr);
+    SessionResponse executeFile(const std::string &path, std::ostream *out = nullptr, std::ostream *err = nullptr,
+                                std::ostream *progress = nullptr);
     SessionResponse executeArguments(int startIndex, std::ostream *out = nullptr, std::ostream *err = nullptr);
     SessionResponse projectTargets();
     SessionResponse runTarget(std::string_view name, bool prepareDebug = false, std::ostream *out = nullptr,

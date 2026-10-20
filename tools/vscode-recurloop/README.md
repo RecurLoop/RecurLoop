@@ -276,6 +276,13 @@ For a standalone CLI installation, follow the
 | Console still sees old code | Save valid source, then enter `:refresh`; reopen after a runtime restart or update. |
 
 Open **View → Output → RecurLoop** for runtime messages in an initialized project.
+
+During project startup and reload, the status bar shows the current activity,
+completed stages and remaining stages. Click it, or run **RecurLoop: Show
+Processing Log**, to see the live log: loaded source files, cache restores,
+library imports, program output and any failures. Stage counts cover baseline,
+cache setup, source loading and publication; includes are discovered while the
+source runs, so these counts do not estimate the percentage of files or time.
 If problems persist after fixing configuration, use **RecurLoop: Restart Language Runtime**.
 
 ## Try the quick example
