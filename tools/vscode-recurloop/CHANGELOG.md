@@ -5,8 +5,8 @@
 - Show live project loading, library imports and cache restores in the RecurLoop
   output channel, with a clickable status bar showing completed and remaining
   processing stages during startup and reload.
-- Publish the verified VSIX automatically after each GitHub release using
-  Microsoft Entra ID and GitHub OIDC.
+- Attach the verified VSIX to each GitHub release for manual publication
+  through the VS Code Marketplace publisher management page.
 - Derive the extension and bundled runtime versions from the CMake release
   version, synchronizing extension manifests during compilation and packaging.
 - Restore project cache snapshots with source-dependent includes safely and
