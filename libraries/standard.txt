@@ -8,3 +8,4 @@ project
 embed
 window
 vulkan
+docs

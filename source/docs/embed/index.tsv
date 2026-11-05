@@ -1,0 +1,13 @@
+# id	title	section	file	original_source
+overview	Embedded data	Opis	overview.md	libraries/embed/README.md
+api-0000bcd38dacf498	Embed	API	api-0000bcd38dacf498.md	
+api-6e0c134d7e132678	Embed:bits	API	api-6e0c134d7e132678.md	
+api-03fbc831740aca0f	Embed:bits:(BitString*)	API	api-03fbc831740aca0f.md	
+api-502de0a785f18261	Embed:bytes	API	api-502de0a785f18261.md	
+api-16248c84061c589a	Embed:bytes:(BitString*)	API	api-16248c84061c589a.md	
+api-6e0c134d7e55a954	Embed:data	API	api-6e0c134d7e55a954.md	
+api-8eb2208ad5b12f63	Embed:data:(BitString*)	API	api-8eb2208ad5b12f63.md	
+api-dbe4f423ae35f1fc	Embed:emit_bits	API	api-dbe4f423ae35f1fc.md	
+api-a3380f23f98faa1e	Embed:emit_bits:(Context*,u8*,u64)	API	api-a3380f23f98faa1e.md	
+api-8628ee4227bfa6ed	Embed:emit_bytes	API	api-8628ee4227bfa6ed.md	
+api-17f224f3e56894c9	Embed:emit_bytes:(Context*,u8*,u64)	API	api-17f224f3e56894c9.md	

@@ -10,7 +10,7 @@ longest-prefix matching in the active dictionary. The C++ host implements the
 radix store, phrase graph, runtime context, compiler, native output, and
 command-line interface.
 
-Start with `README.md`, `docs/architecture.md`, and `docs/language.md`.
+Start with `README.md`, `docs/architecture.md`, and `source/docs/core/language.md`.
 
 ## Build and test
 
@@ -53,7 +53,7 @@ opt-in; window and Vulkan bindings are included in the standard distribution. Se
 | standard-library images only | `make libraries` |
 
 `make libraries` produces `language-kit`, `shell`, `inferred`, `http`, `gui`,
-`ide`, `project`, `embed`, `window`, and `vulkan`. `make install` installs the host and those images;
+`ide`, `project`, `embed`, `window`, `vulkan`, and `docs`. `make install` installs the host and those images;
 Clang/LLD are not bundled. The linked LLVM JIT/backend is in-process; native object/executable file output
 intentionally uses host LLD/Clang rather than bundling a platform toolchain.
 
@@ -72,7 +72,8 @@ The static-library dependency order is:
 - `tests/` — unit, feature, benchmark, and LLVM-backend tests.
 - `libraries/` — reusable RecurLoop source libraries and the semantic core.
 - `examples/` — numbered learning path, showcases, and workflow fixtures.
-- `docs/` — maintained design and language documentation.
+- `docs/` — private implementation and contributor documentation (excluded from public documentation tools).
+- `source/docs/` — public language, package and library documentation, indexed and exported by docs.rl.
 
 ## Conventions
 

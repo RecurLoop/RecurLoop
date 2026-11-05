@@ -1,0 +1,9 @@
+Closes server sockets and frees routes, limits and queue storage. Serving workers must have stopped before destruction; accepts null.
+
+## Signature
+
+```recurloop
+Http:Server:destroy(Http:Server*) -> void
+```
+
+

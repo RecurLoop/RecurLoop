@@ -26,6 +26,7 @@ static void printHelp(const char *program) {
                "  --import <path>       Import an engine image before source input\n"
                "  --library <name>      Import a library image from the library search path\n"
                "  --library-path <path> Add a library search directory for this process\n"
+               "  --docs <command>      Search, show or export documentation (implemented by docs.rl)\n"
                "  --serve               Keep the initialized project alive as a multi-client runtime\n"
                "  --unix <path>         Also serve independent sessions on a Unix socket\n"
                "  --connect <path>      Attach an interactive console to a Unix socket\n"
@@ -51,7 +52,7 @@ static bool handleMetaArguments(const char *program, const int argc, char **argv
   for (int i = 1; i < argc; ++i) {
     std::string_view arg = argv[i];
 
-    if (arg == "--") break;
+    if (arg == "--" || arg == "--docs") break;
 
     if (arg == "-h" || arg == "--help") {
       printHelp(program);
@@ -62,7 +63,7 @@ static bool handleMetaArguments(const char *program, const int argc, char **argv
   for (int i = 1; i < argc; ++i) {
     std::string_view arg = argv[i];
 
-    if (arg == "--") break;
+    if (arg == "--" || arg == "--docs") break;
 
     if (arg == "-v" || arg == "--version") {
       printVersion();
@@ -105,6 +106,23 @@ namespace {
         if (++i >= argc) THROW(, argument << " requires a value")
         (argument == "--project-root" ? result.projectRoot : result.debugTerminal) = argv[i];
         continue;
+      }
+      if (!runtimeOnly && argument == "--docs") {
+        // Only route the flag. Argument parsing and all documentation behavior live in docs.rl.
+        std::size_t startup = 1;
+        while (startup < result.runtimeArguments.size()) {
+          const auto &option = result.runtimeArguments[startup];
+          if (option == "--reset") {
+            ++startup;
+            continue;
+          }
+          if (option != "--library-path" && option != "--library" && option != "--import") break;
+          startup += 2;
+        }
+        result.runtimeArguments.insert(result.runtimeArguments.begin() + startup, {"--library", "docs"});
+        result.runtimeArguments.insert(result.runtimeArguments.end(), {"--string", "Docs:command_line", "--"});
+        while (++i < argc) result.runtimeArguments.emplace_back(argv[i]);
+        break;
       }
       if (!runtimeOnly && argument == "--project") {
         if (++i >= argc) THROW(, "--project requires a path")

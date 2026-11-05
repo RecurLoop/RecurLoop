@@ -8,5 +8,6 @@ target docs {
 target docs-check {
     include "tools/documentation-export.rl"
     include "tests/tools/documentation-export.rl"
-    assert DocsTests:run() == 0
+    include "tests/tools/docs-library.rl"
+    assert DocsTests:all() == 0
 }

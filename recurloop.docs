@@ -1,0 +1,6 @@
+# Portable documentation metadata; paths are relative to this repository.
+name=core
+version=0.2.11
+directory=source/docs/core
+repository=https://github.com/RecurLoop/RecurLoop
+entry=recurloop.project.rl

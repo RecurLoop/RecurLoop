@@ -11,6 +11,7 @@ Permanent namespace phrases declare their documentation inside `phrase { ... }`.
 
 - `recurloop/` — semantic core used to build the embedded `core.rli`.
 - `language-kit/` — shared source-level language construction helpers.
+- `docs/` — public documentation catalogs, search, editing, portable export and the `--docs` CLI.
 - `shell/` — shell language library built on LanguageKit.
 - `inferred/` — inferred-language library built on LanguageKit.
 - `http/` — HTTP language library built on LanguageKit.

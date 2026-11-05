@@ -513,6 +513,10 @@ recurloop_add_language_library(shell
 recurloop_add_language_library(inferred
     "${CMAKE_CURRENT_SOURCE_DIR}/libraries/inferred/library.rl"
     "${RECURLOOP_INFERRED_IMAGE}")
+recurloop_add_language_library(docs
+    "${CMAKE_CURRENT_SOURCE_DIR}/libraries/docs/library.rl"
+    "${RECURLOOP_LIBRARY_OUTPUT_DIR}/docs.rli"
+    shell)
 recurloop_add_language_library(http
     "${CMAKE_CURRENT_SOURCE_DIR}/libraries/http/library.rl"
     "${RECURLOOP_HTTP_IMAGE}")
@@ -582,6 +586,7 @@ install(FILES ${RECURLOOP_STANDARD_LIBRARY_IMAGES}
 install(FILES "${RECURLOOP_STANDARD_LIBRARY_MANIFEST}"
     DESTINATION "${CMAKE_INSTALL_DATADIR}/recurloop"
     RENAME standard-libraries.txt COMPONENT Libraries)
+install(DIRECTORY source/docs/ DESTINATION "${CMAKE_INSTALL_DATADIR}/recurloop/docs" COMPONENT Documentation)
 install(FILES LICENSE README.md TRADEMARKS.md THIRD-PARTY.md docs/releases.md
     DESTINATION "${CMAKE_INSTALL_DOCDIR}"
     COMPONENT Documentation)

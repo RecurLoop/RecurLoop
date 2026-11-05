@@ -22,7 +22,7 @@ phrase fn_cc83a0 = "fn" in root {
 phrase forward = "forward" in root {
   kind "keyword"
   color "#569CD6"
-  docs "```recurloop\nforward name(parameter:type, ...) -> result\n```\n\nDeclares a function before its definition. The later `fn` must match the signature.\n\n**Example**\n\n```recurloop\nforward odd(n:i64) -> i64\n```"
+  docs "Declares a function before its definition. The later `fn` must match the signature."
   type phrase_types_elaborate
   action host "fn.forward"
   language compiler
@@ -31,7 +31,7 @@ phrase forward = "forward" in root {
 phrase function = "function" in root {
   kind "keyword"
   color "#569CD6"
-  docs "```recurloop\nfunction name(parameter:type, ...) -> result abi convention\n```\n\nAttaches a typed call signature to an existing invokable phrase with a native module, such as one defined by `asm`. Use `fn` to write a new function."
+  docs "Attaches a typed call signature to an existing invokable phrase with a native module, such as one defined by `asm`. Use `fn` to write a new function."
   type phrase_types_elaborate
   action host "typed.function"
   language compiler
@@ -40,7 +40,7 @@ phrase function = "function" in root {
 phrase method = "method" in root {
   kind "keyword"
   color "#569CD6"
-  docs "```recurloop\nmethod Record name(self:Record*, ...) -> result abi convention\n```\n\nDeclares a typed method contract on a record. The first parameter is the receiver; invoke it as `instance.name(arguments)`."
+  docs "Declares a typed method contract on a record. The first parameter is the receiver; invoke it as `instance.name(arguments)`."
   type phrase_types_elaborate
   action host "typed.method"
   language compiler
@@ -72,7 +72,7 @@ phrase fn_grammar_symbols = "symbols" in fn_grammar {
 }
 
 phrase fn_grammar_intrinsics_ampersand = "&" in fn_grammar_intrinsics {
-  docs "```recurloop\n&target\n```\n\nReturns the address of an addressable native value."
+  docs "Returns the address of an addressable native value."
   dictionary
   prototype ampersand
   type phrase_types_data
@@ -80,7 +80,7 @@ phrase fn_grammar_intrinsics_ampersand = "&" in fn_grammar_intrinsics {
 }
 
 phrase fn_grammar_intrinsics_star = "*" in fn_grammar_intrinsics {
-  docs "```recurloop\n*pointer\n```\n\nReads the pointed-to native value; use `*pointer = value` to write it."
+  docs "Reads the pointed-to native value; use `*pointer = value` to write it."
   dictionary
   prototype star
   type phrase_types_data
@@ -109,21 +109,21 @@ phrase fn_grammar_intrinsics_sizeof = "sizeof" in fn_grammar_intrinsics {
 }
 
 phrase fn_grammar_postfix_lparen = "(" in fn_grammar_postfix {
-  docs "```recurloop\nfunction(arguments)\n```\n\nCalls a native function or function value with matching typed arguments."
+  docs "Calls a native function or function value with matching typed arguments."
   prototype lparen
   type phrase_types_callable
   action host "fn.postfix.call"
 }
 
 phrase fn_grammar_postfix_dot = "." in fn_grammar_postfix {
-  docs "```recurloop\ninstance.field\ninstance.method(arguments)\n```\n\nAccesses a record field or invokes its method."
+  docs "Accesses a record field or invokes its method."
   prototype dot
   type phrase_types_callable
   action host "fn.postfix.member"
 }
 
 phrase fn_grammar_postfix_question = "?" in fn_grammar_postfix {
-  docs "```recurloop\npointer_expression?\n```\n\nPropagates a null pointer by returning null from the current pointer-returning function."
+  docs "Propagates a null pointer by returning null from the current pointer-returning function."
   prototype question
   type phrase_types_callable
   action host "fn.postfix.propagate"
@@ -136,7 +136,7 @@ phrase fn_grammar_postfix_colon = ":" in fn_grammar_postfix {
 }
 
 phrase fn_grammar_postfix_lbracket = "[" in fn_grammar_postfix {
-  docs "```recurloop\narray_or_pointer[index]\n```\n\nAccesses a native element by zero-based index."
+  docs "Accesses a native element by zero-based index."
   prototype lbracket_862dc1
   type phrase_types_callable
   action host "fn.postfix.index"

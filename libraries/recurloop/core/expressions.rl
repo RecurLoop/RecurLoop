@@ -14,7 +14,7 @@ phrase expression_statement = "Core:expression_statement" in root {
 phrase assert = "assert" in root {
   kind "keyword"
   color "#C586C0"
-  docs "```recurloop\nassert condition\n```\n\nChecks a runtime condition and reports an error if it is false.\n\n**Example**\n\n```recurloop\nassert answer == 42\n```"
+  docs "Checks a runtime condition and reports an error if it is false."
   type phrase_types_elaborate
   action host "expressions.assert"
   language compiler
@@ -23,7 +23,7 @@ phrase assert = "assert" in root {
 phrase const = "const" in root {
   kind "keyword"
   color "#569CD6"
-  docs "```recurloop\nconst name = expression\n```\n\nDefines an immutable runtime value. In an `fn` body, an optional `:type` selects the native type.\n\n**Example**\n\n```recurloop\nconst answer = 6 * 7\n```"
+  docs "Defines an immutable runtime value. In an `fn` body, an optional `:type` selects the native type."
   type phrase_types_elaborate
   action host "expressions.constant"
   language compiler
@@ -32,7 +32,7 @@ phrase const = "const" in root {
 phrase print = "print" in root {
   kind "function"
   color "#DCDCAA"
-  docs "```recurloop\nprint expression\n```\n\nFormats a runtime expression and writes it followed by a newline.\n\n**Example**\n\n```recurloop\nprint \"Answer: \" + str(42)\n```"
+  docs "Formats a runtime expression and writes it followed by a newline."
   type phrase_types_elaborate
   action host "expressions.print"
   language compiler
@@ -41,7 +41,7 @@ phrase print = "print" in root {
 phrase set = "set" in root {
   kind "keyword"
   color "#C586C0"
-  docs "```recurloop\nset target = expression\n```\n\nUpdates an existing binding, writable native target or phrase field. Plain `target = expression` also assigns runtime values.\n\n**Example**\n\n```recurloop\nset count = count + 1\nset branch.docs = \"Conditional branch.\"\n```"
+  docs "Updates an existing binding, writable native target or phrase field. Plain `target = expression` also assigns runtime values."
   type phrase_types_elaborate
   action host "expressions.assign"
   language compiler
@@ -50,7 +50,7 @@ phrase set = "set" in root {
 phrase var = "var" in root {
   kind "keyword"
   color "#569CD6"
-  docs "```recurloop\nvar name = expression\n```\n\nDefines a mutable runtime value. In an `fn` body, an optional `:type` selects the native type.\n\n**Example**\n\n```recurloop\nvar count = 0\ncount += 1\n```"
+  docs "Defines a mutable runtime value. In an `fn` body, an optional `:type` selects the native type."
   type phrase_types_elaborate
   action host "expressions.variable"
   language compiler
@@ -102,7 +102,7 @@ phrase expressions_symbols = "symbols" in expressions {
 }
 
 phrase expressions_assignments_percent_equals = "%=" in expressions_assignments {
-  docs "```recurloop\ntarget %= expression\n```\n\nApplies `%` to the target and expression, then stores the result in the target."
+  docs "Applies `%` to the target and expression, then stores the result in the target."
   dictionary
   prototype percent_equals
   type phrase_types_data
@@ -110,7 +110,7 @@ phrase expressions_assignments_percent_equals = "%=" in expressions_assignments 
 }
 
 phrase expressions_assignments_star_equals = "*=" in expressions_assignments {
-  docs "```recurloop\ntarget *= expression\n```\n\nApplies `*` to the target and expression, then stores the result in the target."
+  docs "Applies `*` to the target and expression, then stores the result in the target."
   dictionary
   prototype star_equals
   type phrase_types_data
@@ -118,7 +118,7 @@ phrase expressions_assignments_star_equals = "*=" in expressions_assignments {
 }
 
 phrase expressions_assignments_plus_equals = "+=" in expressions_assignments {
-  docs "```recurloop\ntarget += expression\n```\n\nApplies `+` to the target and expression, then stores the result in the target."
+  docs "Applies `+` to the target and expression, then stores the result in the target."
   dictionary
   prototype plus_equals
   type phrase_types_data
@@ -126,7 +126,7 @@ phrase expressions_assignments_plus_equals = "+=" in expressions_assignments {
 }
 
 phrase expressions_assignments_minus_equals = "-=" in expressions_assignments {
-  docs "```recurloop\ntarget -= expression\n```\n\nApplies `-` to the target and expression, then stores the result in the target."
+  docs "Applies `-` to the target and expression, then stores the result in the target."
   dictionary
   prototype minus_equals
   type phrase_types_data
@@ -134,7 +134,7 @@ phrase expressions_assignments_minus_equals = "-=" in expressions_assignments {
 }
 
 phrase expressions_assignments_slash_equals = "/=" in expressions_assignments {
-  docs "```recurloop\ntarget /= expression\n```\n\nApplies `/` to the target and expression, then stores the result in the target."
+  docs "Applies `/` to the target and expression, then stores the result in the target."
   dictionary
   prototype slash_equals
   type phrase_types_data
@@ -142,7 +142,7 @@ phrase expressions_assignments_slash_equals = "/=" in expressions_assignments {
 }
 
 phrase expressions_assignments_equals = "=" in expressions_assignments {
-  docs "```recurloop\ntarget = expression\n```\n\nAssigns a value to a mutable target."
+  docs "Assigns a value to a mutable target."
   dictionary
   prototype equals
   type phrase_types_data
@@ -222,7 +222,7 @@ phrase expressions_builtins_value = "value" in expressions_builtins {
 }
 
 phrase expressions_infix_not_equal = "!=" in expressions_infix {
-  docs "```recurloop\nleft != right\n```\n\nTests inequality."
+  docs "Tests inequality."
   dictionary
   prototype not_equal
   type phrase_types_callable
@@ -231,7 +231,7 @@ phrase expressions_infix_not_equal = "!=" in expressions_infix {
 }
 
 phrase expressions_infix_percent = "%" in expressions_infix {
-  docs "```recurloop\nleft % right\n```\n\nComputes the remainder."
+  docs "Computes the remainder."
   dictionary
   prototype percent
   type phrase_types_callable
@@ -240,7 +240,7 @@ phrase expressions_infix_percent = "%" in expressions_infix {
 }
 
 phrase expressions_infix_and_and = "&&" in expressions_infix {
-  docs "```recurloop\nleft && right\n```\n\nLogical AND; skips the right operand when the left is false."
+  docs "Logical AND; skips the right operand when the left is false."
   dictionary
   prototype and_and
   type phrase_types_callable
@@ -249,7 +249,7 @@ phrase expressions_infix_and_and = "&&" in expressions_infix {
 }
 
 phrase expressions_infix_star = "*" in expressions_infix {
-  docs "```recurloop\nleft * right\n```\n\nMultiplies numeric operands."
+  docs "Multiplies numeric operands."
   dictionary
   prototype star
   type phrase_types_callable
@@ -258,7 +258,7 @@ phrase expressions_infix_star = "*" in expressions_infix {
 }
 
 phrase expressions_infix_plus = "+" in expressions_infix {
-  docs "```recurloop\nleft + right\n```\n\nAdds numbers; runtime strings concatenate."
+  docs "Adds numbers; runtime strings concatenate."
   dictionary
   prototype plus
   type phrase_types_callable
@@ -267,7 +267,7 @@ phrase expressions_infix_plus = "+" in expressions_infix {
 }
 
 phrase expressions_infix_minus = "-" in expressions_infix {
-  docs "```recurloop\nleft - right\n```\n\nSubtracts the right operand from the left."
+  docs "Subtracts the right operand from the left."
   dictionary
   prototype minus
   type phrase_types_callable
@@ -276,7 +276,7 @@ phrase expressions_infix_minus = "-" in expressions_infix {
 }
 
 phrase expressions_infix_slash = "/" in expressions_infix {
-  docs "```recurloop\nleft / right\n```\n\nDivides numeric operands."
+  docs "Divides numeric operands."
   dictionary
   prototype slash
   type phrase_types_callable
@@ -285,7 +285,7 @@ phrase expressions_infix_slash = "/" in expressions_infix {
 }
 
 phrase expressions_infix_less = "<" in expressions_infix {
-  docs "```recurloop\nleft < right\n```\n\nTests whether the left operand is smaller."
+  docs "Tests whether the left operand is smaller."
   dictionary
   prototype less
   type phrase_types_callable
@@ -294,7 +294,7 @@ phrase expressions_infix_less = "<" in expressions_infix {
 }
 
 phrase expressions_infix_less_equal = "<=" in expressions_infix {
-  docs "```recurloop\nleft <= right\n```\n\nTests whether the left operand is smaller or equal."
+  docs "Tests whether the left operand is smaller or equal."
   dictionary
   prototype less_equal
   type phrase_types_callable
@@ -303,7 +303,7 @@ phrase expressions_infix_less_equal = "<=" in expressions_infix {
 }
 
 phrase expressions_infix_equal_equal = "==" in expressions_infix {
-  docs "```recurloop\nleft == right\n```\n\nTests equality."
+  docs "Tests equality."
   dictionary
   prototype equal_equal
   type phrase_types_callable
@@ -312,7 +312,7 @@ phrase expressions_infix_equal_equal = "==" in expressions_infix {
 }
 
 phrase expressions_infix_greater = ">" in expressions_infix {
-  docs "```recurloop\nleft > right\n```\n\nTests whether the left operand is larger."
+  docs "Tests whether the left operand is larger."
   dictionary
   prototype greater
   type phrase_types_callable
@@ -321,7 +321,7 @@ phrase expressions_infix_greater = ">" in expressions_infix {
 }
 
 phrase expressions_infix_greater_equal = ">=" in expressions_infix {
-  docs "```recurloop\nleft >= right\n```\n\nTests whether the left operand is larger or equal."
+  docs "Tests whether the left operand is larger or equal."
   dictionary
   prototype greater_equal
   type phrase_types_callable
@@ -330,7 +330,7 @@ phrase expressions_infix_greater_equal = ">=" in expressions_infix {
 }
 
 phrase expressions_infix_or_or = "||" in expressions_infix {
-  docs "```recurloop\nleft || right\n```\n\nLogical OR; skips the right operand when the left is true."
+  docs "Logical OR; skips the right operand when the left is true."
   dictionary
   prototype or_or
   type phrase_types_callable
@@ -363,7 +363,7 @@ phrase expressions_literals_true = "true" in expressions_literals {
 }
 
 phrase expressions_prefix_not = "!" in expressions_prefix {
-  docs "```recurloop\n!expression\n```\n\nNegates the truth value."
+  docs "Negates the truth value."
   dictionary
   prototype not
   type phrase_types_callable
@@ -372,7 +372,7 @@ phrase expressions_prefix_not = "!" in expressions_prefix {
 }
 
 phrase expressions_prefix_plus = "+" in expressions_prefix {
-  docs "```recurloop\n+expression\n```\n\nUnary numeric identity."
+  docs "Unary numeric identity."
   dictionary
   prototype plus
   type phrase_types_callable
@@ -381,7 +381,7 @@ phrase expressions_prefix_plus = "+" in expressions_prefix {
 }
 
 phrase expressions_prefix_minus = "-" in expressions_prefix {
-  docs "```recurloop\n-expression\n```\n\nNegates a numeric value."
+  docs "Negates a numeric value."
   dictionary
   prototype minus
   type phrase_types_callable
@@ -396,7 +396,7 @@ phrase expressions_primary_lparen = "(" in expressions_primary {
 }
 
 phrase expressions_postfix_colon = ":" in expressions_postfix {
-  docs "```recurloop\nNamespace:name\n```\n\nLooks up a phrase through nested dictionaries."
+  docs "Looks up a phrase through nested dictionaries."
   prototype colon
   type phrase_types_callable
   action host "expressions.postfix.qualify"
@@ -616,7 +616,7 @@ phrase expressions_prefix_minus_fn_infer = "\0fn-infer" in expressions_prefix_mi
 
 // Integer bitwise operators.
 phrase expressions_infix_bit_and = "&" in expressions_infix {
-  docs "```recurloop\nleft & right\n```\n\nCombines integer bits with AND."
+  docs "Combines integer bits with AND."
   dictionary
   prototype ampersand
   type phrase_types_callable
@@ -635,7 +635,7 @@ phrase expressions_infix_bit_and_fn_infer = "\0fn-infer" in expressions_infix_bi
 }
 
 phrase expressions_assignments_bit_and_equals = "&=" in expressions_assignments {
-  docs "```recurloop\ntarget &= expression\n```\n\nApplies `&` to the target and expression, then stores the result in the target."
+  docs "Applies `&` to the target and expression, then stores the result in the target."
   dictionary
   prototype bit_and_equals
   type phrase_types_data
@@ -648,7 +648,7 @@ phrase expressions_assignments_bit_and_equals_fn_assign = "\0fn-assign" in expre
 }
 
 phrase expressions_infix_bit_or = "|" in expressions_infix {
-  docs "```recurloop\nleft | right\n```\n\nCombines integer bits with OR."
+  docs "Combines integer bits with OR."
   dictionary
   prototype bit_pipe
   type phrase_types_callable
@@ -667,7 +667,7 @@ phrase expressions_infix_bit_or_fn_infer = "\0fn-infer" in expressions_infix_bit
 }
 
 phrase expressions_assignments_bit_or_equals = "|=" in expressions_assignments {
-  docs "```recurloop\ntarget |= expression\n```\n\nApplies `|` to the target and expression, then stores the result in the target."
+  docs "Applies `|` to the target and expression, then stores the result in the target."
   dictionary
   prototype bit_or_equals
   type phrase_types_data
@@ -680,7 +680,7 @@ phrase expressions_assignments_bit_or_equals_fn_assign = "\0fn-assign" in expres
 }
 
 phrase expressions_infix_bit_xor = "^" in expressions_infix {
-  docs "```recurloop\nleft ^ right\n```\n\nCombines integer bits with XOR."
+  docs "Combines integer bits with XOR."
   dictionary
   prototype bit_caret
   type phrase_types_callable
@@ -699,7 +699,7 @@ phrase expressions_infix_bit_xor_fn_infer = "\0fn-infer" in expressions_infix_bi
 }
 
 phrase expressions_assignments_bit_xor_equals = "^=" in expressions_assignments {
-  docs "```recurloop\ntarget ^= expression\n```\n\nApplies `^` to the target and expression, then stores the result in the target."
+  docs "Applies `^` to the target and expression, then stores the result in the target."
   dictionary
   prototype bit_xor_equals
   type phrase_types_data
@@ -712,7 +712,7 @@ phrase expressions_assignments_bit_xor_equals_fn_assign = "\0fn-assign" in expre
 }
 
 phrase expressions_infix_shift_left = "<<" in expressions_infix {
-  docs "```recurloop\nleft << right\n```\n\nShifts integer bits left, discarding bits past the width."
+  docs "Shifts integer bits left, discarding bits past the width."
   dictionary
   prototype bit_shift_left
   type phrase_types_callable
@@ -731,7 +731,7 @@ phrase expressions_infix_shift_left_fn_infer = "\0fn-infer" in expressions_infix
 }
 
 phrase expressions_assignments_shift_left_equals = "<<=" in expressions_assignments {
-  docs "```recurloop\ntarget <<= expression\n```\n\nApplies `<<` to the target and expression, then stores the result in the target."
+  docs "Applies `<<` to the target and expression, then stores the result in the target."
   dictionary
   prototype bit_shift_left_equals
   type phrase_types_data
@@ -744,7 +744,7 @@ phrase expressions_assignments_shift_left_equals_fn_assign = "\0fn-assign" in ex
 }
 
 phrase expressions_infix_shift_right = ">>" in expressions_infix {
-  docs "```recurloop\nleft >> right\n```\n\nShifts right arithmetically for signed types and logically for unsigned types."
+  docs "Shifts right arithmetically for signed types and logically for unsigned types."
   dictionary
   prototype bit_shift_right
   type phrase_types_callable
@@ -763,7 +763,7 @@ phrase expressions_infix_shift_right_fn_infer = "\0fn-infer" in expressions_infi
 }
 
 phrase expressions_assignments_shift_right_equals = ">>=" in expressions_assignments {
-  docs "```recurloop\ntarget >>= expression\n```\n\nApplies `>>` to the target and expression, then stores the result in the target."
+  docs "Applies `>>` to the target and expression, then stores the result in the target."
   dictionary
   prototype bit_shift_right_equals
   type phrase_types_data
@@ -776,7 +776,7 @@ phrase expressions_assignments_shift_right_equals_fn_assign = "\0fn-assign" in e
 }
 
 phrase expressions_prefix_bit_not = "~" in expressions_prefix {
-  docs "```recurloop\n~expression\n```\n\nInverts all integer bits."
+  docs "Inverts all integer bits."
   dictionary
   prototype bit_tilde
   type phrase_types_callable
