@@ -1151,3 +1151,31 @@ or `--no-core` mode. The final runtime registers process-local Host ABI action
 names, restores the embedded source-built core image, and binds native
 ContextAPI addresses against that restored state. The seed language code is
 linked only into the private build tool under `bootstrap/`.
+
+## Portable documentation export
+
+The `docs` project target is implemented in `tools/documentation-export.rl`.
+`make docs` exports maintained guides and runtime-resolved phrase documentation
+(including inherited help, examples, signatures and arguments) into versioned JSON
+bundles under `build/documentation`. It reads the existing `--trace` protocol; it
+does not parse `.rl` source or invent missing API descriptions.
+
+To copy the export into the website checkout:
+
+```bash
+make docs DOCS_OUTPUT=../larva/frontend/public/docs-data
+```
+
+The manifest records the source commit and engine version. The portable v1 document
+format contains `schema_version`, `package` (`name`, `version`, optional
+`repository_url`) and `pages` (`id`, `title`, `section`, Markdown `body`, optional
+`source_path`). Community packages can publish the same format at an HTTPS URL
+with browser CORS enabled, for example a commit-pinned raw GitHub URL. Repository
+source, `.rli` images and documentation stay with their authors. Website publication
+requires administrator approval. `make docs-check` runs the RecurLoop regression
+checks. The same targets are available directly:
+
+```bash
+build/Release/bin/recurloop --project recurloop.project.rl --target docs-check
+RECURLOOP_DOCS_OUTPUT=../larva/frontend/public/docs-data build/Release/bin/recurloop --project recurloop.project.rl --target docs
+```

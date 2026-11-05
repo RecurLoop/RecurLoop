@@ -4,12 +4,13 @@ RECURLOOP := build/Release/bin/recurloop
 EXAMPLE ?=
 ARGS ?= --file program.rl.example
 BUNDLE ?= recurloop-work.zip
+DOCS_OUTPUT ?= build/documentation
 PREFIX ?=
 VSCODE_EXTENSION_DIR := tools/vscode-recurloop
 
 RELEASE_BUILD_FILE := build/Release/build.ninja
 
-.PHONY: help build release check test verify libraries graphics-libraries install vscode-extension install-vscode-extension run list-examples example examples bundle benchmark reconfigure clean package llvm toolchain
+.PHONY: docs docs-check help build release check test verify libraries graphics-libraries install vscode-extension install-vscode-extension run list-examples example examples bundle benchmark reconfigure clean package llvm toolchain
 
 help:
 	@echo 'RecurLoop'
@@ -20,6 +21,8 @@ help:
 	@echo '  make package      Build and verify a complete relocatable release archive'
 	@echo '  make llvm         Download/verify the official LLVM archive into .cache/deps'
 	@echo '  make libraries    Build standard .rli libraries'
+	@echo '  make docs         Export guides and runtime-resolved library help as JSON'
+	@echo '  make docs-check   Test the portable documentation exporter'
 	@echo '  make vscode-extension  Build the VS Code extension (.vsix; Node.js 22+)'
 	@echo '  make graphics-libraries  Build optional shader compiler plus window/Vulkan images'
 	@echo '  make clean        Remove build directories'
@@ -164,3 +167,10 @@ benchmark:
 clean:
 	@echo '[clean] build directories'
 	@cmake -E rm -rf build/Release build/Debug build/Benchmark build/Check build/Verify
+
+# Portable documents consumed by recurloop.org and third-party documentation readers.
+docs: libraries docs-check
+	@RECURLOOP_DOCS_OUTPUT="$(DOCS_OUTPUT)" "$(RECURLOOP)" --project recurloop.project.rl --target docs
+
+docs-check: libraries
+	@"$(RECURLOOP)" --project recurloop.project.rl --target docs-check
