@@ -146,8 +146,12 @@ let Docs:Build:export_scope = fn (root:u8*, output:u8*, scope:u8*, version:u8*, 
     let store = Docs:new(scope, version, "https://github.com/RecurLoop/RecurLoop")
     if !store { return 1 }; defer Docs:destroy(store)
     free(store.revision); store.revision = Docs:copy(revision)
-    let directory = Docs:join("source/docs", scope); defer free(directory)
-    if !Docs:load_directory(store, root, directory, scope) { return 2 }
+    var package = Docs:copy(root)
+    if strcmp(scope, "core") != 0 {
+        let libraries = Docs:join(root, "libraries")
+        free(package); package = Docs:join(libraries, scope); free(libraries)
+    }; defer free(package)
+    if !Docs:load_package(store, package, "") { return 2 }
     let entry = Docs:join(root, ".cache/docs-export/recurloop.project.rl"); defer free(entry)
     var library = scope; if strcmp(scope, "core") == 0 { library = "project" }
     let trace = Docs:trace(entry, library)

@@ -8,6 +8,9 @@ Describe what a function does, notable return values, and ownership of returned
 resources; avoid repeating the signature. Set metadata before exporting the
 library image and, in language extensions, before `languagekit_native_end`.
 Permanent namespace phrases declare their documentation inside `phrase { ... }`.
+Extended manuals are .rl objects in each library’s own `docs/` directory,
+configured by its `recurloop.docs`. Keep those manuals with the library when
+extracting it into a separate repository; `source/docs/core/` is for the language.
 
 - `recurloop/` — semantic core used to build the embedded `core.rli`.
 - `language-kit/` — shared source-level language construction helpers.
@@ -16,7 +19,7 @@ Permanent namespace phrases declare their documentation inside `phrase { ... }`.
 - `inferred/` — inferred-language library built on LanguageKit.
 - `http/` — HTTP language library built on LanguageKit.
 - `gui/` — source-defined application GUI API: windows, layout, widgets, events, timers and shortcuts. GTK3 is currently a replaceable private backend.
-- `ide.rl` — GUI-independent IDE runtime: clean-process hot reload, Unix-runtime sessions, inotify and persistent terminal models. The concrete IDE UI lives in `examples/07-workflows/ide/*.rl`.
+- `ide/` — GUI-independent IDE runtime: clean-process hot reload, Unix-runtime sessions, inotify and persistent terminal models. The concrete IDE UI lives in `examples/07-workflows/ide/*.rl`.
 - `embed/` — generic compile-time binary embedding built on native `bits` literals.
 - `bitwise/` — optional 64-bit bitwise functions implemented with RecurLoop `asm`.
 - `shaders/` — optional GLSL/HLSL -> SPIR-V + native SPIR-V builder.

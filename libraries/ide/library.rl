@@ -3422,5 +3422,5 @@ set IDE:intelligence_refresh.docs = "Refreshes the source-inspection runtime aga
 set IDE:intelligence_analyze.docs = "Inspects source for a path using the project's runtime environment. Returns an allocated protocol response; release with free."
 
 languagekit_native_end
-include "build/export.rl"
+include "../build/export.rl"
 __recurloop_export_library

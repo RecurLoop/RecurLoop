@@ -1155,7 +1155,8 @@ linked only into the private build tool under `bootstrap/`.
 ## Documentation objects and generated artifacts
 
 Public phrase descriptions belong on the phrase's `.docs` field. Extended
-usage information is authored as RecurLoop objects in `source/docs/`:
+usage information is authored as RecurLoop objects: language guides in
+`source/docs/core/`, and each library’s manuals in `libraries/<name>/docs/`:
 
 ```recurloop
 let Docs:Pages:example = [

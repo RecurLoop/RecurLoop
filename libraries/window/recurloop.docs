@@ -1,0 +1,6 @@
+name=window
+version=runtime
+directory=docs
+repository=https://github.com/RecurLoop/RecurLoop
+repository-directory=libraries/window
+image=window

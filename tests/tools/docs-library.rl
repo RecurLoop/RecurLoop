@@ -58,6 +58,27 @@ let DocsTests:source_packages = fn () -> i64 {
     if Docs:search(override, "rootrichuniquemarker", cast(Docs:Entry*, 0)) { return 8 }
     return 0
 }
+// Manuals follow their library, including when copied into a separate source tree.
+let DocsTests:library_manuals = fn () -> i64 {
+    let store = Docs:load_options("libraries/ide", "", 1)
+    if !store { return 1 }; defer Docs:destroy(store)
+    let id = Docs:page_id("IDE"); defer free(id)
+    let entry = Docs:find(store, "ide", id)
+    if store.error || !entry || !strstr(entry.body, "Source intelligence") || Docs:empty(entry.inline_docs) { return 2 }
+    if strcmp(entry.source_path, "libraries/ide/docs/usage.rl") != 0 { return 3 }
+    if access("source/docs/ide", 0) == 0 { return 4 }
+    let copied = run mkdir -p .cache/docs-export/detached-ide/docs
+    if copied != 0 { return 5 }
+    let source = Docs:read_file("libraries/ide/docs/usage.rl"); if !source { return 6 }; defer free(source)
+    if !Docs:write_file(".cache/docs-export/detached-ide/docs/usage.rl", source) { return 7 }
+    if !Docs:write_file(".cache/docs-export/detached-ide/recurloop.docs", "name=ide\nversion=runtime\ndirectory=docs\nrepository=https://example.org/ide\nimage=ide\n") { return 8 }
+    let detached = Docs:load_options(".cache/docs-export/detached-ide", "", 0)
+    if !detached { return 9 }; defer Docs:destroy(detached)
+    let manual = Docs:find(detached, "ide", id)
+    if detached.error || !manual || strcmp(manual.body, entry.body) != 0 || Docs:empty(manual.inline_docs) { return 10 }
+    if strcmp(manual.source_path, "docs/usage.rl") != 0 || strcmp(manual.repository, "https://example.org/ide") != 0 { return 11 }
+    return 0
+}
 let DocsTests:cli_exports = fn () -> i64 {
     let executable = Docs:executable(); if !executable { return 1 }; defer free(executable)
     let bindir = Docs:parent(executable)
@@ -81,6 +102,7 @@ let DocsTests:all = fn () -> i64 {
     let json = DocsTests:json_reader(); if json != 0 { printf("[docs-check] JSON reader: %ld\n", json); return json }
     let index = DocsTests:index_roundtrip(); if index != 0 { printf("[docs-check] source/index roundtrip: %ld\n", index); return index }
     let packages = DocsTests:source_packages(); if packages != 0 { printf("[docs-check] source packages: %ld\n", packages); return packages }
+    let manuals = DocsTests:library_manuals(); if manuals != 0 { printf("[docs-check] library-owned manuals: %ld\n", manuals); return manuals }
     let cli = DocsTests:cli_exports(); if cli != 0 { printf("[docs-check] CLI JSON/merge: %ld\n", cli); return cli }
     printf("[docs-check] source .rl objects, generated/reused indexes, edits, JSON, merge, CLI and private-doc exclusion passed\n")
     return 0

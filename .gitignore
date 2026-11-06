@@ -13,7 +13,7 @@ __pycache__/
 **/.cache/recurloop/
 *.zip
 
-# Generated documentation/release assets; authored objects live in source/docs/*.rl.
+# Generated documentation/release assets; authored objects live in source/docs/core/ and libraries/<name>/docs/.
 /dist/
 /documentation/
 /documentation.json

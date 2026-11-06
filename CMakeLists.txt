@@ -524,7 +524,7 @@ recurloop_add_language_library(gui
     "${CMAKE_CURRENT_SOURCE_DIR}/libraries/gui/library.rl"
     "${RECURLOOP_GUI_IMAGE}")
 recurloop_add_language_library(ide
-    "${CMAKE_CURRENT_SOURCE_DIR}/libraries/ide.rl"
+    "${CMAKE_CURRENT_SOURCE_DIR}/libraries/ide/library.rl"
     "${RECURLOOP_IDE_IMAGE}"
     gui)
 

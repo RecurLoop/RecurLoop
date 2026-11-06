@@ -73,7 +73,7 @@ The static-library dependency order is:
 - `libraries/` — reusable RecurLoop source libraries and the semantic core.
 - `examples/` — numbered learning path, showcases, and workflow fixtures.
 - `docs/` — private implementation and contributor documentation (excluded from public documentation tools).
-- `source/docs/` — authored .rl documentation objects; navigation and inverted indexes are generated, never authored.
+- `source/docs/core/` — language documentation objects; library manuals live in `libraries/<name>/docs/` with their own `recurloop.docs`. Navigation and inverted indexes are generated, never authored.
 
 ## Conventions
 

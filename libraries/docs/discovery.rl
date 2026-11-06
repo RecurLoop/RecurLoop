@@ -103,6 +103,19 @@ let Docs:load_package = fn (store:Docs:Store*, root:u8*, override:u8*) -> i64 {
     if (!Docs:empty(override) || !Docs:empty(configured_directory)) && access(full, 4) != 0 { store.error = 1; success = 0 }
     free(full); free(configured_directory)
     if success { success = Docs:load_directory(store, root, directory, name) }
+    // A package may live below its repository root without moving its docs out of the package.
+    let prefix = Docs:setting(config, "repository-directory", ""); defer free(prefix)
+    if success && !Docs:empty(prefix) {
+        let boundary = Docs:join(prefix, ""); defer free(boundary)
+        var entry = store.first
+        while entry {
+            if strcmp(entry.scope, name) == 0 && !Docs:empty(entry.source_path) && entry.source_path[0] != 47 && !Docs:prefix(entry.source_path, boundary) {
+                let source = Docs:join(prefix, entry.source_path)
+                free(entry.source_path); entry.source_path = source
+                free(entry.source_url); entry.source_url = Docs:copy("")
+            }; entry = entry.next
+        }
+    }
     store.version = old_version; store.repository = old_repository
     return success
 }
@@ -199,6 +212,16 @@ let Docs:import_trace = fn (store:Docs:Store*, trace:u8*, filter:u8*, scope:u8*,
 }
 extern unlink(path:u8*) -> i32 abi sysv-amd64
 extern rmdir(path:u8*) -> i32 abi sysv-amd64
+// Inspect an installed library image without evaluating its image-build entry point.
+let Docs:trace_library = fn (image:u8*) -> u8* {
+    let temporary = Docs:copy("/tmp/recurloop-doc-library-XXXXXX")
+    if !mkdtemp(temporary) { free(temporary); return cast(u8*, 0) }
+    let entry = Docs:join(temporary, "recurloop.project.rl")
+    var trace = cast(u8*, 0)
+    if Docs:write_file(entry, "") { trace = Docs:trace(entry, image) }
+    unlink(entry); free(entry); rmdir(temporary); free(temporary)
+    return trace
+}
 // Resolve all installed standard-library code help in one isolated runtime.
 let Docs:standard_trace = fn (store:Docs:Store*, directory:u8*) -> i64 {
     let source_inventory = Docs:join(directory, "../../libraries/standard.txt")
@@ -234,20 +257,24 @@ let Docs:load_standard = fn (store:Docs:Store*) -> i64 {
     let version = Docs:runtime_version(); if !version { return 0 }
     let baseline = Docs:new("core", version, "https://github.com/RecurLoop/RecurLoop"); free(version)
     if !baseline { return 0 }; defer Docs:destroy(baseline)
-    let folders = capture find "{directory}" -mindepth 1 -maxdepth 1 -type d | sort
-    if !folders { return 0 }; defer free(folders)
     let source_parent = Docs:parent(directory)
-    let source_root = Docs:parent(source_parent); free(source_parent)
-    var line = folders
+    let source_root = Docs:parent(source_parent); free(source_parent); defer free(source_root)
+    if !Docs:load_package(baseline, source_root, "") { return 0 }
+    let inventory_path = Docs:join(source_root, "libraries/standard.txt")
+    let inventory = Docs:read_file(inventory_path); free(inventory_path)
+    if !inventory { return 0 }; defer free(inventory)
+    var line = inventory
     while line[0] != 0 {
         var end = 0; while line[end] != 0 && line[end] != 10 { end += 1 }
         let more = line[end] == 10; line[end] = 0
-        let logical = Docs:join("source/docs", Docs:basename(line))
-        let success = Docs:load_directory(baseline, source_root, logical, Docs:basename(line)); free(logical)
-        if !success { free(source_root); return 0 }
+        if line[0] != 0 && line[0] != 35 {
+            let libraries = Docs:join(source_root, "libraries")
+            let package = Docs:join(libraries, Docs:trim(line)); free(libraries)
+            let success = Docs:load_package(baseline, package, ""); free(package)
+            if !success { return 0 }
+        }
         if !more { break }; line = &line[end + 1]
     }
-    free(source_root)
     if !Docs:standard_trace(baseline, directory) { return 0 }; return Docs:merge(store, baseline)
 }
 let Docs:load_options = fn (root:u8*, directory:u8*, standard:i64) -> Docs:Store* {
@@ -265,7 +292,15 @@ let Docs:load_options = fn (root:u8*, directory:u8*, standard:i64) -> Docs:Store
     if !store { return store }
     free(store.root); store.root = Docs:copy(canonical)
     if !Docs:load_package(store, canonical, directory) { store.error = 1; return store }
-    if standard && !Docs:load_standard(store) { store.error = 1; return store }
+    let image = Docs:setting(config, "image", ""); defer free(image)
+    if !Docs:empty(image) {
+        let trace = Docs:trace_library(image)
+        if !trace { store.error = 1; return store }; defer free(trace)
+        let filter = LanguageKit:Text:new(); filter.append(image); filter.append(".rli"); defer filter.destroy()
+        Docs:import_trace(store, trace, filter.data, name, 0)
+        if standard && !Docs:load_standard(store) { store.error = 1; return store }
+        Docs:sort(store); Docs:build_index(store); return store
+    }
     let entrypath = Docs:join(canonical, entry)
     defer free(entrypath)
     if access(entrypath, 4) != 0 && strcmp(entry, "recurloop.project.rl") == 0 {
@@ -281,6 +316,7 @@ let Docs:load_options = fn (root:u8*, directory:u8*, standard:i64) -> Docs:Store
         if !trace { store.error = 1; return store }; defer free(trace)
         Docs:import_trace(store, trace, "", "", 1)
     }
+    if standard && !Docs:load_standard(store) { store.error = 1; return store }
     Docs:sort(store); Docs:build_index(store)
     return store
 }

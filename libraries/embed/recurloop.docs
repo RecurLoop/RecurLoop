@@ -1,0 +1,6 @@
+name=embed
+version=runtime
+directory=docs
+repository=https://github.com/RecurLoop/RecurLoop
+repository-directory=libraries/embed
+image=embed
