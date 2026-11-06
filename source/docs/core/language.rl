@@ -8,6 +8,8 @@ let Docs:Pages:overview = [
     body = phrase {
         payload = "# RecurLoop
 
+[Install RecurLoop and set up VS Code](installation.rl).
+
 RecurLoop combines names, values and syntax through phrases. A phrase can hold data, own a dictionary or implement an action. Programs can compose vocabularies and define their own syntax.
 
 ## Values and expressions

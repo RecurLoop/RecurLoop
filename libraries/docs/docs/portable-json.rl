@@ -24,6 +24,14 @@ let write_and_read = fn (path:u8*) -> i64 {
 // Call with a writable destination chosen by the application.
 ```
 
+## Independent package indexes
+
+Each exported bundle contains its own pages and inverted index. A collection index combines bundle metadata and search postings; creating it does not require importing every source library into one runtime. Existing postings can be merged without re-tokenizing documentation.
+
+A registry can keep package metadata and a versioned documentation URL, while the package publishes its own bundle. A reader can load that bundle independently, or a publisher can merge selected package exports into a shared catalog. A plain JSON object merge is insufficient: preserve scoped page identities and translate posting references together with their entries.
+
+Copying a new file beside an existing collection does not register it automatically. Include it in the merge input and regenerate the collection index; the index explicitly lists the bundles its reader should load. For two versions with conflicting scope/key identities, choose one version or use separate versioned catalogs.
+
 ## Merge identities, not filenames
 
 An entry is identified by scope and key. `Docs:merge(destination, source)` copies entries and merges existing postings without taking ownership of the source store. Both stores must still be destroyed by their owners.
