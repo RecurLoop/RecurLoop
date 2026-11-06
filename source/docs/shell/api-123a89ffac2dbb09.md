@@ -1,3 +1,0 @@
-Waits for completion and returns invocation-owned captured stdout. Do not free it; it remains valid until Invocation:destroy.
-
-

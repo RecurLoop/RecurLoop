@@ -1,15 +1,6 @@
 extern opendir(path:u8*) -> u8* abi sysv-amd64
 extern closedir(directory:u8*) -> i32 abi sysv-amd64
 // Source repositories opt in with recurloop.docs; docs/ is the default.
-let Docs:parent = fn (path:u8*) -> u8* {
-    let out = Docs:copy(path)
-    if !out { return out }
-    var size = cast(i64, strlen(out))
-    while size > 1 && out[size - 1] == 47 { size -= 1 }
-    while size > 1 && out[size - 1] != 47 { size -= 1 }
-    if size > 1 { size -= 1 }; out[size] = 0
-    return out
-}
 let Docs:package_root = fn (source:u8*) -> u8* {
     let canonical = realpath(source, cast(u8*, 0))
     if !canonical { return cast(u8*, 0) }
@@ -31,12 +22,75 @@ let Docs:package_root = fn (source:u8*) -> u8* {
     }
     free(directory); return fallback
 }
+let Docs:executable = fn () -> u8* {
+    let out = malloc(4096)
+    if !out { return out }
+    let size = readlink("/proc/self/exe", out, 4095)
+    if size < 0 { free(out); return cast(u8*, 0) }; out[size] = 0
+    return out
+}
+let Docs:runtime_version = fn () -> u8* {
+    let executable = Docs:executable(); if !executable { return cast(u8*, 0) }
+    let command = spawn "{executable}" --version
+    free(executable); if !command { return cast(u8*, 0) }; defer command.destroy()
+    if command.exit_code() != 0 { return cast(u8*, 0) }
+    let text = Docs:copy(command.stdout()); if !text { return text }; defer free(text); Docs:trim(text)
+    var version = text; while version[0] != 0 && version[0] != 118 { version = &version[1] }
+    if version[0] != 118 { return cast(u8*, 0) }; return Docs:copy(&version[1])
+}
+let Docs:package_version = fn (config:u8*) -> u8* {
+    let version = Docs:setting(config, "version", "dev")
+    if strcmp(version, "runtime") != 0 { return version }; free(version); return Docs:runtime_version()
+}
+// A source directory contains .rl objects only. Its index is built after evaluation.
+let Docs:load_directory = fn (store:Docs:Store*, root:u8*, directory:u8*, scope:u8*) -> i64 {
+    let full = Docs:join(root, directory); defer free(full)
+    if access(full, 4) != 0 { return 1 }
+    let canonical = realpath(full, cast(u8*, 0))
+    if !canonical { store.error = 1; return 0 }; defer free(canonical)
+    let marker = LanguageKit:Text:new(); marker.append("\n"); marker.append(canonical); marker.append("\n"); defer marker.destroy()
+    if strstr(store.loaded.data, marker.data) { return 1 }
+    let paths = capture find "{canonical}" -type f -name "*.rl" | sort
+    if !paths { store.error = 1; return 0 }; defer free(paths)
+    if paths[0] == 0 { store.loaded.append(marker.data); return 1 }
+    let temporary = Docs:copy("/tmp/recurloop-doc-objects-XXXXXX")
+    if !mkdtemp(temporary) { free(temporary); store.error = 1; return 0 }
+    let entry = Docs:join(temporary, "recurloop.project.rl")
+    let output = Docs:join(temporary, "objects.json")
+    let source = LanguageKit:Text:new()
+    var path = paths
+    while path[0] != 0 {
+        var end = 0; while path[end] != 0 && path[end] != 10 { end += 1 }
+        let more = path[end] == 10; path[end] = 0
+        source.append("include "); Docs:json(source, path); source.append("\nDocs:source ")
+        let logical = Docs:join(directory, &path[strlen(canonical) + 1])
+        Docs:json(source, logical); free(logical); source.append("\n")
+        if !more { break }; path = &path[end + 1]
+    }
+    source.append("Docs:dump_objects\n")
+    let written = Docs:write_file(entry, source.data); source.destroy()
+    if !written { store.error = 1 }
+    let executable = Docs:executable()
+    let bindir = Docs:parent(executable)
+    var libraries = Docs:copy(getenv("RECURLOOP_DOCS_LIBRARY_PATH"))
+    if Docs:empty(libraries) { free(libraries); libraries = Docs:join(bindir, "../libraries") }; free(bindir)
+    if !store.error {
+        let command = spawn "{executable}" --library-path "{libraries}" --library docs --file "{entry}" -- "{scope}" "{store.version}" "{store.repository}" "{output}"
+        if !command { store.error = 1 }
+        else { if command.exit_code() != 0 || !Docs:read_export(store, output) { store.error = 1 }; command.destroy() }
+    }
+    free(executable); free(libraries); free(entry); free(output)
+    let cleanup = run rm -rf -- "{temporary}"
+    free(temporary)
+    if !store.error { store.loaded.append(marker.data) }; return !store.error
+}
+
 let Docs:load_package = fn (store:Docs:Store*, root:u8*, override:u8*) -> i64 {
     let path = Docs:join(root, "recurloop.docs")
     let config = Docs:read_file(path); free(path)
     defer free(config)
     let name = Docs:setting(config, "name", Docs:basename(root))
-    let version = Docs:setting(config, "version", "dev")
+    let version = Docs:package_version(config)
     let repository = Docs:setting(config, "repository", "")
     var directory = Docs:setting(config, "directory", "docs")
     if !Docs:empty(override) { free(directory); directory = Docs:copy(override) }
@@ -52,20 +106,14 @@ let Docs:load_package = fn (store:Docs:Store*, root:u8*, override:u8*) -> i64 {
     store.version = old_version; store.repository = old_repository
     return success
 }
-let Docs:executable = fn () -> u8* {
-    let out = malloc(4096)
-    if !out { return out }
-    let size = readlink("/proc/self/exe", out, 4095)
-    if size < 0 { free(out); return cast(u8*, 0) }; out[size] = 0
-    return out
-}
 // Uses the runtime's semantic trace, never a regex approximation of .rl syntax.
 // Libraries is a newline-delimited inventory, or empty for a project's default baseline.
 let Docs:trace = fn (entry:u8*, libraries_text:u8*) -> u8* {
     let executable = Docs:executable()
     if !executable { return executable }; defer free(executable)
     let bindir = Docs:parent(executable)
-    let libraries = Docs:join(bindir, "../libraries"); free(bindir)
+    var libraries = Docs:copy(getenv("RECURLOOP_DOCS_LIBRARY_PATH"))
+    if Docs:empty(libraries) { free(libraries); libraries = Docs:join(bindir, "../libraries") }; free(bindir)
     defer free(libraries)
     let pipeline = Shell:Pipeline:new()
     let command = Shell:Command:new()
@@ -104,7 +152,7 @@ let Docs:import_trace = fn (store:Docs:Store*, trace:u8*, filter:u8*, scope:u8*,
     }
     item = catalog.first
     while item {
-        var valid = !Docs:empty(item.description) || !Docs:empty(item.summary)
+        var valid = (!Docs:empty(item.description) || !Docs:empty(item.summary)) && !Docs:prefix(item.name, "Docs:Pages") && !Docs:prefix(item.name, "Docs:Build")
         var at = 0
         while item.name[at] != 0 { if item.name[at] < 32 { valid = 0 }; at += 1 }
         if !Docs:empty(filter) && !Docs:documented(item, filter) { valid = 0 }
@@ -128,11 +176,16 @@ let Docs:import_trace = fn (store:Docs:Store*, trace:u8*, filter:u8*, scope:u8*,
             var entry = Docs:find(store, owner, id)
             if !entry {
                 let body = Docs:body(item)
-                entry = Docs:add(store, owner, id, item.name, "API", body, item.source, item.source)
+                var source_path = item.source
+                if Docs:empty(source_path) { source_path = "" }
+                else { let size = cast(i64, strlen(source_path)); if size < 3 || strcmp(&source_path[size - 3], ".rl") != 0 { source_path = "" } }
+                entry = Docs:add(store, owner, id, item.name, "API", body, source_path, source_path)
                 free(body)
             }
             if entry {
                 free(entry.inline_docs)
+                store.index_ready = 0
+                if Docs:empty(entry.symbol) { free(entry.symbol); entry.symbol = Docs:copy(item.name) }
                 let summary = LanguageKit:Text:new()
                 if !Docs:empty(item.summary) { summary.append(item.summary); summary.append("\n\n") }
                 if !Docs:empty(item.description) { summary.append(item.description) }
@@ -167,51 +220,35 @@ let Docs:standard_trace = fn (store:Docs:Store*, directory:u8*) -> i64 {
 }
 
 let Docs:load_standard = fn (store:Docs:Store*) -> i64 {
+    let exported = getenv("RECURLOOP_DOCS_INDEX")
+    if !Docs:empty(exported) { return Docs:read_export(store, exported) }
+    let executable = Docs:executable(); if !executable { return 0 }
+    let bindir = Docs:parent(executable); free(executable)
     var directory = Docs:copy(getenv("RECURLOOP_DOCS_PATH"))
-    if Docs:empty(directory) {
-        free(directory)
-        let executable = Docs:executable()
-        if !executable { return 0 }
-        let bindir = Docs:parent(executable); free(executable)
-        directory = Docs:join(bindir, "../../../source/docs")
-        if access(directory, 4) != 0 { free(directory); directory = Docs:join(bindir, "../share/recurloop/docs") }
-        free(bindir)
+    if Docs:empty(directory) { free(directory); directory = Docs:join(bindir, "../../../source/docs") }
+    let installed = Docs:join(bindir, "../share/recurloop/docs/index.json"); free(bindir)
+    defer free(directory); defer free(installed)
+    if access(directory, 4) != 0 {
+        if access(installed, 4) == 0 { return Docs:read_export(store, installed) }; return 1
     }
-    defer free(directory)
-    if access(directory, 4) != 0 { return 1 }
-    let paths = capture find "{directory}" -mindepth 2 -maxdepth 2 -name index.tsv -type f | sort
-    if !paths { return 0 }; defer free(paths)
-    let old_version = store.version
-    let executable = Docs:executable()
-    let version_job = spawn "{executable}" --version
-    free(executable)
-    if !version_job { return 0 }
-    let release = Docs:copy(version_job.stdout()); version_job.destroy(); Docs:trim(release)
-    var version = release
-    while version[0] != 0 && version[0] != 118 { version = &version[1] }
-    if version[0] == 118 { store.version = &version[1] }
-    let old_repo = store.repository
-    store.repository = "https://github.com/RecurLoop/RecurLoop"
-    var line = paths
+    let version = Docs:runtime_version(); if !version { return 0 }
+    let baseline = Docs:new("core", version, "https://github.com/RecurLoop/RecurLoop"); free(version)
+    if !baseline { return 0 }; defer Docs:destroy(baseline)
+    let folders = capture find "{directory}" -mindepth 1 -maxdepth 1 -type d | sort
+    if !folders { return 0 }; defer free(folders)
+    let source_parent = Docs:parent(directory)
+    let source_root = Docs:parent(source_parent); free(source_parent)
+    var line = folders
     while line[0] != 0 {
-        var end = 0
-        while line[end] != 0 && line[end] != 10 { end += 1 }
+        var end = 0; while line[end] != 0 && line[end] != 10 { end += 1 }
         let more = line[end] == 10; line[end] = 0
-        let folder = Docs:parent(line)
-        let previous = store.last
-        let loaded = Docs:load_directory(store, "/", folder, Docs:basename(folder))
-        var added = store.first; if previous { added = previous.next }
-        while added {
-            if strlen(added.source_path) <= strlen(folder) { added = added.next; continue }
-            let logical = LanguageKit:Text:new(); logical.append("source/docs/"); logical.append(Docs:basename(folder)); logical.append("/"); logical.append(&added.source_path[strlen(folder) + 1])
-            free(added.source_path); added.source_path = logical.take(); logical.destroy(); added = added.next
-        }
-        free(folder)
-        if !loaded { store.repository = old_repo; store.version = old_version; free(release); return 0 }
+        let logical = Docs:join("source/docs", Docs:basename(line))
+        let success = Docs:load_directory(baseline, source_root, logical, Docs:basename(line)); free(logical)
+        if !success { free(source_root); return 0 }
         if !more { break }; line = &line[end + 1]
     }
-    store.repository = old_repo; store.version = old_version; free(release)
-    return Docs:standard_trace(store, directory)
+    free(source_root)
+    if !Docs:standard_trace(baseline, directory) { return 0 }; return Docs:merge(store, baseline)
 }
 let Docs:load_options = fn (root:u8*, directory:u8*, standard:i64) -> Docs:Store* {
     let canonical = realpath(root, cast(u8*, 0))
@@ -220,7 +257,7 @@ let Docs:load_options = fn (root:u8*, directory:u8*, standard:i64) -> Docs:Store
     let config = Docs:read_file(configpath); free(configpath)
     defer free(config)
     let name = Docs:setting(config, "name", Docs:basename(canonical))
-    let version = Docs:setting(config, "version", "dev")
+    let version = Docs:package_version(config)
     let repository = Docs:setting(config, "repository", "")
     let entry = Docs:setting(config, "entry", "recurloop.project.rl")
     defer free(name); defer free(version); defer free(repository); defer free(entry)
@@ -244,6 +281,7 @@ let Docs:load_options = fn (root:u8*, directory:u8*, standard:i64) -> Docs:Store
         if !trace { store.error = 1; return store }; defer free(trace)
         Docs:import_trace(store, trace, "", "", 1)
     }
+    Docs:sort(store); Docs:build_index(store)
     return store
 }
 

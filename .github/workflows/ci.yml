@@ -93,6 +93,8 @@ jobs:
         with:
           path: .cache/core
           key: ${{ steps.core-cache.outputs.cache-primary-key }}
+      - name: Generate source documentation and independently merge library indexes
+        run: tools/release-linux.sh docs
       - name: Stage, audit and verify reproducible package
         run: tools/release-linux.sh package
       - name: Validate release version

@@ -1,9 +1,0 @@
-Initializes the GUI backend and dark theme. Returns 1 on success or 0 when a display cannot be initialized.
-
-## Signature
-
-```recurloop
-Gui:initialize() -> i64
-```
-
-

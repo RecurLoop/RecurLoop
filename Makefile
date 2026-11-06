@@ -5,12 +5,14 @@ EXAMPLE ?=
 ARGS ?= --file program.rl.example
 BUNDLE ?= recurloop-work.zip
 DOCS_OUTPUT ?= build/documentation
+DOCS_PARTS ?= build/documentation-parts
+LIBRARY ?= core
 PREFIX ?=
 VSCODE_EXTENSION_DIR := tools/vscode-recurloop
 
 RELEASE_BUILD_FILE := build/Release/build.ninja
 
-.PHONY: docs docs-check help build release check test verify libraries graphics-libraries install vscode-extension install-vscode-extension run list-examples example examples bundle benchmark reconfigure clean package llvm toolchain
+.PHONY: docs docs-library docs-merge docs-check help build release check test verify libraries graphics-libraries install vscode-extension install-vscode-extension run list-examples example examples bundle benchmark reconfigure clean package llvm toolchain
 
 help:
 	@echo 'RecurLoop'
@@ -22,7 +24,9 @@ help:
 	@echo '  make llvm         Download/verify the official LLVM archive into .cache/deps'
 	@echo '  make libraries    Build standard .rli libraries'
 	@echo '  make docs         Export guides and runtime-resolved library help as JSON'
-	@echo '  make docs-check   Test the portable documentation exporter'
+	@echo '  make docs-check   Test objects, generated indexes, JSON reads and merging'
+	@echo '  make docs-library LIBRARY=http  Export one isolated library to DOCS_PARTS'
+	@echo '  make docs-merge   Merge DOCS_PARTS into DOCS_OUTPUT without reimporting libraries'
 	@echo '  make vscode-extension  Build the VS Code extension (.vsix; Node.js 22+)'
 	@echo '  make graphics-libraries  Build optional shader compiler plus window/Vulkan images'
 	@echo '  make clean        Remove build directories'
@@ -75,6 +79,7 @@ llvm:
 toolchain: llvm
 
 package: release
+	@cmake --build --preset release --target RecurloopDocumentation
 	@cmake -P cmake/Package.cmake
 
 check: $(RELEASE_BUILD_FILE)
@@ -116,6 +121,9 @@ verify:
 	@tools/examples.sh all "$(abspath $(RECURLOOP))"
 	@echo '[verify] core workflow'
 	@libraries/recurloop/test-core.sh "$(abspath $(RECURLOOP))"
+	@echo '[verify] documentation'
+	@$(MAKE) docs-check
+	@cmake --build --preset release --target RecurloopDocumentation
 	@echo '[verify] installed package'
 	@cmake -P cmake/Package.cmake
 	@echo '[verify] passed'
@@ -124,7 +132,7 @@ install:
 	@echo '[install] configure'
 	@cmake -DPRESET=release -DLLVM_PROVIDER=ARCHIVE $(if $(PREFIX),-DINSTALL_PREFIX="$(PREFIX)") -P cmake/Configure.cmake
 	@echo '[install] build'
-	@cmake --build --preset release --target Recurloop RecurloopLibraries
+	@cmake --build --preset release --target Recurloop RecurloopLibraries RecurloopDocumentation
 	@echo '[install] install'
 	@DESTDIR="$(DESTDIR)" cmake --install build/Release $(if $(PREFIX),--prefix "$(PREFIX)")
 	@echo '[install] done'
@@ -170,7 +178,14 @@ clean:
 
 # Portable documents consumed by recurloop.org and third-party documentation readers.
 docs: libraries docs-check
-	@RECURLOOP_DOCS_OUTPUT="$(DOCS_OUTPUT)" "$(RECURLOOP)" --project recurloop.project.rl --target docs
+	@RECURLOOP_DOCS_OUTPUT="$(DOCS_OUTPUT)" "$(RECURLOOP)" --library docs --project recurloop.project.rl --target docs
 
 docs-check: libraries
-	@"$(RECURLOOP)" --project recurloop.project.rl --target docs-check
+	@"$(RECURLOOP)" --library docs --project recurloop.project.rl --target docs-check
+
+# Each selected image is inspected separately; dependencies are loaded by its .rli manifest.
+docs-library: libraries
+	@RECURLOOP_DOCS_SCOPE="$(LIBRARY)" RECURLOOP_DOCS_OUTPUT="$(DOCS_PARTS)/$(LIBRARY)" "$(RECURLOOP)" --library docs --project recurloop.project.rl --target docs
+
+docs-merge: libraries
+	@RECURLOOP_DOCS_MERGE_PARTS="$(DOCS_PARTS)" RECURLOOP_DOCS_OUTPUT="$(DOCS_OUTPUT)" "$(RECURLOOP)" --library docs --project recurloop.project.rl --target docs

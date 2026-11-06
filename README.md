@@ -172,7 +172,7 @@ recurloop --project recurloop.project.rl --serve
 Actions discover `recurloop.project.rl` in parent directories; `--project`
 selects another entry. The CLI and editors share graph validation, dependency
 execution and semantic inspection. Project mode defaults to the Project,
-Shell and Inferred libraries. See [source/docs/core/projects.md](source/docs/core/projects.md) for the
+Shell and Inferred libraries. See [docs/projects.md](docs/projects.md) for the
 source-defined grammar, custom roots/imports and client protocol.
 
 When a saved project entry is detected, the extension selects RecurLoop as the
@@ -767,7 +767,7 @@ let Math = [
 assert Math:gcd(84, 30) == 6
 ```
 
-See [`source/docs/core/language.md`](source/docs/core/language.md) for the language guide.
+See [`source/docs/core/language.rl`](source/docs/core/language.rl) for the language guide.
 
 ## Native code and output
 
@@ -934,7 +934,7 @@ RecurLoop source metadata.
 both LLVM-enabled and built-in hosts. LLVM-enabled hosts rebuild debug entry
 points and reachable source functions with the built-in debug generator.
 Records, arrays and pointer pointees can be expanded, and new threads are
-traced automatically. See [source/docs/core/projects.md](source/docs/core/projects.md) for CLI debugging,
+traced automatically. See [docs/projects.md](docs/projects.md) for CLI debugging,
 thread selection and aggregate inspection.
 
 See [`examples/07-workflows/source-debugger/`](examples/07-workflows/source-debugger/).
@@ -1152,51 +1152,54 @@ names, restores the embedded source-built core image, and binds native
 ContextAPI addresses against that restored state. The seed language code is
 linked only into the private build tool under `bootstrap/`.
 
-## Public documentation and CLI
+## Documentation objects and generated artifacts
 
-Public usage and package manuals live in `source/docs/`. The root `docs/`
-directory contains implementation documentation and is excluded from CLI search
-and portable exports. Source definitions keep concise `.docs` help for readers
-and editors; longer manuals belong in the configured public directory.
+Public phrase descriptions belong on the phrase's `.docs` field. Extended
+usage information is authored as RecurLoop objects in `source/docs/`:
 
-`docs.rli` is a standard library implemented in RecurLoop. Its owned catalogs
-support structured lookups, text/JSON results, search, adding/editing pages,
-persisting Markdown with an ordered index, and exporting complete renderable
-bundles. See [the public manual](source/docs/docs/overview.md) for ownership,
-package configuration, API examples and the portable v2 contract.
-
-`recurloop.docs` selects a repository's public directory, metadata and optional
-source entry. Included source repositories are discovered from runtime provenance
-and use their own configuration. Without a configured directory, packages use
-`docs/`; without an ordered `index.tsv`, Markdown pages are sorted by path.
-
-`recurloop --docs` delegates to the same source-defined library. The C++ host
-only routes the flag; catalog loading, CLI argument parsing, search, editing and
-export are all RecurLoop source.
-
-```bash
-recurloop --docs search "record" --json --limit 10
-recurloop --docs show "Docs:export_file"
-recurloop --docs export documentation.json --no-standard
-recurloop --docs search "routing" --root ./package --docs-dir manual
+```recurloop
+let Docs:Pages:example = [
+    symbol = phrase { payload = "Example:answer" }
+    section = phrase { payload = "API" }
+    body = phrase { payload = "Returns an answer without transferring ownership." }
+]
 ```
 
-The `docs` project target composes the engine site from public Markdown and
-runtime-resolved code help. The export contains the complete navigation, default
-page, safe content blocks, TOC, adjacent/source links and full-text search index.
-It also publishes the portable schema and a native-generated package example.
-Renderers consume this structure without deriving sections or parsing Markdown
-blocks. Raw source, images and community documentation stay with their authors;
-portal publication requires administrator approval.
+The symbol is resolved against the selected image. No authored JSON, Markdown
+snapshots, navigation lists or index files live in that directory. The public
+export contains phrase behavior and language usage; implementation, build and
+repository instructions remain in the root `docs/` directory.
+
+The source-defined `docs` library evaluates objects, reads semantic phrase help,
+builds an inverted index and emits the portable v3 contract. Source catalogs
+build their index automatically; exported JSON catalogs reuse their index.
+Editing a catalog invalidates its index. `Docs:save_directory` writes .rl
+objects, and `Docs:merge` combines catalogs and existing indexes without
+re-tokenizing valid data. Details for contributors are in
+[documentation-authoring](docs/documentation-authoring.md).
 
 ```bash
+recurloop --docs search "record" --json
+recurloop --docs search "ownership" --from build/documentation/index.json --json
+recurloop --docs show "Docs:export_file" --from build/documentation/docs.json
+recurloop --docs merge merged.json part-one.json part-two.json
 make docs-check
-make docs DOCS_OUTPUT=../larva/frontend/public/docs-data
-build/Release/bin/recurloop --project recurloop.project.rl --target docs-check
-RECURLOOP_DOCS_OUTPUT=../larva/frontend/public/docs-data build/Release/bin/recurloop --project recurloop.project.rl --target docs
+make docs
+make docs-library LIBRARY=http
+make docs-library LIBRARY=shell
+make docs-merge
 ```
 
-The manifest records the source commit and engine version. The public data and
-manuals are installed with the runtime, so CLI help works outside the source
-checkout. Community documentation can publish the same portable v2 JSON at a
-public HTTPS endpoint with browser CORS, preferably pinned to a commit or tag.
+`make docs` builds/imports `docs.rli`, exports core and every standard library
+in separate runtime contexts, then merges their JSON/index artifacts. The
+standard-library manifest owns the inventory. Dependencies are imported by each
+image; importing every library into one mutable language state is unnecessary.
+`DOCS_PARTS` and `DOCS_OUTPUT` select the intermediate and final artifact
+directories. Use `make docs DOCS_OUTPUT=../larva/frontend/public/docs-data` for
+a local website checkout. These files are generated and ignored by Git.
+
+The GitHub workflow runs the same checks, exports each library, merges the
+indexes and installs generated documentation into the runtime package. Tagged
+releases publish `index.json`, library JSON files, the format/example assets,
+and a checksummed documentation archive. Installed CLI reads the shipped index
+without needing source repositories or network access.

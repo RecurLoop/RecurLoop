@@ -10,7 +10,7 @@ longest-prefix matching in the active dictionary. The C++ host implements the
 radix store, phrase graph, runtime context, compiler, native output, and
 command-line interface.
 
-Start with `README.md`, `docs/architecture.md`, and `source/docs/core/language.md`.
+Start with `README.md`, `docs/architecture.md`, and `source/docs/core/language.rl`.
 
 ## Build and test
 
@@ -73,7 +73,7 @@ The static-library dependency order is:
 - `libraries/` — reusable RecurLoop source libraries and the semantic core.
 - `examples/` — numbered learning path, showcases, and workflow fixtures.
 - `docs/` — private implementation and contributor documentation (excluded from public documentation tools).
-- `source/docs/` — public language, package and library documentation, indexed and exported by docs.rl.
+- `source/docs/` — authored .rl documentation objects; navigation and inverted indexes are generated, never authored.
 
 ## Conventions
 

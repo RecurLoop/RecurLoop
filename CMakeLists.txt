@@ -581,12 +581,27 @@ endforeach()
 add_custom_target(RecurloopLibraries DEPENDS ${RECURLOOP_STANDARD_LIBRARY_IMAGES})
 set_target_properties(RecurloopLibraries PROPERTIES FOLDER "Libraries")
 
+add_custom_target(RecurloopDocumentation
+    COMMAND "${CMAKE_COMMAND}" -E env
+        "RECURLOOP_DOCS_OUTPUT=${CMAKE_CURRENT_BINARY_DIR}/documentation"
+        "RECURLOOP_DOCS_ROOT=${CMAKE_CURRENT_SOURCE_DIR}"
+        "$<TARGET_FILE:Recurloop>"
+        --library-path "${RECURLOOP_LIBRARY_OUTPUT_DIR}" --library docs
+        --project "${CMAKE_CURRENT_SOURCE_DIR}/recurloop.project.rl" --target docs
+    DEPENDS RecurloopLibraries
+    WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+    COMMENT "Generate documentation objects, isolated library exports and merged index"
+    VERBATIM)
+set_target_properties(RecurloopDocumentation PROPERTIES FOLDER "Documentation")
+
 install(FILES ${RECURLOOP_STANDARD_LIBRARY_IMAGES}
     DESTINATION "${RECURLOOP_INSTALL_LIBRARY_DIR}" COMPONENT Libraries)
 install(FILES "${RECURLOOP_STANDARD_LIBRARY_MANIFEST}"
     DESTINATION "${CMAKE_INSTALL_DATADIR}/recurloop"
     RENAME standard-libraries.txt COMPONENT Libraries)
-install(DIRECTORY source/docs/ DESTINATION "${CMAKE_INSTALL_DATADIR}/recurloop/docs" COMPONENT Documentation)
+install(DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/documentation/"
+    DESTINATION "${CMAKE_INSTALL_DATADIR}/recurloop/docs" COMPONENT Documentation
+    PATTERN "parts" EXCLUDE)
 install(FILES LICENSE README.md TRADEMARKS.md THIRD-PARTY.md docs/releases.md
     DESTINATION "${CMAKE_INSTALL_DOCDIR}"
     COMPONENT Documentation)

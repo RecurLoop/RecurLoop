@@ -8,6 +8,7 @@ extern snprintf(buffer:u8*, size:u64, format:u8*, ...) -> i32 abi sysv-amd64
 extern access(path:u8*, mode:i32) -> i32 abi sysv-amd64
 
 let Docs = []
+let Docs:Pages = phrase { dictionary = true permanent = true }
 
 let Docs:copy = fn (text:u8*) -> u8* { return LanguageKit:copy_text(text) }
 let Docs:empty = fn (text:u8*) -> i64 { return !text || text[0] == 0 }
@@ -104,3 +105,13 @@ let Docs:page_id = fn (name:u8*) -> u8* {
     return out
 }
 
+
+let Docs:parent = fn (path:u8*) -> u8* {
+    let out = Docs:copy(path)
+    if !out { return out }
+    var size = cast(i64, strlen(out))
+    while size > 1 && out[size - 1] == 47 { size -= 1 }
+    while size > 1 && out[size - 1] != 47 { size -= 1 }
+    if size > 1 { size -= 1 }; out[size] = 0
+    return out
+}

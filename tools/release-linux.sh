@@ -4,11 +4,11 @@
 set -euo pipefail
 phase=${1:-all}
 if [[ $# -gt 1 ]]; then
-  echo "usage: $0 [all|configure|build|unit|feature|examples|core|package]" >&2
+  echo "usage: $0 [all|configure|build|unit|feature|examples|core|docs|package]" >&2
   exit 2
 fi
 case "$phase" in
-  all|configure|build|unit|feature|examples|core|package) ;;
+  all|configure|build|unit|feature|examples|core|docs|package) ;;
   *) echo "unknown release phase: $phase" >&2; exit 2 ;;
 esac
 cd "$(dirname "$0")/.."
@@ -78,7 +78,23 @@ verify_core() {
   libraries/recurloop/test-core.sh "$PWD/build/CI/bin/recurloop"
 }
 
+documentation_release() {
+  rm -rf build/CI/documentation build/CI/documentation-parts
+  program="$PWD/build/CI/bin/recurloop"
+  library_path="$PWD/build/CI/libraries"
+  "$program" --library-path "$library_path" --library docs --project recurloop.project.rl --target docs-check
+  for library in core $(cat libraries/standard.txt); do
+    RECURLOOP_DOCS_SCOPE="$library" \
+    RECURLOOP_DOCS_OUTPUT="$PWD/build/CI/documentation-parts/$library" \
+      "$program" --library-path "$library_path" --library docs --project recurloop.project.rl --target docs
+  done
+  RECURLOOP_DOCS_MERGE_PARTS="$PWD/build/CI/documentation-parts" \
+  RECURLOOP_DOCS_OUTPUT="$PWD/build/CI/documentation" \
+    "$program" --library-path "$library_path" --library docs --project recurloop.project.rl --target docs
+}
+
 package_release() {
+  test -s build/CI/documentation/index.json || documentation_release
   cmake -DBUILD_DIR=build/CI -DMAX_GLIBC=2.35 -P cmake/Package.cmake
 
   version="$(build/CI/bin/recurloop --version | sed -n 's/^Recurloop v//p')"
@@ -96,6 +112,11 @@ package_release() {
   rm -rf dist
   mkdir -p dist
   cp "build/CI/$asset" "build/CI/$asset.sha256" dist/
+  cp build/CI/documentation/*.json dist/
+  docs_asset="recurloop-docs-${version}.tar.gz"
+  tar --sort=name --mtime="@${SOURCE_DATE_EPOCH}" --owner=0 --group=0 --numeric-owner \
+    -C build/CI/documentation --exclude=parts -cf - . | gzip -n > "dist/$docs_asset"
+  (cd dist && sha256sum "$docs_asset" *.json > documentation.sha256)
 }
 
 if [[ "$phase" == all || "$phase" == configure ]]; then
@@ -111,6 +132,7 @@ case "$phase" in
   feature) ctest --preset ci-feature ;;
   examples) tools/examples.sh all "$PWD/build/CI/bin/recurloop" ;;
   core) verify_core ;;
+  docs) documentation_release ;;
   package) package_release ;;
   all)
     build_release
@@ -118,6 +140,7 @@ case "$phase" in
     ctest --preset ci-feature
     tools/examples.sh all "$PWD/build/CI/bin/recurloop"
     verify_core
+    documentation_release
     package_release
     ;;
 esac

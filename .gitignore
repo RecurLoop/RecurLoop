@@ -12,3 +12,8 @@ __pycache__/
 
 **/.cache/recurloop/
 *.zip
+
+# Generated documentation/release assets; authored objects live in source/docs/*.rl.
+/dist/
+/documentation/
+/documentation.json

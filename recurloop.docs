@@ -1,6 +1,6 @@
-# Portable documentation metadata; paths are relative to this repository.
+# Public object sources only. Implementation documentation is never scanned.
 name=core
-version=0.2.11
+version=runtime
 directory=source/docs/core
 repository=https://github.com/RecurLoop/RecurLoop
 entry=recurloop.project.rl

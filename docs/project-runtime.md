@@ -6,7 +6,7 @@ lexicon generations; each client owns an independent mutable Session attached to
 one of those generations.
 
 Executable entries, target syntax, CLI actions and debugging are documented in
-[projects.md](../source/docs/core/projects.md). These operations are shared by all clients.
+[projects.md](projects.md). These operations are shared by all clients.
 
 ## Session publication
 

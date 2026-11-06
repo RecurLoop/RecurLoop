@@ -173,10 +173,11 @@ let Docs:entry_id = fn (entry:Docs:Entry*, base:u8*) -> u8* {
 let Docs:link = fn (out:LanguageKit:Text*, entry:Docs:Entry*, base:u8*) -> void {
     if !entry { out.append("null"); return }
     let export_id = Docs:entry_id(entry, base); defer free(export_id)
-    out.append("{\"id\":"); Docs:json(out, export_id); out.append(",\"title\":"); Docs:json(out, entry.title)
+    out.append("{\"id\":"); Docs:json(out, export_id); out.append(",\"key\":"); Docs:json(out, entry.id); out.append(",\"symbol\":"); Docs:json(out, entry.symbol); out.append(",\"title\":"); Docs:json(out, entry.title)
     out.append(",\"href\":"); Docs:href(out, base, export_id); out.append("}")
 }
 let Docs:source_url = fn (out:LanguageKit:Text*, entry:Docs:Entry*, revision:u8*) -> void {
+    if Docs:empty(revision) && !Docs:empty(entry.source_url) { Docs:json(out, entry.source_url); return }
     if Docs:empty(entry.repository) || Docs:empty(entry.source_path) || entry.source_path[0] == 47 { out.append("null"); return }
     let url = LanguageKit:Text:new(); defer url.destroy()
     url.append(entry.repository); url.append("/blob/")
@@ -185,20 +186,23 @@ let Docs:source_url = fn (out:LanguageKit:Text*, entry:Docs:Entry*, revision:u8*
 }
 let Docs:summary_json = fn (out:LanguageKit:Text*, entry:Docs:Entry*, base:u8*) -> void {
     let export_id = Docs:entry_id(entry, base); defer free(export_id)
-    out.append("{\"id\":"); Docs:json(out, export_id); out.append(",\"title\":"); Docs:json(out, entry.title)
+    out.append("{\"id\":"); Docs:json(out, export_id); out.append(",\"key\":"); Docs:json(out, entry.id); out.append(",\"symbol\":"); Docs:json(out, entry.symbol); out.append(",\"title\":"); Docs:json(out, entry.title)
     out.append(",\"section\":"); Docs:json(out, entry.section); out.append(",\"scope\":"); Docs:json(out, entry.scope)
     out.append(",\"href\":"); Docs:href(out, base, export_id)
     out.append(",\"source_path\":"); Docs:json(out, entry.source_path); out.append(",\"origin_path\":"); Docs:json(out, entry.origin_path)
     out.append(",\"search_text\":")
-    let search = LanguageKit:Text:new(); search.append(entry.title); search.append("\n"); search.append(entry.inline_docs); search.append("\n"); search.append(entry.body)
-    Docs:json(out, search.data); search.destroy(); out.append("}")
+    let excerpt = LanguageKit:Text:new(); excerpt.append(entry.title); excerpt.append("\n"); excerpt.append(entry.inline_docs); excerpt.append("\n"); excerpt.append(entry.body)
+    if excerpt.length > 240 { var end = 240; while end > 0 && excerpt.data[end] >= 128 && excerpt.data[end] < 192 { end -= 1 }; excerpt.data[end] = 0 }
+    Docs:json(out, excerpt.data); excerpt.destroy(); out.append("}")
 }
 let Docs:page_json = fn (out:LanguageKit:Text*, entry:Docs:Entry*, base:u8*, revision:u8*) -> i64 {
     let export_id = Docs:entry_id(entry, base); defer free(export_id)
-    out.append("{\"id\":"); Docs:json(out, export_id); out.append(",\"title\":"); Docs:json(out, entry.title)
+    out.append("{\"id\":"); Docs:json(out, export_id); out.append(",\"key\":"); Docs:json(out, entry.id); out.append(",\"symbol\":"); Docs:json(out, entry.symbol); out.append(",\"title\":"); Docs:json(out, entry.title)
     out.append(",\"section\":"); Docs:json(out, entry.section); out.append(",\"scope\":"); Docs:json(out, entry.scope)
     out.append(",\"href\":"); Docs:href(out, base, export_id)
     out.append(",\"source_path\":"); Docs:json(out, entry.source_path); out.append(",\"origin_path\":"); Docs:json(out, entry.origin_path)
+    out.append(",\"package_version\":"); Docs:json(out, entry.version)
+    out.append(",\"repository_url\":"); Docs:json(out, entry.repository)
     out.append(",\"source_url\":"); Docs:source_url(out, entry, revision)
     out.append(",\"body\":"); Docs:json(out, entry.body); out.append(",\"inline_docs\":"); Docs:json(out, entry.inline_docs)
     let blocks = LanguageKit:Text:new(); let toc = LanguageKit:Text:new()
@@ -229,10 +233,33 @@ let Docs:navigation_json = fn (out:LanguageKit:Text*, store:Docs:Store*, base:u8
         key.destroy(); entry = entry.next
     }; out.append("]")
 }
+let Docs:index_json = fn (out:LanguageKit:Text*, store:Docs:Store*, base:u8*) -> i64 {
+    if !Docs:build_index(store) { return 0 }
+    out.append("{\"schema_version\":1,\"normalization\":\"ascii-word-prefix-v1\",\"terms\":{")
+    var bucket = 0; var words = 0
+    while bucket < 4096 {
+        var term = store.terms[bucket]
+        while term {
+            if words { out.append(",") }; Docs:json(out, term.word); out.append(":[")
+            var posting = term.first; var count = 0
+            while posting {
+                if count { out.append(",") }
+                if strcmp(base, "site:") == 0 {
+                    let path = Docs:join("/docs", posting.entry.scope); Docs:href(out, path, posting.entry.id); free(path)
+                } else { let id = Docs:entry_id(posting.entry, base); Docs:json(out, id); free(id) }
+                count += 1; posting = posting.next
+            }
+            out.append("]"); words += 1; term = term.next
+        }; bucket += 1
+    }
+    out.append("}}"); return 1
+}
 let Docs:as_json = fn (store:Docs:Store*, base:u8*, revision:u8*) -> u8* {
-    if !store || store.error || !store.first { return cast(u8*, 0) }
+    if !store || store.error || !store.first || !Docs:build_index(store) { return cast(u8*, 0) }
+    Docs:sort(store)
+    if Docs:empty(revision) { revision = store.revision }
     let out = LanguageKit:Text:new(); defer out.destroy()
-    out.append("{\"schema_version\":2,\"package\":{\"name\":"); Docs:json(out, store.name)
+    out.append("{\"schema_version\":3,\"package\":{\"name\":"); Docs:json(out, store.name)
     out.append(",\"version\":"); Docs:json(out, store.version)
     if !Docs:empty(store.repository) { out.append(",\"repository_url\":"); Docs:json(out, store.repository) }
     out.append("}")
@@ -243,7 +270,7 @@ let Docs:as_json = fn (store:Docs:Store*, base:u8*, revision:u8*) -> u8* {
     while entry { if count { out.append(",\n") }; if !Docs:page_json(out, entry, base, revision) { return cast(u8*, 0) }; count += 1; entry = entry.next }
     out.append("\n],\"search\":[\n"); entry = store.first; count = 0
     while entry { if count { out.append(",\n") }; Docs:summary_json(out, entry, base); count += 1; entry = entry.next }
-    out.append("\n]}\n"); return out.take()
+    out.append("\n],\"index\":"); if !Docs:index_json(out, store, base) { return cast(u8*, 0) }; out.append("}\n"); return out.take()
 }
 let Docs:export_file = fn (store:Docs:Store*, path:u8*) -> i64 {
     let json = Docs:as_json(store, "doc:", "")
