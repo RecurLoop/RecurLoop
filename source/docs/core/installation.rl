@@ -1,19 +1,19 @@
-// Released-runtime and editor installation. Public documentation object.
+// Released binary and editor installation. Subtopics belong to this page.
 
 let Docs:Pages:installation = [
     id = phrase { payload = "installation" }
-    title = phrase { payload = "Install RecurLoop" }
+    title = phrase { payload = "Install the RecurLoop binary" }
     section = phrase { payload = "Installation" }
     body = phrase {
-        payload = "Choose a standalone runtime for the terminal, a runtime managed by the VS Code extension, or both. Both installation methods provide the executable and its matching standard libraries.
+        payload = "Install the RecurLoop binary and its standard libraries for use in terminals and other tools.
 
-| Method | Use it when | Who updates it |
-| --- | --- | --- |
-| Standalone installer | You want `recurloop` in ordinary terminals or tools | You rerun the installer |
-| Extension-managed runtime | You want VS Code to provision its compatible runtime | The extension follows its bundled release |
-| Explicit external executable | You keep a particular installation in a custom location | You manage that installation |
+If you want to use VS Code, start with [installing the VS Code extension](installation-vscode.rl). The extension can install and manage a compatible binary for you, or use an installation you manage yourself.
 
-## Install for the terminal
+## Requirements
+
+Official binary installation currently targets Linux x86-64 with glibc. The installer checks for glibc 2.35 or newer and requires `curl`, `tar`, `sha256sum`, `awk`, `mktemp` and `getconf`. On Windows, use a Linux environment through WSL. Native Windows, macOS, ARM and musl/Alpine do not have an automatic binary download.
+
+## Install for your user
 
 ```console
 curl -fsSL https://raw.githubusercontent.com/RecurLoop/RecurLoop/main/tools/install.sh | sh
@@ -22,20 +22,55 @@ export RECURLOOP_LIBRARY_PATH=\"$HOME/.local/share/recurloop/libraries\"
 recurloop --version
 ```
 
-For a normal user the prefix is `~/.local`; the executable is `bin/recurloop` and standard images are in `share/recurloop/libraries` below that prefix. Add the two exports to your shell configuration to keep them in new terminals. The [standalone installation guide](installation-runtime.rl) covers custom prefixes, versions and updates.
+For a normal user the installation prefix is `~/.local`: the executable is `bin/recurloop`, and matching standard `.rli` libraries are in `share/recurloop/libraries` below that prefix. Add the two exports to your shell configuration to keep them in new terminals.
 
-## Install for VS Code
+The installer downloads a published package and verifies its SHA-256 and internal file manifest before copying it to the destination. Keep the complete installed layout together; copying only the executable can leave its libraries or installed documentation unavailable.
 
-Install [RecurLoop from the Marketplace](https://marketplace.visualstudio.com/items?itemName=RecurLoop.recurloop-vscode), open a trusted application folder and run **RecurLoop: Initialize Project**. If no runtime is available, accept the offered managed installation. See [VS Code setup](installation-vscode.rl).
+## Choose an installation location
 
-A managed runtime stays in the extension's storage. It does not add `recurloop` to your terminal PATH. A successful editor setup therefore does not imply that `recurloop --version` works in an unrelated terminal.
+### A custom personal directory
 
-## Supported environment
+Set `RECURLOOP_PREFIX` on the process that executes the installer:
 
-Official binary installation currently targets Linux x86-64 with glibc. The automatic installer checks for glibc 2.35 or newer. On Windows, use a Linux environment through Remote - WSL. Native Windows, macOS, ARM and musl/Alpine do not have an automatic runtime download.
+```console
+curl -fsSL https://raw.githubusercontent.com/RecurLoop/RecurLoop/main/tools/install.sh \\
+  | env RECURLOOP_PREFIX=\"$HOME/.local/opt/recurloop\" sh
+export PATH=\"$HOME/.local/opt/recurloop/bin:$PATH\"
+export RECURLOOP_LIBRARY_PATH=\"$HOME/.local/opt/recurloop/share/recurloop/libraries\"
+recurloop --version
+```
 
-For WSL, SSH and containers, install and configure the extension in the workspace's remote environment. Executable paths, library paths and runtime installation all belong to that environment, not necessarily the computer displaying VS Code.
+### A system-wide installation
 
-Read [the managed-runtime policy](installation-managed-runtime.rl), [updates and version selection](installation-updates.rl), [custom executable paths](installation-custom-runtime.rl) or [troubleshooting](installation-troubleshooting.rl) for the corresponding task."
+```console
+curl -fsSL https://raw.githubusercontent.com/RecurLoop/RecurLoop/main/tools/install.sh \\
+  | sudo env RECURLOOP_PREFIX=/usr/local sh
+```
+
+The default prefix when running as root is `/usr/local`.
+
+## Update or select a version
+
+Run the same installer again with the same prefix to update that installation. Without `RECURLOOP_VERSION`, it resolves the latest published release and downloads its versioned asset.
+
+To select a particular published version, set `RECURLOOP_VERSION` to its `X.Y.Z` version on the installer process. An exported pin remains effective until changed or unset. Keep the executable and its standard libraries from the same selected release.
+
+If VS Code uses this installation, its extension must accept the selected runtime version. After replacing the binary, run **RecurLoop: Restart Language Runtime** and reopen RecurLoop consoles. The [VS Code installation page](installation-vscode.rl) explains compatibility, executable selection and editor updates.
+
+## Verify the installation and resolve problems
+
+```console
+command -v recurloop
+recurloop --version
+```
+
+| Symptom | Check |
+| --- | --- |
+| The terminal cannot find `recurloop` | Add the chosen prefix's `bin` directory to PATH, or invoke the executable by its absolute path. |
+| The wrong version runs | `command -v` identifies the first matching executable on PATH. Adjust PATH or use the intended absolute path. |
+| Standard libraries cannot be found | Preserve the complete package layout and point `RECURLOOP_LIBRARY_PATH` at the selected installation's `share/recurloop/libraries`. |
+| VS Code works but the terminal command is missing | The editor may use a managed installation that does not modify terminal PATH. Follow this page for a standalone command. |
+
+For editor-specific setup, custom executable paths and managed-runtime removal, see [installing the VS Code extension](installation-vscode.rl)."
     }
 ]
