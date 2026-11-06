@@ -1,19 +1,39 @@
-// Extended usage documentation. The catalog and index are generated from these objects.
+// Extended public documentation. Navigation, rendered blocks and indexes are generated.
 
 let Docs:Pages:usage = [
     symbol = phrase { payload = "Http" }
-    section = phrase { payload = "API" }
+    section = phrase { payload = "Guides" }
     default = phrase { payload = "true" }
     body = phrase {
-        payload = "Http provides request parsing, responses, routes and server configuration.
+        payload = "Build an IPv4 HTTP server with typed handlers, exact or prefix routes, bounded request parsing and a worker pool. Import `http`; route callbacks receive borrowed `Http:Request*` and `Http:Response*` arguments.
 
-## Request limits
+## A small service
 
-Configure `Http:Limits` for headers and body size before accepting untrusted requests. A handler receives request data with a lifetime bounded by the current request. Copy values that must outlive it.
+```recurloop
+import http
+let serve_health = fn () -> i64 {
+    http \"127.0.0.1\" 8080 {
+        GET \"/health\" -> fn (request:Http:Request*, response:Http:Response*) -> void {
+            response.json(200, \"{\\\"status\\\":\\\"ok\\\"}\")
+        }
+    }
+    return 0
+}
+// Call serve_health() to start the blocking server.
+```
 
-## Responses
+The example defines the server without starting it. Serving blocks until the accept loop stops or fails. A handler should produce one response before returning; if it sends none, the server supplies an empty `204` response.
 
-Construct response headers and a body through the response API. Check return values and release owned buffers according to each function’s description."
+## API map
+
+| Need | API |
+| --- | --- |
+| Declare routes | `http`, `Http:Server:route` |
+| Read headers or query values | `Request:header`, `Request:param` |
+| Send text, HTML, JSON or bytes | `Response:text`, `html`, `json`, `send` |
+| Limit work and memory | `Http:Limits`, the `limits` clause |
+| Serve one connection | `http once`, `Server:serve_once` |
+
+Read [routing](routing.rl), [request data](requests.rl), [responses](responses.rl), [limits](limits.rl) and [server lifetime](server-lifetime.rl) before exposing a service to clients. The response JSON helper sets a content type; it is not a serializer or JSON validator."
     }
 ]
-

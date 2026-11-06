@@ -1,23 +1,21 @@
-// Extended usage documentation. The catalog and index are generated from these objects.
+// Extended public documentation. Navigation, rendered blocks and indexes are generated.
 
 let Docs:Pages:usage = [
-    symbol = phrase { payload = "target" }
-    section = phrase { payload = "API" }
+    symbol = phrase { payload = "Project" }
+    section = phrase { payload = "Guides" }
     default = phrase { payload = "true" }
     body = phrase {
-        payload = "A target is a named, deferred source block. Declaring it does not execute the body. Dependencies run before the selected target, and shared dependencies execute once.
+        payload = "Project provides named, deferred targets. Declaring a target does not run its body. Selecting a target runs its dependencies first and executes a shared dependency once during that target resolution.
 
 ```recurloop
-target check {
-    assert 6 * 7 == 42
-}
-target prepare {}
-target run depends [prepare] {
-    print \"ready\"
-}
+import project
+target prepare { print \"prepare\" }
+target check depends [prepare] { assert 6 * 7 == 42 }
+target application depends [prepare, check] { print \"ready\" }
 ```
 
-A failing dependency prevents subsequent dependent bodies from running. Target bodies use the same phrase definitions and language state as the project that declares them."
+Selecting `application` runs `prepare`, then `check`, then the application body. The body is ordinary RecurLoop source and sees the project vocabulary. With an installed runtime, select it using `recurloop --project recurloop.project.rl --target application`.
+
+The guides cover [dependency graphs](dependencies.rl), [debug targets](debug-targets.rl) and [project-relative paths](root-paths.rl). Targets describe an application workflow; they are independent of the tooling used to build RecurLoop itself."
     }
 ]
-

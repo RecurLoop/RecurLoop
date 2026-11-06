@@ -12,7 +12,7 @@ VSCODE_EXTENSION_DIR := tools/vscode-recurloop
 
 RELEASE_BUILD_FILE := build/Release/build.ninja
 
-.PHONY: docs docs-library docs-merge docs-check help build release check test verify libraries graphics-libraries install vscode-extension install-vscode-extension run list-examples example examples bundle benchmark reconfigure clean package llvm toolchain
+.PHONY: docs docs-library docs-merge docs-check docs-examples help build release check test verify libraries graphics-libraries install vscode-extension install-vscode-extension run list-examples example examples bundle benchmark reconfigure clean package llvm toolchain
 
 help:
 	@echo 'RecurLoop'
@@ -24,7 +24,8 @@ help:
 	@echo '  make llvm         Download/verify the official LLVM archive into .cache/deps'
 	@echo '  make libraries    Build standard .rli libraries'
 	@echo '  make docs         Export guides and runtime-resolved library help as JSON'
-	@echo '  make docs-check   Test objects, generated indexes, JSON reads and merging'
+	@echo '  make docs-check   Test objects, indexes, JSON, merging and manual examples'
+	@echo '  make docs-examples  Check executable examples from every library manual'
 	@echo '  make docs-library LIBRARY=http  Export one isolated library to DOCS_PARTS'
 	@echo '  make docs-merge   Merge DOCS_PARTS into DOCS_OUTPUT without reimporting libraries'
 	@echo '  make vscode-extension  Build the VS Code extension (.vsix; Node.js 22+)'
@@ -182,6 +183,9 @@ docs: libraries docs-check
 
 docs-check: libraries
 	@"$(RECURLOOP)" --library docs --project recurloop.project.rl --target docs-check
+
+docs-examples: libraries
+	@"$(RECURLOOP)" --library docs --project recurloop.project.rl --target docs-examples
 
 # Each selected image is inspected separately; dependencies are loaded by its .rli manifest.
 docs-library: libraries

@@ -1185,6 +1185,7 @@ recurloop --docs search "ownership" --from build/documentation/index.json --json
 recurloop --docs show "Docs:export_file" --from build/documentation/docs.json
 recurloop --docs merge merged.json part-one.json part-two.json
 make docs-check
+make docs-examples
 make docs
 make docs-library LIBRARY=http
 make docs-library LIBRARY=shell

@@ -191,7 +191,8 @@ let Docs:summary_json = fn (out:LanguageKit:Text*, entry:Docs:Entry*, base:u8*) 
     out.append(",\"href\":"); Docs:href(out, base, export_id)
     out.append(",\"source_path\":"); Docs:json(out, entry.source_path); out.append(",\"origin_path\":"); Docs:json(out, entry.origin_path)
     out.append(",\"search_text\":")
-    let excerpt = LanguageKit:Text:new(); excerpt.append(entry.title); excerpt.append("\n"); excerpt.append(entry.inline_docs); excerpt.append("\n"); excerpt.append(entry.body)
+    let excerpt = LanguageKit:Text:new()
+    if !Docs:empty(entry.body) { excerpt.append(entry.body) } else { excerpt.append(entry.inline_docs) }
     if excerpt.length > 240 { var end = 240; while end > 0 && excerpt.data[end] >= 128 && excerpt.data[end] < 192 { end -= 1 }; excerpt.data[end] = 0 }
     Docs:json(out, excerpt.data); excerpt.destroy(); out.append("}")
 }

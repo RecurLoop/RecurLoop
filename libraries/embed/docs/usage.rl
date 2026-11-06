@@ -1,13 +1,23 @@
-// Extended usage documentation. The catalog and index are generated from these objects.
+// Extended public documentation. Navigation, rendered blocks and indexes are generated.
 
 let Docs:Pages:usage = [
     symbol = phrase { payload = "Embed" }
-    section = phrase { payload = "API" }
+    section = phrase { payload = "Guides" }
     default = phrase { payload = "true" }
     body = phrase {
-        payload = "Embed exposes compile-time binary data through RecurLoop bit strings.
+        payload = "Embed exposes binary literals and helps source-time producers create them. Importing the library does not run the embedded data. An embedded literal is represented by `BitString*`, with an exact bit count and a borrowed byte pointer.
 
-Use `Embed:bits` when the exact bit length matters and `Embed:bytes` for a byte sequence. Keep the data’s lifetime and alignment requirements in mind when passing it to native functions. Embedded bytes are data; they do not execute on import."
+```recurloop
+import embed
+let check_blob = fn () -> i64 {
+    let blob = bits\"10101010_11110000\"
+    if Embed:bits(blob) != 16 || Embed:bytes(blob) != 2 { return 1 }
+    let data = Embed:data(blob)
+    return data[0] != 170 || data[1] != 240
+}
+assert check_blob() == 0
+```
+
+Use [bit and byte counts](bit-layout.rl) when the last byte is partial, [syntax producers](producers.rl) to generate a literal during elaboration, and [native API boundaries](native-data.rl) when passing embedded bytes to another API."
     }
 ]
-
