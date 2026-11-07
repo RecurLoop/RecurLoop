@@ -4,6 +4,7 @@ let Docs:Pages:usage = [
     symbol = phrase { payload = "Http" }
     section = phrase { payload = "Guides" }
     default = phrase { payload = "true" }
+    order = phrase { payload = "10" }
     body = phrase {
         payload = "Build an IPv4 HTTP server with typed handlers, exact or prefix routes, bounded request parsing and a worker pool. Import `http`; route callbacks receive borrowed `Http:Request*` and `Http:Response*` arguments.
 
@@ -34,6 +35,14 @@ The example defines the server without starting it. Serving blocks until the acc
 | Limit work and memory | `Http:Limits`, the `limits` clause |
 | Serve one connection | `http once`, `Server:serve_once` |
 
-Read [routing](routing.rl), [request data](requests.rl), [responses](responses.rl), [limits](limits.rl) and [server lifetime](server-lifetime.rl) before exposing a service to clients. The response JSON helper sets a content type; it is not a serializer or JSON validator."
+The response JSON helper sets a content type; it is not a serializer or JSON validator.
+
+## Learning path
+
+1. [Routing](routing.rl) — Register handlers in a deliberate matching order.
+2. [Requests](requests.rl) — Read and validate request data.
+3. [Responses](responses.rl) — Send one response with valid data lifetimes.
+4. [Server lifecycle](server-lifetime.rl) — Create, run and release the server.
+5. [Limits](limits.rl) — Bound request sizes, timeouts and concurrent work."
     }
 ]

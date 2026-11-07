@@ -2,10 +2,13 @@
 
 let Docs:Pages:text_inputs = [
     id = phrase { payload = "text-inputs" }
-    title = phrase { payload = "Read inputs and edit text without ownership mistakes" }
+    title = phrase { payload = "Text and inputs" }
     section = phrase { payload = "Guides" }
+    order = phrase { payload = "30" }
     body = phrase {
-        payload = "Single-line inputs and multiline text views have different accessors. `input_text` borrows the input's current text; `text_get` allocates a copy of a view's contents. Use `Gui:text_free` for that copy.
+        payload = "## Read input and edit text
+
+Single-line inputs and multiline text views have different accessors. `input_text` borrows the input's current text; `text_get` allocates a copy of a view's contents. Use `Gui:text_free` for that copy.
 
 ```recurloop
 import gui
@@ -17,6 +20,8 @@ let copy_editor_to_label = fn (editor:u8*, label:u8*) -> i64 {
     return 1
 }
 ```
+
+## Choose borrowed or owned text
 
 Copy borrowed input text before changing its widget or keeping it beyond a callback. `editor` creates editable monospace content without wrapping; `text_view` creates read-only output, and `line_gutter` provides a separate line-number view. `text_set` replaces all content.
 

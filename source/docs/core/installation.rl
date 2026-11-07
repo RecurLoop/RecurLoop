@@ -2,8 +2,9 @@
 
 let Docs:Pages:installation = [
     id = phrase { payload = "installation" }
-    title = phrase { payload = "Install the RecurLoop binary" }
-    section = phrase { payload = "Installation" }
+    title = phrase { payload = "RecurLoop binary" }
+    section = phrase { payload = "Getting started" }
+    order = phrase { payload = "20" }
     body = phrase {
         payload = "Install the RecurLoop binary and its standard libraries for use in terminals and other tools.
 

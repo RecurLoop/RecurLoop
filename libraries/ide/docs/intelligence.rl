@@ -2,10 +2,13 @@
 
 let Docs:Pages:intelligence = [
     id = phrase { payload = "intelligence" }
-    title = phrase { payload = "Inspect source with the project vocabulary" }
+    title = phrase { payload = "Source inspection" }
     section = phrase { payload = "Guides" }
+    order = phrase { payload = "50" }
     body = phrase {
-        payload = "`IDE:intelligence_refresh` refreshes the source-inspection runtime from the current project environment. `intelligence_analyze(host, path, source)` inspects a buffer and returns an allocated protocol response or null.
+        payload = "## Analyze source in the project vocabulary
+
+`IDE:intelligence_refresh` refreshes the source-inspection runtime from the current project environment. `intelligence_analyze(host, path, source)` inspects a buffer and returns an allocated protocol response or null.
 
 ```recurloop
 import ide
@@ -18,6 +21,8 @@ let inspect_buffer = fn (host:IDE:Host*, path:u8*, source:u8*) -> i64 {
     return 1
 }
 ```
+
+## Inspect unsaved buffers safely
 
 Pass the actual buffer contents, including unsaved changes, and its intended path so project-relative resolution remains meaningful. The response is protocol data; parse it according to its format instead of displaying it as trusted HTML or treating it as source to execute.
 

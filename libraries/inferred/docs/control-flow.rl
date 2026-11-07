@@ -2,10 +2,13 @@
 
 let Docs:Pages:control_flow = [
     id = phrase { payload = "control-flow" }
-    title = phrase { payload = "Branches, local bindings and recursion" }
+    title = phrase { payload = "Control flow" }
     section = phrase { payload = "Guides" }
+    order = phrase { payload = "30" }
     body = phrase {
-        payload = "Use ordinary local names inside a function and return from each intended branch. The selected argument kinds determine the operations available in that specialization.
+        payload = "## Keep branch and local types consistent
+
+Use ordinary local names inside a function and return from each intended branch. The selected argument kinds determine the operations available in that specialization.
 
 ```recurloop
 import inferred

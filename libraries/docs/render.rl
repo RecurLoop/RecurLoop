@@ -196,12 +196,19 @@ let Docs:summary_json = fn (out:LanguageKit:Text*, entry:Docs:Entry*, base:u8*) 
     if excerpt.length > 240 { var end = 240; while end > 0 && excerpt.data[end] >= 128 && excerpt.data[end] < 192 { end -= 1 }; excerpt.data[end] = 0 }
     Docs:json(out, excerpt.data); excerpt.destroy(); out.append("}")
 }
+let Docs:order_json = fn (out:LanguageKit:Text*, entry:Docs:Entry*) -> void {
+    if entry.order == 0 { return }
+    let number = malloc(32)
+    if !number { return }; snprintf(number, 32, "%ld", entry.order)
+    out.append(",\"order\":"); out.append(number); free(number)
+}
 let Docs:page_json = fn (out:LanguageKit:Text*, entry:Docs:Entry*, base:u8*, revision:u8*) -> i64 {
     let export_id = Docs:entry_id(entry, base); defer free(export_id)
     out.append("{\"id\":"); Docs:json(out, export_id); out.append(",\"key\":"); Docs:json(out, entry.id); out.append(",\"symbol\":"); Docs:json(out, entry.symbol); out.append(",\"title\":"); Docs:json(out, entry.title)
     out.append(",\"section\":"); Docs:json(out, entry.section); out.append(",\"scope\":"); Docs:json(out, entry.scope)
     out.append(",\"href\":"); Docs:href(out, base, export_id)
     out.append(",\"source_path\":"); Docs:json(out, entry.source_path); out.append(",\"origin_path\":"); Docs:json(out, entry.origin_path)
+    Docs:order_json(out, entry)
     out.append(",\"package_version\":"); Docs:json(out, entry.version)
     out.append(",\"repository_url\":"); Docs:json(out, entry.repository)
     out.append(",\"source_url\":"); Docs:source_url(out, entry, revision)

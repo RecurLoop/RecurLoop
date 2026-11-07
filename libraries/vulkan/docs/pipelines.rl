@@ -2,10 +2,13 @@
 
 let Docs:Pages:pipelines = [
     id = phrase { payload = "pipelines" }
-    title = phrase { payload = "Create shader modules and a triangle pipeline" }
+    title = phrase { payload = "Pipelines" }
     section = phrase { payload = "Guides" }
+    order = phrase { payload = "50" }
     body = phrase {
-        payload = "Shader modules require valid SPIR-V words. `create_shader_module` takes a `u32*` and a byte count, not a word count. The data must have the required word layout and alignment; arbitrary text or a cast alone does not create valid SPIR-V.
+        payload = "## Create shader modules and a triangle pipeline
+
+Shader modules require valid SPIR-V words. `create_shader_module` takes a `u32*` and a byte count, not a word count. The data must have the required word layout and alignment; arbitrary text or a cast alone does not create valid SPIR-V.
 
 ```recurloop
 import vulkan
@@ -24,7 +27,11 @@ let pipeline_from_spirv = fn (
 }
 ```
 
+## Transfer ownership and clean up on failure
+
 The function borrows the device, swapchain and input words. On success the caller owns the returned `Pipeline`. Temporary shader modules can be destroyed after pipeline creation; the pipeline owns its render pass, layout and framebuffers, not these modules.
+
+## Respect the helper pipeline contract
 
 The helper expects shader entry points named `main` and configures the library's triangle renderer. To implement a different rendering model, use the relevant native records/calls and establish your own ownership and synchronization. Do not assume that changing shader words automatically changes vertex input, descriptors or render-pass compatibility."
     }

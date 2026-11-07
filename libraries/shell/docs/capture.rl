@@ -2,10 +2,13 @@
 
 let Docs:Pages:capture = [
     id = phrase { payload = "capture" }
-    title = phrase { payload = "Capture output and manage asynchronous jobs" }
+    title = phrase { payload = "Capture and jobs" }
     section = phrase { payload = "Guides" }
+    order = phrase { payload = "40" }
     body = phrase {
-        payload = "Inside a typed function, `capture` returns a newly allocated null-terminated `u8*`. Check for null, consume the text and release it with `free`. At top level it produces a runtime string binding instead.
+        payload = "## Capture output as owned text
+
+Inside a typed function, `capture` returns a newly allocated null-terminated `u8*`. Check for null, consume the text and release it with `free`. At top level it produces a runtime string binding instead.
 
 ```recurloop
 import shell
@@ -17,6 +20,8 @@ let read_output = fn () -> i64 {
 }
 assert read_output() == 0
 ```
+
+## Keep output and status together
 
 Capture text alone does not carry an exit status. When both are required, use `spawn` or `Shell:capture_pipeline` and inspect the associated result.
 

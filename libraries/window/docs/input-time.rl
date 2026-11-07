@@ -2,10 +2,13 @@
 
 let Docs:Pages:input_time = [
     id = phrase { payload = "input-time" }
-    title = phrase { payload = "Read input state and measure elapsed time" }
+    title = phrase { payload = "Input and time" }
     section = phrase { payload = "Guides" }
+    order = phrase { payload = "30" }
     body = phrase {
-        payload = "GLFW updates cached input while processing events. Poll or wait before relying on `glfwGetKey`. The `key` argument below is a GLFW key code chosen by the application.
+        payload = "## Read cached key state
+
+GLFW updates cached input while processing events. Poll or wait before relying on `glfwGetKey`. The `key` argument below is a GLFW key code chosen by the application.
 
 ```recurloop
 import window
@@ -20,6 +23,8 @@ let elapsed_seconds = fn (started:u64) -> f64 {
     return cast(f64, ticks) / cast(f64, frequency)
 }
 ```
+
+## Measure elapsed time
 
 Take `started` from `glfwGetTimerValue` after initialization. The frequency is ticks per second, not milliseconds. Subtract counters before converting to floating point; converting a large absolute counter first can lose precision.
 

@@ -6,7 +6,7 @@ extern mkdtemp(pattern:u8*) -> u8* abi sysv-amd64
 record Docs:Entry {
     id:u8* title:u8* section:u8* body:u8* inline_docs:u8*
     source_path:u8* origin_path:u8* scope:u8* repository:u8* version:u8*
-    symbol:u8* exported_id:u8* source_url:u8* owner:u8* home:i64 hits:i64 seen:i64 matches:i64
+    symbol:u8* exported_id:u8* source_url:u8* owner:u8* home:i64 order:i64 hits:i64 seen:i64 matches:i64
     previous:Docs:Entry* next:Docs:Entry*
 }
 record Docs:Posting { entry:Docs:Entry* next:Docs:Posting* }
@@ -97,6 +97,18 @@ let Docs:setting = fn (text:u8*, key:u8*, fallback:u8*) -> u8* {
         if text[end] == 0 { break }; at = end + 1
     }
     return Docs:copy(fallback)
+}
+// Zero keeps legacy alphabetical fallback; positive ranks define a reading path.
+let Docs:parse_order = fn (text:u8*) -> i64 {
+    if !text || text[0] == 0 { return -1 }
+    var value:i64 = 0; var at = 0
+    while text[at] != 0 {
+        let digit = text[at]
+        if digit < 48 || digit > 57 { return -1 }
+        value = value * 10 + cast(i64, digit - 48)
+        if value > 1000000 { return -1 }; at += 1
+    }
+    return value
 }
 let Docs:valid_id = fn (id:u8*) -> i64 {
     if Docs:empty(id) || strlen(id) > 120 { return 0 }

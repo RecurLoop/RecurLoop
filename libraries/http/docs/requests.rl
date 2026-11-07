@@ -2,10 +2,13 @@
 
 let Docs:Pages:requests = [
     id = phrase { payload = "requests" }
-    title = phrase { payload = "Read query parameters, headers and binary bodies" }
+    title = phrase { payload = "Requests" }
     section = phrase { payload = "Guides" }
+    order = phrase { payload = "30" }
     body = phrase {
-        payload = "The server owns request storage. `request.header(name)` looks up names without regard to ASCII case. `request.param(name)` percent-decodes a query value, including `+` as a space, and returns request-owned storage. Null means no value was found or storage could not be produced; an empty string is a present empty value.
+        payload = "## Read headers and query parameters
+
+The server owns request storage. `request.header(name)` looks up names without regard to ASCII case. `request.param(name)` percent-decodes a query value, including `+` as a space, and returns request-owned storage. Null means no value was found or storage could not be produced; an empty string is a present empty value.
 
 ```recurloop
 import http
@@ -16,6 +19,8 @@ let greeting = fn (request:Http:Request*, response:Http:Response*) -> void {
     response.text(200, name)
 }
 ```
+
+## Validate decoded input
 
 For `/hello?name=Ada+Lovelace`, `name` is `Ada Lovelace`. Validate values according to the operation you perform; decoding does not validate application data.
 

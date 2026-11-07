@@ -4,8 +4,11 @@ let Docs:Pages:usage = [
     symbol = phrase { payload = "Docs" }
     section = phrase { payload = "Guides" }
     default = phrase { payload = "true" }
+    order = phrase { payload = "10" }
     body = phrase {
         payload = "Combine concise phrase help with extended RecurLoop documentation objects, search a catalog, edit its content and export portable JSON. Source catalogs build their index automatically. Exported catalogs reuse the index supplied in the file.
+
+## First example
 
 ```recurloop
 import docs
@@ -34,6 +37,14 @@ assert catalog_example() == 0
 | strings from `as_text`, `as_json` | owned; `free` |
 | objects persisted with `save_directory` | authored `.rl`, no authored index |
 
-See [authoring](authoring.rl), [indexed search](search.rl), [JSON and merge](portable-json.rl), [editing](editing.rl) and [CLI usage](cli.rl). Do not destroy a catalog while a borrowed entry is still in use."
+Do not destroy a catalog while a borrowed entry is still in use.
+
+## Learning path
+
+1. [Authoring](authoring.rl) — Define short phrase help and extended manual objects.
+2. [Search](search.rl) — Query catalogs and reuse generated indexes.
+3. [Editing](editing.rl) — Update documentation and persist source objects.
+4. [Export and merge](portable-json.rl) — Export separate packages and merge their indexes.
+5. [Command line](cli.rl) — Find and display documentation from the terminal."
     }
 ]

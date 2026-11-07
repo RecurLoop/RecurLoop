@@ -2,8 +2,9 @@
 
 let Docs:Pages:installation_vscode = [
     id = phrase { payload = "installation-vscode" }
-    title = phrase { payload = "Install the VS Code extension" }
-    section = phrase { payload = "Installation" }
+    title = phrase { payload = "VS Code extension" }
+    section = phrase { payload = "Getting started" }
+    order = phrase { payload = "30" }
     body = phrase {
         payload = "Install the RecurLoop extension for project-aware editing and consoles in VS Code. You can let the extension manage the RecurLoop binary, use an existing binary on PATH, or select an installation in a custom location. For a separate terminal installation, follow [installing the RecurLoop binary](installation.rl).
 

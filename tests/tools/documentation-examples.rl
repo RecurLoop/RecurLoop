@@ -1,10 +1,12 @@
 // Evaluate every executable public-manual example in a clean runtime.
 // GUI/server examples define callable functions; they do not start loops here.
+// Core API invocation templates are not standalone programs; guide examples are.
 let DocsExamples = []
 let DocsExamples:check = fn (store:Docs:Store*, executable:u8*, libraries:u8*, directory:u8*) -> i64 {
     var entry = store.first; var count = 0; var failed = 0
     while entry {
         var cursor = entry.body
+        if strcmp(store.name, "core") == 0 && strcmp(entry.section, "API") == 0 { cursor = cast(u8*, 0) }
         while cursor && cursor[0] != 0 {
             let opening = strstr(cursor, "```recurloop\n")
             if !opening { break }
@@ -60,6 +62,14 @@ let DocsExamples:all = fn () -> i64 {
         }
         if !more { break }; line = &line[end + 1]
     }
+    let core = Docs:new("core", "test", "")
+    if !core { return 9 }
+    let core_loaded = Docs:load_package(core, ".", "")
+    if !core_loaded { Docs:destroy(core); return 10 }
+    let core_count = DocsExamples:check(core, executable, libraries, directory)
+    Docs:destroy(core)
+    if core_count <= 0 { printf("[docs-examples] core examples failed or missing\n"); return 11 }
+    printf("[docs-examples] core: %ld examples passed\n", core_count); total += core_count
     if failed { printf("[docs-examples] %ld examples failed\n", failed); return 7 }
     printf("[docs-examples] %ld examples passed in isolated runtimes\n", total)
     return 0

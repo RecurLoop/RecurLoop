@@ -2,10 +2,13 @@
 
 let Docs:Pages:selectors = [
     id = phrase { payload = "selectors" }
-    title = phrase { payload = "Select Inferred syntax and share values" }
+    title = phrase { payload = "Interoperability" }
     section = phrase { payload = "Guides" }
+    order = phrase { payload = "40" }
     body = phrase {
-        payload = "`infer` explicitly selects Inferred for one definition or an entire block. It makes vocabulary choice visible when several syntax libraries are active.
+        payload = "## Select a vocabulary explicitly
+
+`infer` explicitly selects Inferred for one definition or an entire block. It makes vocabulary choice visible when several syntax libraries are active.
 
 ```recurloop
 import inferred

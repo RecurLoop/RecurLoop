@@ -2,10 +2,13 @@
 
 let Docs:Pages:surfaces = [
     id = phrase { payload = "surfaces" }
-    title = phrase { payload = "Create a surface and use framebuffer pixels" }
+    title = phrase { payload = "Vulkan surfaces" }
     section = phrase { payload = "Guides" }
+    order = phrase { payload = "40" }
     body = phrase {
-        payload = "After initialization, obtain both required extension names and their count. These names belong to GLFW; do not free them. Supply them when creating the Vulkan instance, then create the presentation surface for that instance and window.
+        payload = "## Create a Vulkan presentation surface
+
+After initialization, obtain both required extension names and their count. These names belong to GLFW; do not free them. Supply them when creating the Vulkan instance, then create the presentation surface for that instance and window.
 
 ```recurloop
 import window
@@ -22,6 +25,8 @@ let with_surface = fn (window:u8*) -> i64 {
     return 0
 }
 ```
+
+## Keep window and surface lifetimes aligned
 
 The caller keeps the initialized window alive throughout the call. A zero surface handle indicates failure. The surface must be released before its instance or window. If you create swapchains, release those before the surface too.
 

@@ -2,10 +2,13 @@
 
 let Docs:Pages:layout = [
     id = phrase { payload = "layout" }
-    title = phrase { payload = "Compose layouts, panes, tabs and stacks" }
+    title = phrase { payload = "Layouts" }
     section = phrase { payload = "Guides" }
+    order = phrase { payload = "20" }
     body = phrase {
-        payload = "`column` and `row` create boxes with spacing in pixels. `append(box, child, grow, padding)` attaches a child at the start; `append_end` packs it at the end. `grow` controls expansion and padding adds surrounding space.
+        payload = "## Compose and attach containers
+
+`column` and `row` create boxes with spacing in pixels. `append(box, child, grow, padding)` attaches a child at the start; `append_end` packs it at the end. `grow` controls expansion and padding adds surrounding space.
 
 ```recurloop
 import gui
@@ -20,6 +23,8 @@ let build_form = fn () -> u8* {
     return root
 }
 ```
+
+## Transfer the root to its parent
 
 Call this after successful initialization. The returned root belongs to the caller until attached to another container. Destroying that root releases its attached children; do not separately free a child pointer after attachment.
 

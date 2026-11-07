@@ -2,10 +2,13 @@
 
 let Docs:Pages:commands = [
     id = phrase { payload = "commands" }
-    title = phrase { payload = "Commands, quoting and interpolation" }
+    title = phrase { payload = "Commands" }
     section = phrase { payload = "Guides" }
+    order = phrase { payload = "20" }
     body = phrase {
-        payload = "Use `run program argument ...` for an explicit command. Arguments can contain spaces without becoming multiple arguments, and RecurLoop expressions can be interpolated with `{expression}`.
+        payload = "## Quote and interpolate arguments
+
+Use `run program argument ...` for an explicit command. Arguments can contain spaces without becoming multiple arguments, and RecurLoop expressions can be interpolated with `{expression}`.
 
 ```recurloop
 import shell

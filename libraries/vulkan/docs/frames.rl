@@ -2,10 +2,13 @@
 
 let Docs:Pages:frames = [
     id = phrase { payload = "frames" }
-    title = phrase { payload = "Synchronize one frame and interpret result codes" }
+    title = phrase { payload = "Frames" }
     section = phrase { payload = "Guides" }
+    order = phrase { payload = "60" }
     body = phrase {
-        payload = "`FrameResources` owns a command pool/buffer, image-available semaphore, render-finished semaphore and in-flight fence. `draw_triangle_frame` waits for the preceding frame, acquires an image, records commands, submits work and presents it.
+        payload = "## Acquire, record and present a frame
+
+`FrameResources` owns a command pool/buffer, image-available semaphore, render-finished semaphore and in-flight fence. `draw_triangle_frame` waits for the preceding frame, acquires an image, records commands, submits work and presents it.
 
 ```recurloop
 import vulkan
@@ -17,6 +20,8 @@ let draw_one_frame = fn (device:Vulkan:Device*, swapchain:Vulkan:Swapchain*, pip
     return Vulkan:draw_triangle_frame(device, swapchain, pipeline, frame)
 }
 ```
+
+## Wait before releasing frame resources
 
 The deferred wait runs before frame destruction. This makes the single-call ownership example safe to release; for a continuous renderer keep frame resources and reuse them rather than allocating and waiting idle every frame.
 

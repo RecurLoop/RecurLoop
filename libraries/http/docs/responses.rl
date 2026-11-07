@@ -2,10 +2,13 @@
 
 let Docs:Pages:responses = [
     id = phrase { payload = "responses" }
-    title = phrase { payload = "Send exactly one response" }
+    title = phrase { payload = "Responses" }
     section = phrase { payload = "Guides" }
+    order = phrase { payload = "40" }
     body = phrase {
-        payload = "Set headers first, then send the body. `text` and `html` accept null-terminated text and set a UTF-8 content type. `json` accepts already serialized JSON. `send` accepts an explicit byte length and is suitable for binary output. `empty` emits a status with no body.
+        payload = "## Set headers before sending
+
+Set headers first, then send the body. `text` and `html` accept null-terminated text and set a UTF-8 content type. `json` accepts already serialized JSON. `send` accepts an explicit byte length and is suitable for binary output. `empty` emits a status with no body.
 
 ```recurloop
 import http
@@ -16,6 +19,8 @@ let health_response = fn (request:Http:Request*, response:Http:Response*) -> voi
 ```
 
 ## Lifetimes and repeated sends
+
+## Keep response data alive
 
 `header` borrows both strings until sending. Use string literals or keep allocated values alive until the send completes. `send` borrows body bytes for the duration of that call. A second send is ignored; headers added after sending are ignored too. Return immediately after handling an error to avoid ambiguous control flow.
 

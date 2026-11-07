@@ -2,10 +2,13 @@
 
 let Docs:Pages:dependencies = [
     id = phrase { payload = "dependencies" }
-    title = phrase { payload = "Compose targets with dependencies" }
+    title = phrase { payload = "Dependencies" }
     section = phrase { payload = "Guides" }
+    order = phrase { payload = "20" }
     body = phrase {
-        payload = "Put prerequisites in `depends [name, ...]`, before the body or a `debug` clause. Dependencies are target names, not shell commands or file paths.
+        payload = "## Resolve dependencies before target bodies
+
+Put prerequisites in `depends [name, ...]`, before the body or a `debug` clause. Dependencies are target names, not shell commands or file paths.
 
 ```recurloop
 import project
@@ -20,6 +23,8 @@ The shared `assets` target runs once when resolving `all`. A failed dependency p
 ## Separate definition from effects
 
 Create values and phrases needed by multiple targets outside their bodies. Keep side effects inside the target that owns them. Declaring a target is safe during project discovery precisely because its body remains deferred. A target that writes a file should make that effect explicit in its own source and handle failures before returning success.
+
+## Distinguish targets from file caches
 
 Target execution is dependency-driven, not an automatic file timestamp cache. Do not assume that an unchanged input file causes a target to be skipped across separate runtime invocations."
     }

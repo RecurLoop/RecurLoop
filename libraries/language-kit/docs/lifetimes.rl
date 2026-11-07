@@ -2,10 +2,13 @@
 
 let Docs:Pages:lifetimes = [
     id = phrase { payload = "lifetimes" }
-    title = phrase { payload = "Managed scopes, strong references and weak handles" }
+    title = phrase { payload = "Managed lifetimes" }
     section = phrase { payload = "Guides" }
+    order = phrase { payload = "60" }
     body = phrase {
-        payload = "Use `Lifetime` for resources tied to a language evaluation scope. Enter nested scopes and leave them in reverse order. Leaving releases that scope's strong references; a payload is destroyed when its last strong reference is gone.
+        payload = "## Manage strong and weak references
+
+Use `Lifetime` for resources tied to a language evaluation scope. Enter nested scopes and leave them in reverse order. Leaving releases that scope's strong references; a payload is destroyed when its last strong reference is gone.
 
 ```recurloop
 import language-kit

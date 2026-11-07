@@ -2,10 +2,13 @@
 
 let Docs:Pages:pipeline_objects = [
     id = phrase { payload = "pipeline-objects" }
-    title = phrase { payload = "Build pipelines from runtime arguments" }
+    title = phrase { payload = "Command objects" }
     section = phrase { payload = "Guides" }
+    order = phrase { payload = "50" }
     body = phrase {
-        payload = "Use command objects when arguments come from a user, a collection or another function. Add the program name first. `Command:add` copies its input; `add_owned` transfers an allocated string only on success.
+        payload = "## Build argument vectors at runtime
+
+Use command objects when arguments come from a user, a collection or another function. Add the program name first. `Command:add` copies its input; `add_owned` transfers an allocated string only on success.
 
 ```recurloop
 import shell
@@ -35,6 +38,8 @@ assert echo_argument(\"one argument; no shell expansion\") == 0
 2. Successful `pipeline.add(command)` transfers that command to the pipeline.
 3. `capture_pipeline` returns an independent, owned `Shell:Capture`; the pipeline remains caller-owned.
 4. Destroy the capture after reading its output, and destroy the pipeline after its last execution.
+
+## Insert text transformations
 
 `Pipeline:add_function` adds a text transformation. A callback receives borrowed input valid during that call. It returns the text to print; ensure the result remains valid for the callback contract. Do not retain the input pointer in a longer-lived object."
     }

@@ -2,10 +2,13 @@
 
 let Docs:Pages:configuration = [
     id = phrase { payload = "configuration" }
-    title = phrase { payload = "Launcher configuration and path lifetimes" }
+    title = phrase { payload = "Configuration" }
     section = phrase { payload = "Guides" }
+    order = phrase { payload = "20" }
     body = phrase {
-        payload = "`Config:new` creates an owned configuration. String setters copy their arguments and return the same configuration for chaining. Destroy it after `open` has returned, or use `IDE:run`, which creates, configures, opens and releases one for you.
+        payload = "## Create a launcher
+
+`Config:new` creates an owned configuration. String setters copy their arguments and return the same configuration for chaining. Destroy it after `open` has returned, or use `IDE:run`, which creates, configures, opens and releases one for you.
 
 ```recurloop
 import ide
@@ -24,7 +27,11 @@ let make_configuration = fn (workspace:u8*, source:u8*) -> IDE:Config* {
 }
 ```
 
+## Set the required view callback
+
 The caller owns the returned pointer and must eventually call `destroy`. Set `view` before opening. `size` ignores unsupported dimensions; unknown reload mode strings leave the old mode unchanged. Defaults include hot reload and a 1360×860 window.
+
+## Resolve paths against the workspace
 
 Relative cache and watch paths resolve against the workspace. A watch path must identify an existing directory. Choose a cache outside generated source watched as application input to avoid unnecessary reload work. A source path identifies the application source that can reproduce its configuration and view; it is not a documentation file or an arbitrary widget label."
     }

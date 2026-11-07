@@ -2,10 +2,13 @@
 
 let Docs:Pages:portable_json = [
     id = phrase { payload = "portable-json" }
-    title = phrase { payload = "Read exported JSON and merge catalogs" }
+    title = phrase { payload = "Export and merge" }
     section = phrase { payload = "Guides" }
+    order = phrase { payload = "50" }
     body = phrase {
-        payload = "`Docs:export_file` writes a complete v3 bundle with pages, rendered blocks, navigation and the inverted index. `read_export` accepts either a bundle or a collection `index.json`, including its referenced bundles.
+        payload = "## Export and load a portable bundle
+
+`Docs:export_file` writes a complete v3 bundle with pages, rendered blocks, navigation and the inverted index. `read_export` accepts either a bundle or a collection `index.json`, including its referenced bundles.
 
 ```recurloop
 import docs
@@ -36,7 +39,7 @@ Copying a new file beside an existing collection does not register it automatica
 
 An entry is identified by scope and key. `Docs:merge(destination, source)` copies entries and merges existing postings without taking ownership of the source store. Both stores must still be destroyed by their owners.
 
-Identical entries deduplicate. Conflicting bodies, short descriptions, titles, symbols, sections or versions fail instead of silently overwriting one another. Use deliberately distinct package scopes when combining unrelated catalogs. Keep bundle files and their collection index from the same export revision.
+Identical entries deduplicate. Conflicting bodies, short descriptions, titles, symbols, sections, reading-order ranks or versions fail instead of silently overwriting one another. Use deliberately distinct package scopes when combining unrelated catalogs. Keep bundle files and their collection index from the same export revision.
 
 Portable JSON is a generated artifact. Author `.rl` objects, regenerate bundles and serve those results to readers; do not maintain a second manual navigation or term index in the frontend."
     }

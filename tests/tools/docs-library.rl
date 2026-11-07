@@ -95,11 +95,51 @@ let DocsTests:cli_exports = fn () -> i64 {
     if !Docs:read_export(merged, ".cache/docs-export/merged.json") || merged.first != merged.last || merged.index_builds != 0 { return 7 }
     return 0
 }
+// Authored learning order survives portable JSON, source persistence and merges.
+let DocsTests:reading_order = fn () -> i64 {
+    let store = Docs:new("ordered", "1.0.0", "")
+    if !store { return 1 }; defer Docs:destroy(store)
+    let reference = Docs:add(store, "ordered", "api", "API", "API", "Reference.", "", "")
+    let second = Docs:add(store, "ordered", "second", "Alpha comes later", "Guides", "Second step.", "", "")
+    let first = Docs:add(store, "ordered", "first", "Zulu comes first", "Guides", "First step.", "", "")
+    let home = Docs:add(store, "ordered", "home", "Overview", "Guides", "Start here.", "", "")
+    if !reference || !second || !first || !home { return 2 }
+    first.order = 10; second.order = 20; home.home = 1
+    Docs:sort(store)
+    if store.first != home || home.next != first || first.next != second || second.next != reference || second.previous != first { return 3 }
+    let json = Docs:as_json(store, "doc:", "")
+    if !json { return 4 }; defer free(json)
+    let parsed = Docs:json_parse(json)
+    if !parsed { return 5 }; defer Docs:json_destroy(parsed)
+    let imported = Docs:decode_bundle(parsed)
+    if !imported || imported.error { if imported { Docs:destroy(imported) }; return 6 }; defer Docs:destroy(imported)
+    Docs:sort(imported)
+    if strcmp(imported.first.next.id, "first") != 0 || imported.first.next.order != 10 || imported.first.next.next.order != 20 || imported.index_builds != 0 { return 7 }
+    let merged = Docs:new("ordered", "1.0.0", "")
+    if !merged { return 8 }; defer Docs:destroy(merged)
+    if !Docs:merge(merged, imported) || merged.first.next.order != 10 || merged.index_builds != 0 { return 9 }
+    if !Docs:save_directory(store, ".", ".cache/docs-export/ordered", "ordered") { return 10 }
+    let authored = Docs:new("ordered", "1.0.0", "")
+    if !authored { return 11 }; defer Docs:destroy(authored)
+    if !Docs:load_directory(authored, ".", ".cache/docs-export/ordered", "ordered") || authored.error || authored.first.next.order != 10 || strcmp(authored.first.next.id, "first") != 0 { return 12 }
+    first.order = 30
+    if Docs:merge(merged, store) || !merged.error { return 13 }
+    if Docs:parse_order("-1") != -1 || Docs:parse_order("1.5") != -1 || Docs:parse_order("1000001") != -1 || Docs:parse_order("1000000") != 1000000 { return 14 }
+    let pages = Docs:json_field(parsed, "pages")
+    let ordering = Docs:json_field(pages.first.next, "order")
+    if !ordering { return 15 }; free(ordering.text); ordering.text = Docs:copy("-1")
+    let invalid = Docs:decode_bundle(parsed)
+    if !invalid { return 16 }; let rejected = invalid.error; Docs:destroy(invalid)
+    if !rejected { return 17 }
+    return 0
+}
+
 let DocsTests:all = fn () -> i64 {
     let status = run mkdir -p .cache/docs-export
     if status != 0 { return 1 }
     let trace = DocsTests:run(); if trace != 0 { return trace }
     let json = DocsTests:json_reader(); if json != 0 { printf("[docs-check] JSON reader: %ld\n", json); return json }
+    let ordered = DocsTests:reading_order(); if ordered != 0 { printf("[docs-check] reading order: %ld\n", ordered); return ordered }
     let index = DocsTests:index_roundtrip(); if index != 0 { printf("[docs-check] source/index roundtrip: %ld\n", index); return index }
     let packages = DocsTests:source_packages(); if packages != 0 { printf("[docs-check] source packages: %ld\n", packages); return packages }
     let manuals = DocsTests:library_manuals(); if manuals != 0 { printf("[docs-check] library-owned manuals: %ld\n", manuals); return manuals }

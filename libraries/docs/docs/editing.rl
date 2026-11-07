@@ -2,10 +2,13 @@
 
 let Docs:Pages:editing = [
     id = phrase { payload = "editing" }
-    title = phrase { payload = "Edit in memory and persist authored objects" }
+    title = phrase { payload = "Editing" }
     section = phrase { payload = "Guides" }
+    order = phrase { payload = "40" }
     body = phrase {
-        payload = "`set_body` replaces an entry body and copies its string. `set_inline` updates short help in the catalog; it does not edit a source phrase automatically. Both invalidate the owning index. Modifying fields directly bypasses that behavior and can leave search stale.
+        payload = "## Update body text and short help
+
+`set_body` replaces an entry body and copies its string. `set_inline` updates short help in the catalog; it does not edit a source phrase automatically. Both invalidate the owning index. Modifying fields directly bypasses that behavior and can leave search stale.
 
 ```recurloop
 import docs

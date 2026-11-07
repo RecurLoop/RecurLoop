@@ -4,8 +4,11 @@ let Docs:Pages:usage = [
     symbol = phrase { payload = "LanguageKit" }
     section = phrase { payload = "Guides" }
     default = phrase { payload = "true" }
+    order = phrase { payload = "10" }
     body = phrase {
         payload = "LanguageKit supplies reusable tools for source-defined vocabularies: growable text, token readers, phrase-aware parsing, managed values and cross-language bindings. Import it when writing a language extension or using its native helpers directly.
+
+## First example
 
 ```recurloop
 import language-kit
@@ -36,6 +39,14 @@ assert demonstrate() == 0
 | `Value` and `publish` | exchange data between vocabularies |
 | `Lifetime` | scope-owned resources and weak handles |
 
-The guides explain [text](text.rl), [readers](readers.rl), [phrase grammars](phrase-readers.rl), [shared values](shared-values.rl) and [managed lifetimes](lifetimes.rl). Native pointers and runtime values have different ownership; avoid replacing a documented release operation with `free` merely because the representation contains a pointer."
+Native pointers and runtime values have different ownership; avoid replacing a documented release operation with `free` merely because the representation contains a pointer.
+
+## Learning path
+
+1. [Text buffers](text.rl) — Build strings and transfer their buffers.
+2. [Source readers](readers.rl) — Inspect and consume source without losing ownership.
+3. [Grammar parsing](phrase-readers.rl) — Respect the active phrase grammar and aliases.
+4. [Shared values](shared-values.rl) — Publish values and callbacks between vocabularies.
+5. [Managed lifetimes](lifetimes.rl) — Manage adopted resources and weak references."
     }
 ]

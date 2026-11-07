@@ -26,6 +26,11 @@ let Docs:source_object = fn (out:LanguageKit:Text*, entry:Docs:Entry*) -> i64 {
     if !Docs:empty(entry.symbol) { Docs:source_field(out, "symbol", entry.symbol) }
     Docs:source_field(out, "title", entry.title); Docs:source_field(out, "section", entry.section)
     if entry.home { Docs:source_field(out, "default", "true") }
+    if entry.order {
+        let number = malloc(32); if !number { return 0 }
+        snprintf(number, 32, "%ld", entry.order)
+        Docs:source_field(out, "order", number); free(number)
+    }
     Docs:source_field(out, "body", entry.body); out.append("]\n\n"); return 1
 }
 let Docs:save = fn (entry:Docs:Entry*, path:u8*) -> i64 {

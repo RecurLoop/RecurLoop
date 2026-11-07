@@ -2,10 +2,13 @@
 
 let Docs:Pages:process_scope = [
     id = phrase { payload = "process-scope" }
-    title = phrase { payload = "Environment, working directories and parallel jobs" }
+    title = phrase { payload = "Process settings" }
     section = phrase { payload = "Guides" }
+    order = phrase { payload = "60" }
     body = phrase {
-        payload = "`directory` temporarily changes the process working directory for a block. `environment` exposes a named runtime binding to child processes and restores the previous environment on exit.
+        payload = "## Scope environment and working-directory changes
+
+`directory` temporarily changes the process working directory for a block. `environment` exposes a named runtime binding to child processes and restores the previous environment on exit.
 
 ```recurloop
 import shell
@@ -15,6 +18,8 @@ environment \"RECURLOOP_DOCS_EXAMPLE\" {
 }
 assert status == 0
 ```
+
+## Release native process guards
 
 For typed functions, `Shell:cwd_enter` and `Shell:env_enter` return guards. Check for null and pair them with `cwd_leave` or `env_leave`, preferably using `defer`. The guards restore the old value, including an originally absent environment variable.
 
@@ -30,6 +35,8 @@ assert status == 0
 ```
 
 The block waits for its jobs. Output order is not guaranteed. Keep files and other shared resources independent or explicitly coordinate access. Environment and working-directory guards affect the process; avoid overlapping changes from unrelated threads.
+
+## Manage parallel invocations explicitly
 
 For programmatic jobs use `Shell:Parallel:new`, `spawn`, `wait` and `destroy`. `wait` returns the first nonzero status and clears pending jobs. `destroy` waits for outstanding work before releasing the group."
     }

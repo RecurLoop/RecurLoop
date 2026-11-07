@@ -4,6 +4,7 @@ let Docs:Pages:usage = [
     symbol = phrase { payload = "Shell" }
     section = phrase { payload = "Guides" }
     default = phrase { payload = "true" }
+    order = phrase { payload = "10" }
     body = phrase {
         payload = "Run external programs, connect pipelines and capture their output from RecurLoop. Shell passes argument vectors to programs; it does not delegate each command to another shell.
 
@@ -24,14 +25,15 @@ assert status == 0
 
 The output is `HELLO`. At top level `status` is a runtime binding. Inside a typed function, assign the return value of `run` instead of reading that binding.
 
-## Read next
 
-- [Commands and arguments](commands.rl): quoting, interpolation and language selection.
-- [Pipelines and failures](pipelines.rl): stream composition, redirects and exit codes.
-- [Capture and asynchronous work](capture.rl): owned strings and running jobs.
-- [Programmatic pipelines](pipeline-objects.rl): arguments computed at runtime.
-- [Process settings and parallel jobs](process-scope.rl): environment, directories and concurrency.
+Do not free borrowed `Invocation:stdout` text. Do free the string returned by `capture` inside a typed function. The two APIs deliberately have different ownership.
 
-Do not free borrowed `Invocation:stdout` text. Do free the string returned by `capture` inside a typed function. The two APIs deliberately have different ownership."
+## Learning path
+
+1. [Commands](commands.rl) — Quote arguments and select command syntax.
+2. [Pipelines](pipelines.rl) — Connect streams and handle stage failures.
+3. [Capture and jobs](capture.rl) — Collect output and inspect running invocations.
+4. [Command objects](pipeline-objects.rl) — Construct commands from runtime data.
+5. [Process settings](process-scope.rl) — Scope process settings and coordinate parallel jobs."
     }
 ]

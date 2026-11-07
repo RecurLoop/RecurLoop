@@ -2,10 +2,13 @@
 
 let Docs:Pages:text = [
     id = phrase { payload = "text" }
-    title = phrase { payload = "Build text and transfer ownership" }
+    title = phrase { payload = "Text buffers" }
     section = phrase { payload = "Guides" }
+    order = phrase { payload = "20" }
     body = phrase {
-        payload = "`Text:new` returns an owned wrapper with `data`, `length` and `capacity`. `length` counts bytes before the terminating zero. `append`, `append_byte` and `reserve` return `1` on success, `0` on failure. Check appends when incomplete output would be harmful.
+        payload = "## Build a growable string
+
+`Text:new` returns an owned wrapper with `data`, `length` and `capacity`. `length` counts bytes before the terminating zero. `append`, `append_byte` and `reserve` return `1` on success, `0` on failure. Check appends when incomplete output would be harmful.
 
 ```recurloop
 import language-kit

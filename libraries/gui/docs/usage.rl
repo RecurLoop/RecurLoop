@@ -4,6 +4,7 @@ let Docs:Pages:usage = [
     symbol = phrase { payload = "Gui" }
     section = phrase { payload = "Guides" }
     default = phrase { payload = "true" }
+    order = phrase { payload = "10" }
     body = phrase {
         payload = "Compose desktop interfaces from windows, containers, controls and callbacks. `Gui` exposes the application-facing API; its current GTK3 backend requires a graphical session. Importing definitions does not open a window.
 
@@ -26,6 +27,14 @@ let open_window = fn () -> i64 {
 
 The root window owns attached descendants. Its destruction releases them. `quit` stops the event loop; it does not itself destroy every widget. If your own code stops the loop while the window is still alive, destroy that root explicitly.
 
-Read [layout](layout.rl), [text and inputs](text-inputs.rl), [callbacks and timers](events.rl), [trees](trees.rl) and [shortcuts and dialogs](shortcuts.rl). GUI callbacks run on the event-loop thread; keep blocking work out of them."
+GUI callbacks run on the event-loop thread; keep blocking work out of them.
+
+## Learning path
+
+1. [Layouts](layout.rl) — Compose containers before adding interactive behavior.
+2. [Text and inputs](text-inputs.rl) — Read and update text with explicit ownership.
+3. [Events](events.rl) — Connect callbacks and manage timer lifetimes.
+4. [Shortcuts and dialogs](shortcuts.rl) — Reuse actions for keyboard shortcuts and dialogs.
+5. [Trees](trees.rl) — Represent rows, selection and lazy directory contents."
     }
 ]

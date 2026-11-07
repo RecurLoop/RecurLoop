@@ -2,10 +2,13 @@
 
 let Docs:Pages:swapchains = [
     id = phrase { payload = "swapchains" }
-    title = phrase { payload = "Framebuffer extent and swapchain recreation" }
+    title = phrase { payload = "Swapchains" }
     section = phrase { payload = "Guides" }
+    order = phrase { payload = "40" }
     body = phrase {
-        payload = "`create_swapchain(device, surface, width, height)` creates a FIFO presentation swapchain with image handles and views. The actual `width` and `height` in its result reflect supported surface capabilities and can differ from the requested size.
+        payload = "## Choose a surface extent
+
+`create_swapchain(device, surface, width, height)` creates a FIFO presentation swapchain with image handles and views. The actual `width` and `height` in its result reflect supported surface capabilities and can differ from the requested size.
 
 ```recurloop
 import window
@@ -23,6 +26,8 @@ Here null can mean a minimized window as well as creation failure. The applicati
 ## Handle presentation changes
 
 `Result:OutOfDate()` means the current swapchain no longer fits the surface. Stop rendering against it and recreate dependent resources. `Result:Suboptimal()` permits presentation but signals that recreation may be appropriate. A framebuffer-size change is another useful trigger.
+
+## Retire dependent GPU resources
 
 Wait for outstanding GPU work before replacement. Destroy framebuffers and pipelines that depend on the old views before destroying the old swapchain, then rebuild them for the new format and extent. Zero pixel dimensions while minimized are a reason to wait for events, not to spin creating invalid resources."
     }

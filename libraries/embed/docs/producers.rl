@@ -2,10 +2,13 @@
 
 let Docs:Pages:producers = [
     id = phrase { payload = "producers" }
-    title = phrase { payload = "Produce embedded data from a syntax action" }
+    title = phrase { payload = "Syntax producers" }
     section = phrase { payload = "Guides" }
+    order = phrase { payload = "40" }
     body = phrase {
-        payload = "`Embed:emit_bytes(state, data, count)` emits a literal from `count` bytes during elaboration. `emit_bits` accepts an exact bit count. Both return `1` on success and `0` on failure. They require a live syntax context.
+        payload = "## Emit literals during elaboration
+
+`Embed:emit_bytes(state, data, count)` emits a literal from `count` bytes during elaboration. `emit_bits` accepts an exact bit count. Both return `1` on success and `0` on failure. They require a live syntax context.
 
 ```recurloop
 import embed
@@ -21,7 +24,11 @@ let verify_magic = fn () -> i64 {
 assert verify_magic() == 0
 ```
 
+## Release temporary producer buffers
+
 The producer runs while its expression is elaborated. The final program reads the resulting embedded literal; it does not need to rerun the producer or load an asset from disk. If the producer allocates temporary input storage, release it after emission. The helper consumes bytes to form source; it does not transfer ownership of the input pointer.
+
+## Separate elaboration from execution
 
 Keep runtime and elaboration separate. Calling `emit_bytes` is not a runtime append operation, and it does not turn an arbitrary pointer into permanent executable-owned storage."
     }

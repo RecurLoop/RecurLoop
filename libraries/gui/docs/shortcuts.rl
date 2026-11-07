@@ -2,10 +2,13 @@
 
 let Docs:Pages:shortcuts = [
     id = phrase { payload = "shortcuts" }
-    title = phrase { payload = "Shortcuts, prompts and confirmation dialogs" }
+    title = phrase { payload = "Shortcuts and dialogs" }
     section = phrase { payload = "Guides" }
+    order = phrase { payload = "50" }
     body = phrase {
-        payload = "Connect a window shortcut to an existing button action instead of implementing a second copy of that action. `Key` and `Modifier` helpers supply backend values.
+        payload = "## Connect shortcuts to existing actions
+
+Connect a window shortcut to an existing button action instead of implementing a second copy of that action. `Key` and `Modifier` helpers supply backend values.
 
 ```recurloop
 import gui
@@ -13,6 +16,8 @@ let add_save_shortcut = fn (window:u8*, save:u8*) -> void {
     Gui:shortcut_click(window, save, Gui:Key:S(), Gui:Modifier:Control())
 }
 ```
+
+## Handle keyboard and pointer events
 
 For event callbacks, inspect `event_key`, `event_button` and `event_modifiers`. Return nonzero only when your callback handled the event; otherwise preserve normal widget behavior.
 

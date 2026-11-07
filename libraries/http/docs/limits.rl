@@ -2,10 +2,13 @@
 
 let Docs:Pages:limits = [
     id = phrase { payload = "limits" }
-    title = phrase { payload = "Configure request limits and concurrency" }
+    title = phrase { payload = "Limits" }
     section = phrase { payload = "Guides" }
+    order = phrase { payload = "60" }
     body = phrase {
-        payload = "Start with `Http:Limits:defaults`. Size limits count bytes; fields ending in `_ms` count milliseconds. Configure the record before creating the server. `new_on_with_limits` takes ownership even if server creation fails.
+        payload = "## Configure sizes and timeouts
+
+Start with `Http:Limits:defaults`. Size limits count bytes; fields ending in `_ms` count milliseconds. Configure the record before creating the server. `new_on_with_limits` takes ownership even if server creation fails.
 
 ```recurloop
 import http
@@ -39,6 +42,8 @@ assert validate_limits() == 0
 | `chunk_line` | 4096 | 64–65536 bytes |
 
 The declarative `limits` clause uses `header_timeout`, `body_timeout` and `write_timeout`, with units such as `700ms` or `2s`. Sizes accept units such as `64KiB`. The record API instead uses plain integer byte/millisecond fields.
+
+## Bound work and synchronize shared state
 
 The worker pool and queue bound simultaneous work. A full queue can reject clients with `503`. Multiple handlers may run concurrently; synchronize shared mutable state. A large body allowance multiplied by concurrency can consume substantial memory."
     }

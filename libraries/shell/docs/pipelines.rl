@@ -2,10 +2,13 @@
 
 let Docs:Pages:pipelines = [
     id = phrase { payload = "pipelines" }
-    title = phrase { payload = "Pipelines, redirection and failure handling" }
+    title = phrase { payload = "Pipelines" }
     section = phrase { payload = "Guides" }
+    order = phrase { payload = "30" }
     body = phrase {
-        payload = "A pipeline sends the standard output of one stage to the standard input of the next. `&&` runs a following pipeline only after success; `||` runs it after failure. `>` replaces a file and `>>` appends to it.
+        payload = "## Connect streams and redirect output
+
+A pipeline sends the standard output of one stage to the standard input of the next. `&&` runs a following pipeline only after success; `||` runs it after failure. `>` replaces a file and `>>` appends to it.
 
 ```recurloop
 import shell

@@ -25,13 +25,15 @@ let Docs:objects = fn (state:Context*, store:Docs:Store*) -> i64 {
         let body = Docs:object_text(state, object, "body", "")
         let source = Docs:object_text(state, object, "source", "")
         let home = Docs:object_text(state, object, "default", "false")
+        let ordering = Docs:object_text(state, object, "order", "0")
+        let order = Docs:parse_order(ordering)
         if !Docs:empty(symbol) { free(id); id = Docs:page_id(symbol); if strcmp(title, key) == 0 { free(title); title = Docs:copy(symbol) } }
-        if !symbol || !title || !section || !scope || !body || !source || !home || !Docs:valid_id(id) || Docs:find(store, scope, id) { store.error = 1 }
+        if order < 0 || !symbol || !title || !section || !scope || !body || !source || !home || !Docs:valid_id(id) || Docs:find(store, scope, id) { store.error = 1 }
         else {
             let entry = Docs:add(store, scope, id, title, section, body, source, source)
-            if entry { free(entry.symbol); entry.symbol = Docs:copy(symbol); entry.home = strcmp(home, "true") == 0 }
+            if entry { free(entry.symbol); entry.symbol = Docs:copy(symbol); entry.home = strcmp(home, "true") == 0; entry.order = order }
         }
-        free(key); free(symbol); free(id); free(title); free(section); free(scope); free(body); free(source); free(home)
+        free(key); free(symbol); free(id); free(title); free(section); free(scope); free(body); free(source); free(home); free(ordering)
         if store.error { return 0 }; object = context:phrase:child:next(state, pages, object)
     }
     Docs:sort(store); return Docs:build_index(store)

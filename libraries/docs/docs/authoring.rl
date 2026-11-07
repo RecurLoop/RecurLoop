@@ -2,10 +2,13 @@
 
 let Docs:Pages:authoring = [
     id = phrase { payload = "authoring" }
-    title = phrase { payload = "Author extended documentation as RecurLoop objects" }
+    title = phrase { payload = "Authoring" }
     section = phrase { payload = "Guides" }
+    order = phrase { payload = "20" }
     body = phrase {
-        payload = "Import `docs`, then define entries under `Docs:Pages`. String fields are phrase payloads. Use a stable `id` for a guide, or `symbol` to extend an actual phrase. Short `.docs` metadata belongs on the original phrase and should remain useful in an editor hover.
+        payload = "## Define concise phrase help and extended objects
+
+Import `docs`, then define entries under `Docs:Pages`. String fields are phrase payloads. Use a stable `id` for a guide, or `symbol` to extend an actual phrase. Short `.docs` metadata belongs on the original phrase and should remain useful in an editor hover.
 
 ```recurloop
 import docs
@@ -22,11 +25,18 @@ let Docs:Pages:introduction = [
     title = phrase { payload = \"Using Example\" }
     section = phrase { payload = \"Guides\" }
     default = phrase { payload = \"true\" }
+    order = phrase { payload = \"10\" }
     body = phrase { payload = \"Call Example:answer() when an integer answer is required.\" }
 ]
 ```
 
 `symbol` yields a stable phrase-derived identifier and is checked against the selected image during library export. A guide needs a semantic identifier and title. `default` selects a landing page. Include headings, code fences, tables and lists in `body`; rendered blocks, table of contents, navigation and search postings are generated during export.
+
+## Define the learning order
+
+Set `order = phrase { payload = \"20\" }` on a chapter to place it after rank 10 and before rank 30. Positive ranks form the reading path; zero or an omitted field uses alphabetical fallback after ordered chapters. The default page always comes first. Keep the chapters of a section together in the sequence.
+
+Use short concept titles, such as Configuration or Views. Put detailed tasks under `##` and `###` headings in `body`; export generates their table of contents. Both source persistence and JSON merges preserve each page's rank, so separate packages can own their own reading paths.
 
 ## Package-local sources
 

@@ -9,7 +9,7 @@ let Docs:copy_details = fn (to:Docs:Entry*, from:Docs:Entry*) -> void {
     free(to.exported_id); to.exported_id = Docs:copy(from.exported_id)
     free(to.source_url); to.source_url = Docs:copy(from.source_url)
     free(to.repository); to.repository = Docs:copy(from.repository)
-    free(to.version); to.version = Docs:copy(from.version); to.home = from.home
+    free(to.version); to.version = Docs:copy(from.version); to.home = from.home; to.order = from.order
 }
 let Docs:merge = fn (store:Docs:Store*, incoming:Docs:Store*) -> i64 {
     if !store || !incoming || store.error || incoming.error || !Docs:build_index(incoming) { return 0 }
@@ -17,7 +17,7 @@ let Docs:merge = fn (store:Docs:Store*, incoming:Docs:Store*) -> i64 {
     var entry = incoming.first
     while entry {
         let existing = Docs:find(store, entry.scope, entry.id)
-        if existing && (strcmp(existing.body, entry.body) != 0 || strcmp(existing.inline_docs, entry.inline_docs) != 0 || strcmp(existing.title, entry.title) != 0 || strcmp(existing.symbol, entry.symbol) != 0 || strcmp(existing.section, entry.section) != 0 || strcmp(existing.version, entry.version) != 0) { store.error = 1; return 0 }
+        if existing && (strcmp(existing.body, entry.body) != 0 || strcmp(existing.inline_docs, entry.inline_docs) != 0 || strcmp(existing.title, entry.title) != 0 || strcmp(existing.symbol, entry.symbol) != 0 || strcmp(existing.section, entry.section) != 0 || strcmp(existing.version, entry.version) != 0 || existing.order != entry.order) { store.error = 1; return 0 }
         entry = entry.next
     }
     if !store.first { store.index_ready = 1 } else if !Docs:build_index(store) { return 0 }
@@ -73,6 +73,12 @@ let Docs:decode_bundle = fn (document:Docs:Json*) -> Docs:Store* {
         free(entry.repository); entry.repository = Docs:copy(Docs:json_text(page, "repository_url", store.repository))
         free(entry.version); entry.version = Docs:copy(Docs:json_text(page, "package_version", store.version))
         entry.home = strcmp(default_page, id) == 0
+        let ordering = Docs:json_field(page, "order")
+        if ordering {
+            if ordering.kind != 4 { store.error = 1; return store }
+            entry.order = Docs:parse_order(ordering.text)
+            if entry.order < 0 { store.error = 1; return store }
+        }
         page = page.next; count += 1
     }
     if !Docs:find_exported(store, default_page) { store.error = 1; return store }

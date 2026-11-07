@@ -2,10 +2,13 @@
 
 let Docs:Pages:event_loop = [
     id = phrase { payload = "event-loop" }
-    title = phrase { payload = "Choose a polling or waiting event loop" }
+    title = phrase { payload = "Event loop" }
     section = phrase { payload = "Guides" }
+    order = phrase { payload = "20" }
     body = phrase {
-        payload = "`poll` processes available events immediately. Use it while continuously rendering or doing other bounded work. `wait` sleeps until an event is available; it is suitable for an idle window that does not need to redraw continuously.
+        payload = "## Choose polling or waiting
+
+`poll` processes available events immediately. Use it while continuously rendering or doing other bounded work. `wait` sleeps until an event is available; it is suitable for an idle window that does not need to redraw continuously.
 
 ```recurloop
 import window
@@ -16,6 +19,8 @@ let process_until_closed = fn (window:u8*) -> void {
     }
 }
 ```
+
+## Pace continuous rendering
 
 The function borrows an initialized window. Without rendering or other pacing this polling loop can busy-spin; choose `wait` for event-driven idle work. Do not block the event-processing thread on unrelated long operations.
 

@@ -110,6 +110,11 @@ let Docs:sort = fn (store:Docs:Store*) -> void {
             else if strcmp(cursor.scope, store.name) == 0 && strcmp(input.scope, store.name) != 0 { order = 1 }
             if order == 0 {
                 if input.home != cursor.home { order = cursor.home - input.home }
+                else if input.order != cursor.order {
+                    if input.order == 0 { order = 1 }
+                    else if cursor.order == 0 { order = -1 }
+                    else { order = input.order - cursor.order }
+                }
                 else { order = strcmp(input.section, cursor.section); if order == 0 { order = strcmp(input.title, cursor.title) }; if order == 0 { order = strcmp(input.id, cursor.id) } }
             }
             if order < 0 { break }; previous = cursor; cursor = cursor.next

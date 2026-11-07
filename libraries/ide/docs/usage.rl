@@ -4,6 +4,7 @@ let Docs:Pages:usage = [
     symbol = phrase { payload = "IDE" }
     section = phrase { payload = "Guides" }
     default = phrase { payload = "true" }
+    order = phrase { payload = "10" }
     body = phrase {
         payload = "IDE supplies the stable application runtime for a source-defined editor: a workspace, project execution, view replacement, terminal state and source intelligence. It does not prescribe the layout of editor widgets. Import `ide` and compose the view using `Gui`.
 
@@ -24,6 +25,13 @@ This example only configures a launcher. Before opening, also set a valid view c
 
 Source intelligence uses the active vocabulary and phrase metadata, including `.docs`. Keep calls tied to the appropriate project runtime rather than a second, divergent parser.
 
-Read [configuration](configuration.rl), [view lifecycle](view-lifecycle.rl), [reload behavior](reload.rl) and [source inspection](intelligence.rl). Keep persistent runtime state separate from the widget generation that displays it."
+Keep persistent runtime state separate from the widget generation that displays it.
+
+## Learning path
+
+1. [Configuration](configuration.rl) — Set the workspace, source and required callbacks.
+2. [Views](view-lifecycle.rl) — Construct a candidate view and release its generation data.
+3. [Reloading](reload.rl) — Replace a view while keeping application state alive.
+4. [Source inspection](intelligence.rl) — Analyze buffers using the active project vocabulary."
     }
 ]

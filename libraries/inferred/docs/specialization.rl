@@ -2,10 +2,13 @@
 
 let Docs:Pages:specialization = [
     id = phrase { payload = "specialization" }
-    title = phrase { payload = "Understand lazy specialization" }
+    title = phrase { payload = "Specialization" }
     section = phrase { payload = "Guides" }
+    order = phrase { payload = "20" }
     body = phrase {
-        payload = "A definition records a function body. An actual call selects or compiles a variant for its argument kinds. Errors that depend on those kinds can therefore appear at the call site rather than at the definition.
+        payload = "## Compile a variant for each argument shape
+
+A definition records a function body. An actual call selects or compiles a variant for its argument kinds. Errors that depend on those kinds can therefore appear at the call site rather than at the definition.
 
 ```recurloop
 import inferred

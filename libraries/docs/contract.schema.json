@@ -444,6 +444,12 @@
                 "type": "null"
               }
             ]
+          },
+          "order": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 1000000,
+            "description": "Positive reading-order rank within the package; omitted or zero uses the legacy alphabetical fallback after ordered guides."
           }
         },
         "required": [

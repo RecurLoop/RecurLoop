@@ -2,10 +2,13 @@
 
 let Docs:Pages:phrase_readers = [
     id = phrase { payload = "phrase-readers" }
-    title = phrase { payload = "Parse grammar phrases and aliases" }
+    title = phrase { payload = "Grammar parsing" }
     section = phrase { payload = "Guides" }
+    order = phrase { payload = "40" }
     body = phrase {
-        payload = "Phrase readers resolve the active grammar with longest matching phrase identity. This is useful when punctuation has aliases or a language extends its tokens. Comparing canonical phrase identity avoids treating a quoted delimiter as syntax.
+        payload = "## Parse using the active phrase grammar
+
+Phrase readers resolve the active grammar with longest matching phrase identity. This is useful when punctuation has aliases or a language extends its tokens. Comparing canonical phrase identity avoids treating a quoted delimiter as syntax.
 
 ```recurloop
 import language-kit
@@ -32,6 +35,8 @@ check_alias
 ```
 
 The slice length is in UTF-8 bytes: `⊕` occupies three. `is` checks without consuming. `take_canonical` consumes and returns an owned canonical token spelling, which must be freed. `new_phrases` requires a valid grammar identifier; null is not an implicit default grammar.
+
+## Choose the matching source boundary
 
 Use `Reader:new_phrases` to consume the live source instead. A `SliceReader:new_source` supports lookahead over the current source origin; its cursor is independent. Keep any source refill or cursor-commit policy explicit in a syntax action."
     }

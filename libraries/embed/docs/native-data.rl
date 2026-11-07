@@ -2,10 +2,13 @@
 
 let Docs:Pages:native_data = [
     id = phrase { payload = "native-data" }
-    title = phrase { payload = "Pass embedded data to native APIs safely" }
+    title = phrase { payload = "Native data" }
     section = phrase { payload = "Guides" }
+    order = phrase { payload = "30" }
     body = phrase {
-        payload = "`Embed:data` returns storage owned by the executable or JIT module. Do not free or modify it. Copy the bytes into an owned mutable buffer if an API writes into its input. The data pointer is valid only while its owning module remains alive.
+        payload = "## Borrow immutable module storage
+
+`Embed:data` returns storage owned by the executable or JIT module. Do not free or modify it. Copy the bytes into an owned mutable buffer if an API writes into its input. The data pointer is valid only while its owning module remains alive.
 
 ```recurloop
 import embed
@@ -21,6 +24,8 @@ let copy_bytes = fn () -> i64 {
 }
 assert copy_bytes() == 0
 ```
+
+## Pass lengths and check alignment
 
 Binary data is not automatically null-terminated text. Pass an explicit length. Casting a byte pointer to a word pointer does not establish suitable alignment, endianness or a valid binary format. A shader module, for example, needs valid SPIR-V words and a byte length divisible by four; an arbitrary literal is not a valid shader simply because it can be cast to `u32*`."
     }

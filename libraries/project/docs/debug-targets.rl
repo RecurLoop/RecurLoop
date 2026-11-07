@@ -2,10 +2,13 @@
 
 let Docs:Pages:debug_targets = [
     id = phrase { payload = "debug-targets" }
-    title = phrase { payload = "Declare source and executable debug targets" }
+    title = phrase { payload = "Debugging" }
     section = phrase { payload = "Guides" }
+    order = phrase { payload = "40" }
     body = phrase {
-        payload = "A debug target describes what an editor or CLI should debug. `debug source` points at RecurLoop source; `debug executable` points at a native executable. Dependencies can prepare that input first.
+        payload = "## Choose source or executable debugging
+
+A debug target describes what an editor or CLI should debug. `debug source` points at RecurLoop source; `debug executable` points at a native executable. Dependencies can prepare that input first.
 
 ```recurloop
 import project
@@ -17,7 +20,11 @@ target prepare_binary {
 target inspect_binary depends [prepare_binary] debug executable \"./application\" {}
 ```
 
+## Prepare the application before debugging
+
 These declarations do not launch a debugger during definition. The preparation target emits a small application executable before selecting `inspect_binary`.
+
+## Select the appropriate inspection level
 
 Use source debugging to step through phrase evaluation and inspect source-level state. Use executable debugging for emitted native applications. The selected debug input must exist when the debugging workflow begins. A target name describes the workflow, while the path after `source` or `executable` identifies the program being debugged."
     }

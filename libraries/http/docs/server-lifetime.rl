@@ -2,10 +2,13 @@
 
 let Docs:Pages:server_lifetime = [
     id = phrase { payload = "server-lifetime" }
-    title = phrase { payload = "Server construction, ownership and shutdown" }
+    title = phrase { payload = "Server lifecycle" }
     section = phrase { payload = "Guides" }
+    order = phrase { payload = "50" }
     body = phrase {
-        payload = "`Server:new(port)` binds all IPv4 interfaces. Use `new_on(port, address)` for an explicit bind address. `new_on_with_limits` also accepts an owned limits record. A null server means initialization failed; no server handle may be used afterward.
+        payload = "## Create and release a server
+
+`Server:new(port)` binds all IPv4 interfaces. Use `new_on(port, address)` for an explicit bind address. `new_on_with_limits` also accepts an owned limits record. A null server means initialization failed; no server handle may be used afterward.
 
 ```recurloop
 import http
@@ -24,7 +27,11 @@ let serve_one_request = fn () -> i64 {
 // Calling this waits for one client connection.
 ```
 
+## Choose synchronous or worker execution
+
 `serve_once` is synchronous and returns `1` for a served connection, `0` on failure. `run` starts the bounded worker loop and blocks. Do not call `destroy` concurrently with active workers: destruction requires that serving work has already stopped. The current public API does not provide a graceful stop token or promise cancellation through destruction.
+
+## Choose a transport boundary
 
 The library implements HTTP transport, not TLS termination. Select a deployment arrangement appropriate to your application. Protocol parsing handles framing; route handlers still validate application data and authorization."
     }
