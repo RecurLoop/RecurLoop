@@ -16,6 +16,8 @@ Navigation groups, page arrays, Previous/Next links, source persistence and JSON
 
 ## Search and export
 
+Source-authored pages take precedence when the CLI adds standard manuals. Standard rich pages replace generated code-only bodies, and live inline help is retained; installed descriptions fill missing inline help. New standard pages reuse exported term postings, while changed local entries rebuild their own index. Explicit JSON merges remain strict and reject conflicting content or versions. Child runtimes use normal library discovery and inherit explicit CLI library paths, rather than guessing a build-tree directory for installed executables.
+
 The CLI accepts --from for either a bundle JSON or index.json. It parses the exported index and does not rebuild it. Source catalogs and modified catalogs build their index on demand. The normalization contract is ascii-word-prefix-v1: ASCII case folding, UTF-8 word bytes and prefix queries. A query intersects the matching postings for every word. Symbol punctuation can match phrase titles directly.
 
 Each standard library manual has an overview plus focused guide objects with complete code examples. Keep executable snippets self-contained: import their vocabulary and assert deterministic results. GUI and server examples define callable functions without starting event/accept loops during checks. docs-examples evaluates every recurloop code fence in library manuals and the core learning chapters in an isolated runtime, with a timeout; core API invocation templates are reference forms rather than standalone examples; console sessions are descriptive and are not executed. docs-check and GitHub CI run this check automatically.

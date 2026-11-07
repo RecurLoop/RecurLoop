@@ -31,7 +31,7 @@ let Docs:objects = fn (state:Context*, store:Docs:Store*) -> i64 {
         if order < 0 || !symbol || !title || !section || !scope || !body || !source || !home || !Docs:valid_id(id) || Docs:find(store, scope, id) { store.error = 1 }
         else {
             let entry = Docs:add(store, scope, id, title, section, body, source, source)
-            if entry { free(entry.symbol); entry.symbol = Docs:copy(symbol); entry.home = strcmp(home, "true") == 0; entry.order = order }
+            if entry { free(entry.symbol); entry.symbol = Docs:copy(symbol); entry.home = strcmp(home, "true") == 0; entry.order = order; entry.authored = 1 }
         }
         free(key); free(symbol); free(id); free(title); free(section); free(scope); free(body); free(source); free(home); free(ordering)
         if store.error { return 0 }; object = context:phrase:child:next(state, pages, object)

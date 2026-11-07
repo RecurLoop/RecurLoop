@@ -134,6 +134,77 @@ let DocsTests:reading_order = fn () -> i64 {
     return 0
 }
 
+// Source manuals and live inline help overlap with installed JSON by design.
+let DocsTests:standard_overlap = fn () -> i64 {
+    let local = Docs:new("sample", "dev", ""); if !local { return 1 }; defer Docs:destroy(local)
+    let guide = Docs:add(local, "sample", "guide", "Local guide", "Guides", "localonlytoken", "docs/guide.rl", "")
+    let code = Docs:add(local, "sample", "api", "Call", "API", "generatedplaceholder", "library.rl", "")
+    if !guide || !code { return 2 }; guide.authored = 1; guide.order = 10; code.authored = 0
+    if !Docs:set_inline(code, "liveinlinetoken") { return 3 }
+    let edited = Docs:add(local, "sample", "edited", "Edited", "API", "placeholder", "library.rl", "")
+    if !edited { return 16 }; edited.authored = 0
+    if !Docs:set_body(edited, "developeredittoken") || !edited.authored { return 17 }
+    let standard = Docs:new("sample", "1.0.0", ""); if !standard { return 4 }; defer Docs:destroy(standard)
+    let old = Docs:add(standard, "sample", "guide", "Old guide", "Guides", "staleguidetoken", "docs/guide.rl", "")
+    let rich = Docs:add(standard, "sample", "api", "Call", "Guides", "richmanualtoken", "docs/call.rl", "")
+    let extra = Docs:add(standard, "sample", "extra", "Extra", "Guides", "extramanualtoken", "docs/extra.rl", "")
+    let previous = Docs:add(standard, "sample", "edited", "Edited", "Guides", "outdatededittoken", "docs/edited.rl", "")
+    if !old || !rich || !extra || !previous { return 5 }
+    old.authored = 1; rich.authored = 1; extra.authored = 1; rich.order = 20
+    if !Docs:set_inline(old, "fallbackinlinetoken") || !Docs:set_inline(rich, "staleinlinetoken") { return 6 }
+    if !Docs:export_file(standard, ".cache/docs-export/standard.json") { return 7 }
+    let baseline = Docs:new("", "dev", ""); if !baseline { return 8 }; defer Docs:destroy(baseline)
+    if !Docs:read_export(baseline, ".cache/docs-export/standard.json") || baseline.index_builds != 0 { return 9 }
+    if !Docs:include_standard(local, baseline) || local.error || baseline.index_builds != 0 { return 10 }
+    if strcmp(guide.title, "Local guide") != 0 || guide.order != 10 || strcmp(guide.version, "dev") != 0 { return 11 }
+    if strcmp(code.body, "richmanualtoken") != 0 || strcmp(code.inline_docs, "liveinlinetoken") != 0 || code.order != 20 || !code.authored { return 12 }
+    if !Docs:search(local, "localonlytoken", cast(Docs:Entry*, 0)) || !Docs:search(local, "richmanualtoken", cast(Docs:Entry*, 0)) || !Docs:search(local, "liveinlinetoken", cast(Docs:Entry*, 0)) || !Docs:search(local, "fallbackinlinetoken", cast(Docs:Entry*, 0)) || !Docs:search(local, "extramanualtoken", cast(Docs:Entry*, 0)) { return 13 }
+    if Docs:search(local, "staleguidetoken", cast(Docs:Entry*, 0)) || Docs:search(local, "staleinlinetoken", cast(Docs:Entry*, 0)) || Docs:search(local, "generatedplaceholder", cast(Docs:Entry*, 0)) { return 14 }
+    if !Docs:search(local, "developeredittoken", cast(Docs:Entry*, 0)) || Docs:search(local, "outdatededittoken", cast(Docs:Entry*, 0)) { return 18 }
+    // Merging separately exported packages must still reject conflicting pages.
+    if Docs:merge(local, baseline) || !local.error { return 15 }
+    return 0
+}
+// A relocated installed executable must find its own images in child processes.
+let DocsTests:installed_cli = fn () -> i64 {
+    let executable = Docs:executable(); if !executable { return 1 }; defer free(executable)
+    let parent = Docs:parent(executable); defer free(parent)
+    var libraries = Docs:copy(getenv("RECURLOOP_DOCS_LIBRARY_PATH"))
+    if Docs:empty(libraries) { free(libraries); libraries = Docs:join(parent, "../libraries") }
+    if access(libraries, 4) != 0 { free(libraries); libraries = Docs:join(parent, "../share/recurloop/libraries") }
+    defer free(libraries)
+    let canonical = realpath(libraries, cast(u8*, 0)); if !canonical { return 2 }; defer free(canonical)
+    let temporary = Docs:copy("/tmp/recurloop-docs-install-XXXXXX"); defer free(temporary)
+    if !mkdtemp(temporary) { return 3 }
+    let bin = Docs:join(temporary, "bin"); defer free(bin)
+    let share = Docs:join(temporary, "share/recurloop"); defer free(share)
+    let docs = Docs:join(share, "docs"); defer free(docs)
+    let installed = Docs:join(bin, "recurloop"); defer free(installed)
+    let images = Docs:join(share, "libraries"); defer free(images)
+    let index = Docs:join(docs, "index.json"); defer free(index)
+    var result = 0
+    let mkdir = run mkdir -p "{bin}" "{docs}"
+    let copy = run cp "{executable}" "{installed}"
+    let link = run ln -s "{canonical}" "{images}"
+    let exported = Docs:read_file(".cache/docs-export/standard.json")
+    if !exported || mkdir != 0 || copy != 0 || link != 0 || !Docs:write_file(index, exported) { result = 4 }
+    free(exported)
+    if result == 0 {
+        let path_guard = Shell:env_enter("RECURLOOP_LIBRARY_PATH", ""); defer Shell:env_leave(path_guard)
+        let docs_guard = Shell:env_enter("RECURLOOP_DOCS_LIBRARY_PATH", ""); defer Shell:env_leave(docs_guard)
+        let index_guard = Shell:env_enter("RECURLOOP_DOCS_INDEX", ""); defer Shell:env_leave(index_guard)
+        let source_guard = Shell:env_enter("RECURLOOP_DOCS_PATH", ""); defer Shell:env_leave(source_guard)
+        let command = spawn "{installed}" --docs search dependencyrichuniquemarker --root tests/fixtures/documentation/project --json
+        if !command { result = 5 }
+        else { if command.exit_code() != 0 || !strstr(command.stdout(), "\"total\":1") { result = 6 }; command.destroy() }
+        let baseline = spawn "{installed}" --docs search extramanualtoken --root tests/fixtures/documentation/project --json
+        if !baseline { result = 7 }
+        else { if baseline.exit_code() != 0 || !strstr(baseline.stdout(), "\"total\":1") { result = 8 }; baseline.destroy() }
+    }
+    let cleanup = run rm -rf -- "{temporary}"
+    return result
+}
+
 let DocsTests:all = fn () -> i64 {
     let status = run mkdir -p .cache/docs-export
     if status != 0 { return 1 }
@@ -141,6 +212,8 @@ let DocsTests:all = fn () -> i64 {
     let json = DocsTests:json_reader(); if json != 0 { printf("[docs-check] JSON reader: %ld\n", json); return json }
     let ordered = DocsTests:reading_order(); if ordered != 0 { printf("[docs-check] reading order: %ld\n", ordered); return ordered }
     let index = DocsTests:index_roundtrip(); if index != 0 { printf("[docs-check] source/index roundtrip: %ld\n", index); return index }
+    let overlap = DocsTests:standard_overlap(); if overlap != 0 { printf("[docs-check] source/standard overlap: %ld\n", overlap); return overlap }
+    let installed = DocsTests:installed_cli(); if installed != 0 { printf("[docs-check] installed CLI: %ld\n", installed); return installed }
     let packages = DocsTests:source_packages(); if packages != 0 { printf("[docs-check] source packages: %ld\n", packages); return packages }
     let manuals = DocsTests:library_manuals(); if manuals != 0 { printf("[docs-check] library-owned manuals: %ld\n", manuals); return manuals }
     let cli = DocsTests:cli_exports(); if cli != 0 { printf("[docs-check] CLI JSON/merge: %ld\n", cli); return cli }

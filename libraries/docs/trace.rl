@@ -48,7 +48,7 @@ let Docs:parse_trace = fn (trace:u8*) -> Docs:Catalog* {
             if line[at] == 9 { line[at] = 0; if count < 16 { fields[count] = &line[at + 1]; count += 1 } }
             at += 1
         }
-        if fields[0][0] == 69 && fields[0][1] == 0 && count >= 2 { catalog.error = 1; return catalog }
+        if fields[0][0] == 69 && fields[0][1] == 0 && count >= 2 { let message = Docs:decode(fields[1]); if message { Docs:diagnostic("source diagnostic", message); free(message) }; catalog.error = 1; return catalog }
         if count >= 5 && fields[0][1] == 0 && (fields[0][0] == 80 || fields[0][0] == 71 || fields[0][0] == 72 || fields[0][0] == 74 || fields[0][0] == 70) {
             let name = Docs:decode(fields[2])
             if !name { catalog.error = 1; return catalog }

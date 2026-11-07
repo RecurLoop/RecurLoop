@@ -6,7 +6,7 @@ extern mkdtemp(pattern:u8*) -> u8* abi sysv-amd64
 record Docs:Entry {
     id:u8* title:u8* section:u8* body:u8* inline_docs:u8*
     source_path:u8* origin_path:u8* scope:u8* repository:u8* version:u8*
-    symbol:u8* exported_id:u8* source_url:u8* owner:u8* home:i64 order:i64 hits:i64 seen:i64 matches:i64
+    symbol:u8* exported_id:u8* source_url:u8* owner:u8* home:i64 order:i64 authored:i64 hits:i64 seen:i64 matches:i64
     previous:Docs:Entry* next:Docs:Entry*
 }
 record Docs:Posting { entry:Docs:Entry* next:Docs:Posting* }
@@ -35,7 +35,7 @@ let Docs:set_body = fn (entry:Docs:Entry*, body:u8*) -> i64 {
     if !entry { return 0 }
     let copy = Docs:copy(body)
     if !copy { return 0 }
-    free(entry.body); entry.body = copy
+    free(entry.body); entry.body = copy; entry.authored = 1
     let owner = cast(Docs:Store*, entry.owner); if owner { owner.index_ready = 0 }
     return 1
 }
@@ -48,7 +48,7 @@ let Docs:add = fn (store:Docs:Store*, scope:u8*, id:u8*, title:u8*, section:u8*,
     entry.id = Docs:copy(id); entry.title = Docs:copy(title); entry.section = Docs:copy(section); entry.body = Docs:copy(body)
     entry.inline_docs = Docs:copy(""); entry.source_path = Docs:copy(source); entry.origin_path = Docs:copy(origin)
     entry.scope = Docs:copy(scope); entry.repository = Docs:copy(store.repository); entry.version = Docs:copy(store.version)
-    entry.symbol = Docs:copy(""); entry.exported_id = Docs:copy(""); entry.source_url = Docs:copy(""); entry.owner = cast(u8*, store)
+    entry.symbol = Docs:copy(""); entry.exported_id = Docs:copy(""); entry.source_url = Docs:copy(""); entry.owner = cast(u8*, store); entry.authored = 1
     store.index_ready = 0
     entry.previous = store.last
     if store.last { store.last.next = entry } else { store.first = entry }

@@ -84,6 +84,27 @@ let Docs:command_line = phrase {
     action = fn (state:Context*, called:Phrase*) -> void {
         var index = state.exec.args.index
         if index < state.exec.args.count && strcmp(state.exec.args.values[index], "--") == 0 { index += 1 }
+        // Child evaluators inherit the same explicit startup library paths.
+        let paths = LanguageKit:Text:new(); defer paths.destroy()
+        var startup = 1
+        while startup < index {
+            let option = state.exec.args.values[startup]
+            if strcmp(option, "--reset") == 0 { startup += 1; continue }
+            if strcmp(option, "--library-path") != 0 && strcmp(option, "--library") != 0 && strcmp(option, "--import") != 0 { break }
+            if startup + 1 >= index { break }
+            if strcmp(option, "--library-path") == 0 {
+                if paths.length { paths.append(":") }; paths.append(state.exec.args.values[startup + 1])
+            }
+            startup += 2
+        }
+        var guard = cast(Shell:EnvGuard*, 0)
+        if paths.length {
+            let inherited = getenv("RECURLOOP_LIBRARY_PATH")
+            if !Docs:empty(inherited) { paths.append(":"); paths.append(inherited) }
+            guard = Shell:env_enter("RECURLOOP_LIBRARY_PATH", paths.data)
+            if !guard { context:diagnostic:error(state, "cannot forward documentation library paths"); return }
+        }
+        defer Shell:env_leave(guard)
         let count = state.exec.args.count - index
         state.exec.args.index = state.exec.args.count
         if Docs:cli(count, &state.exec.args.values[index]) != 0 { context:diagnostic:error(state, "documentation command failed") }

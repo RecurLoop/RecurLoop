@@ -71,13 +71,17 @@ let Docs:load_directory = fn (store:Docs:Store*, root:u8*, directory:u8*, scope:
     let written = Docs:write_file(entry, source.data); source.destroy()
     if !written { store.error = 1 }
     let executable = Docs:executable()
-    let bindir = Docs:parent(executable)
-    var libraries = Docs:copy(getenv("RECURLOOP_DOCS_LIBRARY_PATH"))
-    if Docs:empty(libraries) { free(libraries); libraries = Docs:join(bindir, "../libraries") }; free(bindir)
+    let libraries = Docs:copy(getenv("RECURLOOP_DOCS_LIBRARY_PATH"))
     if !store.error {
-        let command = spawn "{executable}" --library-path "{libraries}" --library docs --file "{entry}" -- "{scope}" "{store.version}" "{store.repository}" "{output}"
-        if !command { store.error = 1 }
-        else { if command.exit_code() != 0 || !Docs:read_export(store, output) { store.error = 1 }; command.destroy() }
+        var command = cast(Shell:Invocation*, 0)
+        if Docs:empty(libraries) { command = spawn "{executable}" --library docs --file "{entry}" -- "{scope}" "{store.version}" "{store.repository}" "{output}" }
+        else { command = spawn "{executable}" --library-path "{libraries}" --library docs --file "{entry}" -- "{scope}" "{store.version}" "{store.repository}" "{output}" }
+        if !command { Docs:diagnostic("cannot start object loader", canonical); store.error = 1 }
+        else {
+            if command.exit_code() != 0 { Docs:diagnostic("object loader failed", canonical); Docs:diagnostic("loader output", command.stdout()); store.error = 1 }
+            else if !Docs:read_export(store, output) { Docs:diagnostic("cannot read evaluated objects", canonical); store.error = 1 }
+            command.destroy()
+        }
     }
     free(executable); free(libraries); free(entry); free(output)
     let cleanup = run rm -rf -- "{temporary}"
@@ -124,16 +128,16 @@ let Docs:load_package = fn (store:Docs:Store*, root:u8*, override:u8*) -> i64 {
 let Docs:trace = fn (entry:u8*, libraries_text:u8*) -> u8* {
     let executable = Docs:executable()
     if !executable { return executable }; defer free(executable)
-    let bindir = Docs:parent(executable)
-    var libraries = Docs:copy(getenv("RECURLOOP_DOCS_LIBRARY_PATH"))
-    if Docs:empty(libraries) { free(libraries); libraries = Docs:join(bindir, "../libraries") }; free(bindir)
+    let libraries = Docs:copy(getenv("RECURLOOP_DOCS_LIBRARY_PATH"))
     defer free(libraries)
     let pipeline = Shell:Pipeline:new()
     let command = Shell:Command:new()
     if !pipeline || !command { return cast(u8*, 0) }
     if !pipeline.add(command) { command.destroy(); pipeline.destroy(); return cast(u8*, 0) }
     defer pipeline.destroy()
-    command.add(executable); command.add("--library-path"); command.add(libraries)
+    command.add(executable)
+    // Let the host resolve its own installed/build images; an override is explicit.
+    if !Docs:empty(libraries) { command.add("--library-path"); command.add(libraries) }
     if !Docs:empty(libraries_text) {
         let copy = Docs:copy(libraries_text); defer free(copy)
         var line = copy
@@ -148,7 +152,7 @@ let Docs:trace = fn (entry:u8*, libraries_text:u8*) -> u8* {
     command.add("--project"); command.add(entry); command.add("--trace"); command.add(entry)
     let result = Shell:capture_pipeline(pipeline)
     if !result { return cast(u8*, 0) }; defer result.destroy()
-    if result.exit_code != 0 { return cast(u8*, 0) }
+    if result.exit_code != 0 { Docs:diagnostic("source inspection failed", entry); Docs:diagnostic("inspection output", result.output); return cast(u8*, 0) }
     return Docs:copy(result.output)
 }
 let Docs:import_trace = fn (store:Docs:Store*, trace:u8*, filter:u8*, scope:u8*, discover:i64) -> i64 {
@@ -193,6 +197,7 @@ let Docs:import_trace = fn (store:Docs:Store*, trace:u8*, filter:u8*, scope:u8*,
                 if Docs:empty(source_path) { source_path = "" }
                 else { let size = cast(i64, strlen(source_path)); if size < 3 || strcmp(&source_path[size - 3], ".rl") != 0 { source_path = "" } }
                 entry = Docs:add(store, owner, id, item.name, "API", body, source_path, source_path)
+                if entry { entry.authored = 0 }
                 free(body)
             }
             if entry {
@@ -242,9 +247,59 @@ let Docs:standard_trace = fn (store:Docs:Store*, directory:u8*) -> i64 {
     return Docs:import_trace(store, trace, "", "", 0)
 }
 
+// Standard manuals supplement source help. Explicit JSON merges remain strict.
+// A source-authored page wins; rich manuals replace generated code-only bodies.
+let Docs:include_standard = fn (store:Docs:Store*, baseline:Docs:Store*) -> i64 {
+    if !store || !baseline || store.error || baseline.error || !Docs:build_index(baseline) { return 0 }
+    let extra = Docs:new(baseline.name, baseline.version, baseline.repository)
+    if !extra { return 0 }; defer Docs:destroy(extra)
+    var entry = baseline.first
+    while entry {
+        let existing = Docs:find(store, entry.scope, entry.id)
+        if existing {
+            if !existing.authored && entry.authored {
+                if !Docs:set_body(existing, entry.body) { return 0 }
+                free(existing.title); existing.title = Docs:copy(entry.title)
+                free(existing.section); existing.section = Docs:copy(entry.section)
+                free(existing.source_path); existing.source_path = Docs:copy(entry.source_path)
+                free(existing.origin_path); existing.origin_path = Docs:copy(entry.origin_path)
+                free(existing.source_url); existing.source_url = Docs:copy(entry.source_url)
+                free(existing.repository); existing.repository = Docs:copy(entry.repository)
+                free(existing.version); existing.version = Docs:copy(entry.version)
+                existing.order = entry.order; existing.home = entry.home; existing.authored = 1
+            }
+            if Docs:empty(existing.inline_docs) && !Docs:empty(entry.inline_docs) {
+                free(existing.inline_docs); existing.inline_docs = Docs:copy(entry.inline_docs); store.index_ready = 0
+            }
+        } else {
+            let added = Docs:add(extra, entry.scope, entry.id, entry.title, entry.section, entry.body, entry.source_path, entry.origin_path)
+            if !added { return 0 }; Docs:copy_details(added, entry)
+        }
+        entry = entry.next
+    }
+    // Copy postings only for new pages. Existing pages use their own current text.
+    var bucket = 0
+    while bucket < 4096 {
+        var term = baseline.terms[bucket]
+        while term {
+            var posting = term.first
+            while posting {
+                let added = Docs:find(extra, posting.entry.scope, posting.entry.id)
+                if added { let target = Docs:term(extra, term.word, 1); if !target || !Docs:posting(extra, target, added) { return 0 } }
+                posting = posting.next
+            }
+            term = term.next
+        }; bucket += 1
+    }
+    extra.index_ready = 1
+    return Docs:merge(store, extra)
+}
 let Docs:load_standard = fn (store:Docs:Store*) -> i64 {
     let exported = getenv("RECURLOOP_DOCS_INDEX")
-    if !Docs:empty(exported) { return Docs:read_export(store, exported) }
+    if !Docs:empty(exported) {
+        let baseline = Docs:new("", "dev", ""); if !baseline { return 0 }; defer Docs:destroy(baseline)
+        if !Docs:read_export(baseline, exported) { return 0 }; return Docs:include_standard(store, baseline)
+    }
     let executable = Docs:executable(); if !executable { return 0 }
     let bindir = Docs:parent(executable); free(executable)
     var directory = Docs:copy(getenv("RECURLOOP_DOCS_PATH"))
@@ -252,7 +307,10 @@ let Docs:load_standard = fn (store:Docs:Store*) -> i64 {
     let installed = Docs:join(bindir, "../share/recurloop/docs/index.json"); free(bindir)
     defer free(directory); defer free(installed)
     if access(directory, 4) != 0 {
-        if access(installed, 4) == 0 { return Docs:read_export(store, installed) }; return 1
+        if access(installed, 4) == 0 {
+            let baseline = Docs:new("", "dev", ""); if !baseline { return 0 }; defer Docs:destroy(baseline)
+            if !Docs:read_export(baseline, installed) { return 0 }; return Docs:include_standard(store, baseline)
+        }; return 1
     }
     let version = Docs:runtime_version(); if !version { return 0 }
     let baseline = Docs:new("core", version, "https://github.com/RecurLoop/RecurLoop"); free(version)
@@ -275,7 +333,7 @@ let Docs:load_standard = fn (store:Docs:Store*) -> i64 {
         }
         if !more { break }; line = &line[end + 1]
     }
-    if !Docs:standard_trace(baseline, directory) { return 0 }; return Docs:merge(store, baseline)
+    if !Docs:standard_trace(baseline, directory) { return 0 }; return Docs:include_standard(store, baseline)
 }
 let Docs:load_options = fn (root:u8*, directory:u8*, standard:i64) -> Docs:Store* {
     let canonical = realpath(root, cast(u8*, 0))

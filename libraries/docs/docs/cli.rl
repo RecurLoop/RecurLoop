@@ -22,7 +22,7 @@ recurloop --docs merge combined.json language.json library.json
 
 ## Scope and result selection
 
-`--root` selects a source package. `--docs-dir` overrides its configured public directory. `--no-standard` excludes the standard manuals. Otherwise standard documentation is available alongside project/source-package help. Included source dependencies can contribute their own configured documentation directories.
+`--root` selects a source package. `--docs-dir` overrides its configured public directory. `--no-standard` excludes the standard manuals. Otherwise standard documentation is available alongside project/source-package help. Included source dependencies can contribute their own configured documentation directories. Local authored pages take precedence over installed manuals; standard manuals fill in generated code help, while live inline descriptions remain available. Explicit `merge` commands reject conflicting exported pages.
 
 `--from` reads an exported bundle or collection index and reuses its index. `search` uses word prefixes; `show` accepts a page identifier, a qualified scope/key or an exact phrase name. `--limit` accepts 1–1000 and defaults to 50. JSON search reports total and shown counts, so a client can distinguish no matches from a limited response.
 

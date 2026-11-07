@@ -7,7 +7,12 @@ extern fwrite(data:u8*, size:u64, count:u64, stream:u8*) -> u64 abi sysv-amd64
 extern snprintf(buffer:u8*, size:u64, format:u8*, ...) -> i32 abi sysv-amd64
 extern access(path:u8*, mode:i32) -> i32 abi sysv-amd64
 
+extern dprintf(descriptor:i32, format:u8*, ...) -> i32 abi sysv-amd64
+
 let Docs = []
+let Docs:diagnostic = fn (message:u8*, detail:u8*) -> void {
+    dprintf(cast(i32, 2), "Documentation: %s: %s\n", message, detail)
+}
 let Docs:Pages = phrase { dictionary = true permanent = true }
 
 let Docs:copy = fn (text:u8*) -> u8* { return LanguageKit:copy_text(text) }
