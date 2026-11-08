@@ -32,5 +32,6 @@
     "recurloop.terminal.libraries": [
         "shell",
         "inferred"
-    ]
+    ],
+    "terminal.integrated.defaultProfile.linux": "RecurLoop"
 }

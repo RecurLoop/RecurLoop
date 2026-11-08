@@ -2398,8 +2398,12 @@ At top level, creates a language phrase: a value, alias, dictionary, signature o
 
 ```recurloop
 let branch = <if>
-let Math = [ answer = 42 ]
+let Math = [
+    answer = fn () -> i64 { return 42 }
+]
 let add = fn (a:i64, b:i64) -> i64 { return a + b }
+assert Math:answer() == 42
+assert add(20, 22) == 42
 ```
 
 ## Syntax
@@ -3048,10 +3052,13 @@ sizeof(Type)
 
 In a compiled function, returns the storage size of a complete object type in bytes.
 
-**Example (inside fn)**
+**Example**
 
 ```recurloop
-let bytes = sizeof(u8[64])
+let buffer_size = fn () -> i64 {
+    return sizeof(u8[64])
+}
+assert buffer_size() == 64
 ```"
     }
 ]

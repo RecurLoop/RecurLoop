@@ -22,6 +22,15 @@ raw source:
 
 ```recurloop
 syntax unless <condition:expr> <body:block> => if !(${condition}) ${body}
+var answer = 0
+unless false { answer = 42 }
+assert answer == 42
+let use_unless = fn (value:i64) -> i64 {
+    unless value == 0 { return 42 }
+    return 0
+}
+assert use_unless(1) == 42
+assert use_unless(0) == 0
 ```
 
 ## Captures, choices and layout
@@ -55,6 +64,9 @@ adding delimiters while keeping the target phrase's remaining source shape:
 
 ```recurloop
 syntax replace if \"(\" <condition:expr> \")\" <body:block> [else <rejected:block>] as <if>
+var answer = 0
+if (true) { answer = 42 } else { answer = -1 }
+assert answer == 42
 ```
 
 ## Implement a syntax action

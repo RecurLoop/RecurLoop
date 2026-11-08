@@ -13,11 +13,20 @@ A pipeline sends the standard output of one stage to the standard input of the n
 ```recurloop
 import shell
 let check = fn () -> i64 {
-    let code = run printf \"alpha\\nbeta\\n\" | grep beta
+    let code = run printf \"alpha\\\\nbeta\\\\n\" | grep beta
     if code != 0 { return code }
     return 0
 }
 assert check() == 0
+```
+
+Check the selected line as well as the command status:
+
+```recurloop
+import shell
+var output = capture printf \"alpha\\\\nbeta\\\\n\" | grep beta
+assert status == 0
+assert output == \"beta\\n\"
 ```
 
 ## Exit status belongs to the whole pipeline

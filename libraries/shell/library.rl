@@ -2222,7 +2222,7 @@ let directory = phrase {
 // The header evaluates to the name of a RecurLoop value. Its formatted value
 // becomes the environment value for the duration of the ordinary phrase block.
 let environment = phrase {
-    docs = "```recurloop\nenvironment name_expression { ... }\n```\n\nTemporarily exports a RecurLoop runtime binding as an environment variable. The header evaluates to the binding name; the previous environment is restored on exit.\n\n**Example**\n\n```recurloop\nvar GREETING = \"hello\"\nenvironment \"GREETING\" { run printenv GREETING }\n```"
+    docs = "```recurloop\nenvironment name_expression { ... }\n```\n\nTemporarily exports a RecurLoop runtime binding as an environment variable. The header evaluates to the binding name; the previous environment is restored on exit.\n\n**Example**\n\n```recurloop\nimport shell\nvar GREETING = \"hello\"\nenvironment \"GREETING\" {\n    run printenv GREETING\n}\nassert status == 0\n```"
     type = <phrase-types:elaborate>
     permanent = true
     action = fn (state:Context*, called:Phrase*) -> void {

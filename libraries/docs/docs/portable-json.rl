@@ -24,8 +24,11 @@ let write_and_read = fn (path:u8*) -> i64 {
     if !Docs:read_export(restored, path) { return 5 }
     return Docs:find(restored, \"sample\", \"intro\") == cast(Docs:Entry*, 0)
 }
-// Call with a writable destination chosen by the application.
+assert write_and_read(\"./catalog.json\") == 0
 ```
+
+Run this example in a writable directory. It creates or replaces `catalog.json`
+there, reads it back and checks that the introductory page survived the round trip.
 
 ## Independent package indexes
 

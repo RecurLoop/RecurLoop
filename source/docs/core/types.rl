@@ -38,6 +38,10 @@ let increment = Unary {
 let apply = fn (callback:Unary, value:i64) -> i64 {
     return callback(value)
 }
+let check_callback = fn () -> i64 {
+    return apply(increment, 41)
+}
+assert check_callback() == 42
 ```"
     }
 ]

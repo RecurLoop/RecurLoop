@@ -13,7 +13,7 @@ let Docs:Pages:libraries = [
 ```recurloop
 import shell
 let run_example = fn () -> i64 {
-    return run printf \"hello\\n\"
+    return run printf \"hello\\\\n\"
 }
 assert run_example() == 0
 ```

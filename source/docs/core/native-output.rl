@@ -10,20 +10,39 @@ let Docs:Pages:native_output = [
 
 ## Emit bytes, objects and executables
 
-The language can emit exact bytes, objects, and executables:
+Native object output requires LLD; executable output also requires Clang and
+the platform C development files. These tools are separate from the RecurLoop
+binary. On Debian/Ubuntu, install them with `sudo apt install clang-22 lld-22 libc6-dev`.
+Ordinary function calls use the in-process compiler and do not need these tools.
 
-```rl
-emit raw \"/tmp/data.bin\" = hex { 52 4c 0a }
-emit object \"/tmp/module.o\" add = fn (a:i64, b:i64) -> i64 {
+Save this as `native.rl` in a writable directory:
+
+```recurloop
+emit raw \"./data.bin\" = hex { 52 4c 0a }
+emit object \"./module.o\" add = fn (a:i64, b:i64) -> i64 {
     return a + b
 }
-emit executable \"/tmp/app\" app_main = fn () -> i64 {
+emit executable \"./app\" app_main = fn () -> i64 {
     return 0
 }
-emit executable debug \"/tmp/app-debug\" app_debug_main = fn () -> i64 {
+emit executable debug \"./app-debug\" app_debug_main = fn () -> i64 {
     return 0
 }
 ```
+
+Run it from that directory, then run both generated executables:
+
+```console
+recurloop --file native.rl
+./app
+./app-debug
+od -An -tx1 data.bin
+```
+
+Both programs exit successfully without printing. The byte dump is `52 4c 0a`
+(`RL` followed by a newline); `module.o` is a relocatable object for later linking.
+The output paths are relative to the process working directory. Rerunning the
+example replaces those files.
 
 ## Select release or debug output
 

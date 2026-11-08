@@ -13,11 +13,16 @@ Use `run program argument ...` for an explicit command. Arguments can contain sp
 ```recurloop
 import shell
 var label = \"release candidate\"
-run printf \"%s\\n\" \"{label}\"
+run printf \"%s\\\\n\" \"{label}\"
 assert status == 0
 ```
 
 This passes one value argument, `release candidate`, to `printf`. Quotes group an argument; they are not passed to the program. `{label}` evaluates a RecurLoop expression rather than a shell variable.
+
+Backslash escapes the next byte in command arguments, including inside quotes.
+Write `\\\\n` in a `printf` format to pass `\\n` to that program, which then
+turns it into a newline. This command-argument syntax differs from ordinary
+RecurLoop string literals, where `\\n` itself denotes a newline.
 
 ## Select Shell syntax explicitly
 
@@ -26,7 +31,7 @@ Use `shell` when a program name overlaps a phrase in another vocabulary. A selec
 ```recurloop
 import shell
 shell {
-    printf \"selected shell syntax\\n\"
+    printf \"selected shell syntax\\\\n\"
 }
 ```
 

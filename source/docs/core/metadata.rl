@@ -49,6 +49,7 @@ let example = fn () -> i64 {
     tick += 1
     return tick
 }
+assert example() == 2
 ```
 
 Local `set name.docs = \"...\"` and `set name.color = \"#RRGGBB\"` assignments

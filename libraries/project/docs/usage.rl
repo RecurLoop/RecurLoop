@@ -10,6 +10,8 @@ let Docs:Pages:usage = [
 
 ## First example
 
+Save this as `recurloop.project.rl`:
+
 ```recurloop
 import project
 target prepare { print \"prepare\" }
@@ -17,7 +19,15 @@ target check depends [prepare] { assert 6 * 7 == 42 }
 target application depends [prepare, check] { print \"ready\" }
 ```
 
-Selecting `application` runs `prepare`, then `check`, then the application body. The body is ordinary RecurLoop source and sees the project vocabulary. With an installed runtime, select it using `recurloop --project recurloop.project.rl --target application`.
+Selecting `application` runs `prepare`, then `check`, then the application body.
+From the directory containing that file, run:
+
+```console
+recurloop --project recurloop.project.rl --target application
+```
+
+The output is `prepare` followed by `ready`; the shared prerequisite runs once.
+The body is ordinary RecurLoop source and sees the project vocabulary.
 
 Targets describe the execution workflow of your application.
 

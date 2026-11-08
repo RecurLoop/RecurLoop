@@ -13,11 +13,30 @@ The CLI can search live source documentation or read prebuilt JSON without evalu
 ```console
 recurloop --docs search \"pipeline ownership\" --json
 recurloop --docs show \"Shell:Invocation:stdout\"
+```
+
+From a writable directory, export the installed manuals and search the exported
+file. These commands create `manual.json` and `combined.json` in that directory:
+
+```console
+recurloop --docs export manual.json
+recurloop --docs search \"pipeline ownership\" --from manual.json --json
+recurloop --docs merge combined.json manual.json manual.json
+```
+
+The repeated input demonstrates that identical pages deduplicate. For independent
+packages, pass their separately exported JSON files instead.
+
+## Work with your own source package
+
+The following commands require an existing `my-package` source package. Replace
+that path with your package directory. The `--docs-dir reference` example also
+requires its documentation objects to be in that package's `reference` directory:
+
+```console
 recurloop --docs list --root ./my-package --no-standard
 recurloop --docs search \"buffer\" --root ./my-package --docs-dir reference
-recurloop --docs search \"buffer\" --from ./manual/index.json --json
-recurloop --docs export manual.json --root ./my-package --no-standard
-recurloop --docs merge combined.json language.json library.json
+recurloop --docs export package-manual.json --root ./my-package --no-standard
 ```
 
 ## Scope and result selection

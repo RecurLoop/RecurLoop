@@ -28,8 +28,8 @@ For typed functions, `Shell:cwd_enter` and `Shell:env_enter` return guards. Chec
 ```recurloop
 import shell
 parallel {
-    run printf \"first job\\n\"
-    run printf \"second job\\n\"
+    run printf \"first job\\\\n\"
+    run printf \"second job\\\\n\"
 }
 assert status == 0
 ```

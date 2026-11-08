@@ -19,11 +19,21 @@ let Docs:Pages:usage = [
 
 ```recurloop
 import shell
-run printf \"hello\\n\" | tr a-z A-Z
+run printf \"hello\\\\n\" | tr a-z A-Z
 assert status == 0
 ```
 
 The output is `HELLO`. At top level `status` is a runtime binding. Inside a typed function, assign the return value of `run` instead of reading that binding.
+
+To check the output automatically, capture it and compare it with the expected
+text, including the newline:
+
+```recurloop
+import shell
+var output = capture printf \"hello\\\\n\" | tr a-z A-Z
+assert status == 0
+assert output == \"HELLO\\n\"
+```
 
 
 Do not free borrowed `Invocation:stdout` text. Do free the string returned by `capture` inside a typed function. The two APIs deliberately have different ownership.

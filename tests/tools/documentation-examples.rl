@@ -2,27 +2,53 @@
 // GUI/server examples define callable functions; they do not start loops here.
 // Core API invocation templates are not standalone programs; guide examples are.
 let DocsExamples = []
+let DocsExamples:native_output = fn () -> i64 {
+    let bytes = Docs:read_file("data.bin")
+    if !bytes { return 1 }; defer free(bytes)
+    if strcmp(bytes, "RL\n") != 0 { return 2 }
+    let object = Docs:read_file("module.o")
+    if !object { return 3 }; defer free(object)
+    if object[0] != 127 || object[1] != 69 || object[2] != 76 || object[3] != 70 { return 4 }
+    let release = run timeout 10 ./app
+    if release != 0 { return release }
+    return run timeout 10 ./app-debug
+}
 let DocsExamples:check = fn (store:Docs:Store*, executable:u8*, libraries:u8*, directory:u8*) -> i64 {
+    Docs:sort(store)
     var entry = store.first; var count = 0; var failed = 0
     while entry {
         var cursor = entry.body
         if strcmp(store.name, "core") == 0 && strcmp(entry.section, "API") == 0 { cursor = cast(u8*, 0) }
         while cursor && cursor[0] != 0 {
-            let opening = strstr(cursor, "```recurloop\n")
+            var opening = strstr(cursor, "```recurloop\n")
+            var prefix_length = strlen("```recurloop\n")
+            let short_opening = strstr(cursor, "```rl\n")
+            if short_opening && (!opening || cast(i64, short_opening) < cast(i64, opening)) {
+                opening = short_opening; prefix_length = strlen("```rl\n")
+            }
             if !opening { break }
-            let begin = &opening[strlen("```recurloop\n")]
+            let begin = &opening[prefix_length]
             let finish = strstr(begin, "\n```")
             if !finish { printf("[docs-examples] unterminated example in %s\n", entry.title); return -1 }
             let source = LanguageKit:copy_bytes(begin, cast(i64, finish) - cast(i64, begin))
             if !source { return -1 }; count += 1
             let name = malloc(128); if !name { free(source); return -1 }
-            snprintf(name, 128, "%s-%ld.rl", store.name, count)
-            let file = Docs:join(directory, name); free(name)
+            snprintf(name, 128, "%s-%ld", store.name, count)
+            let sandbox = Docs:join(directory, name); free(name)
+            let prepared = run mkdir -p "{sandbox}"
+            if prepared != 0 { free(source); free(sandbox); return -1 }
+            let file = Docs:join(sandbox, "example.rl")
             let written = Docs:write_file(file, source); free(source)
-            if !written { free(file); return -1 }
+            if !written { free(file); free(sandbox); return -1 }
+            let guard = Shell:cwd_enter(sandbox); free(sandbox)
+            if !guard { free(file); return -1 }
             let process = spawn timeout 45 "{executable}" --library-path "{libraries}" --file "{file}"
-            if !process { free(file); return -1 }
-            let status = process.exit_code()
+            if !process { Shell:cwd_leave(guard); free(file); return -1 }
+            var status = process.exit_code()
+            if status == 0 && strcmp(store.name, "core") == 0 && strcmp(entry.id, "native-output") == 0 {
+                status = DocsExamples:native_output()
+            }
+            Shell:cwd_leave(guard)
             if status != 0 {
                 printf("[docs-examples] %s / %s failed (%ld), source: %s\n%s\n", store.name, entry.title, status, file, process.stdout())
                 failed += 1
@@ -35,15 +61,27 @@ let DocsExamples:all = fn () -> i64 {
     let generated = ".cache/docs-examples"
     let prepared = run mkdir -p "{generated}"
     if prepared != 0 { return 1 }
-    let directory = realpath(generated, cast(u8*, 0))
+    let temporary = Docs:join(generated, "run-XXXXXX"); defer free(temporary)
+    if !mkdtemp(temporary) { return 1 }
+    let directory = realpath(temporary, cast(u8*, 0))
     if !directory { return 1 }; defer free(directory)
     let executable = Docs:executable(); if !executable { return 3 }; defer free(executable)
     let bindir = Docs:parent(executable)
     var libraries = Docs:copy(getenv("RECURLOOP_DOCS_LIBRARY_PATH"))
     if Docs:empty(libraries) { free(libraries); libraries = Docs:join(bindir, "../libraries") }
+    if access(libraries, 4) != 0 { free(libraries); libraries = Docs:join(bindir, "../share/recurloop/libraries") }
     free(bindir); defer free(libraries)
+    let canonical = realpath(libraries, cast(u8*, 0)); if !canonical { return 4 }; defer free(canonical)
+    let core = Docs:new("core", "test", "")
+    if !core { return 9 }
+    let core_loaded = Docs:load_package(core, ".", "")
+    if !core_loaded { Docs:destroy(core); return 10 }
+    let core_count = DocsExamples:check(core, executable, canonical, directory)
+    Docs:destroy(core)
+    if core_count <= 0 { printf("[docs-examples] core examples failed or missing\n"); return 11 }
+    printf("[docs-examples] core: %ld examples passed\n", core_count)
     let inventory = Docs:read_file("libraries/standard.txt"); if !inventory { return 4 }; defer free(inventory)
-    var line = inventory; var total = 0; var failed = 0
+    var line = inventory; var total = core_count; var failed = 0
     while line[0] != 0 {
         var end = 0; while line[end] != 0 && line[end] != 10 { end += 1 }
         let more = line[end] == 10; line[end] = 0
@@ -54,7 +92,7 @@ let DocsExamples:all = fn () -> i64 {
             if !store { free(root); return 5 }
             let loaded = Docs:load_package(store, root, ""); free(root)
             if !loaded { Docs:destroy(store); return 6 }
-            let count = DocsExamples:check(store, executable, libraries, directory)
+            let count = DocsExamples:check(store, executable, canonical, directory)
             Docs:destroy(store)
             if count < 0 { failed -= count }
             if count == 0 { printf("[docs-examples] no executable examples in %s\n", name); return 8 }
@@ -62,14 +100,6 @@ let DocsExamples:all = fn () -> i64 {
         }
         if !more { break }; line = &line[end + 1]
     }
-    let core = Docs:new("core", "test", "")
-    if !core { return 9 }
-    let core_loaded = Docs:load_package(core, ".", "")
-    if !core_loaded { Docs:destroy(core); return 10 }
-    let core_count = DocsExamples:check(core, executable, libraries, directory)
-    Docs:destroy(core)
-    if core_count <= 0 { printf("[docs-examples] core examples failed or missing\n"); return 11 }
-    printf("[docs-examples] core: %ld examples passed\n", core_count); total += core_count
     if failed { printf("[docs-examples] %ld examples failed\n", failed); return 7 }
     printf("[docs-examples] %ld examples passed in isolated runtimes\n", total)
     return 0
