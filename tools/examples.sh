@@ -7,6 +7,7 @@ RECURLOOP=${2:-$ROOT/build/Release/bin/recurloop}
 EXAMPLE=${3:-}
 
 workflows=(
+    application-project
     reusable-language-image
     reusable-syntax-image
     language-kit

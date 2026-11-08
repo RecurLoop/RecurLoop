@@ -58,51 +58,31 @@ output requires separate **Clang/LLD** tools. Native debugging requires
 
 ## Create a project with run and debug targets
 
-Replace `src/main.rl` with a function definition. Loading this file defines the
-function without starting the application:
+The public [First project guide](https://recurloop.org/docs/core/first-project)
+walks through folder creation, CLI and editor tasks, console refresh and a complete
+`.vscode/launch.json` configuration for F5, including a source breakpoint and local variables.
 
-```rl
-let Application = phrase { dictionary = true permanent = true }
+Copy the [application starter](../../examples/07-workflows/application-project/README.md)
+into your workspace, or create the files shown in the First project guide. Its
+entry imports application definitions without starting the program and declares
+these targets:
 
-let Application:main = fn () -> i64 {
-    var answer:i64 = 40
-    answer += 2
-    return answer
-}
-```
+| Target | Responsibility |
+| --- | --- |
+| `run` | Run the application in the runtime; prints `42`. |
+| `build` | Emit `build/app` for distribution. |
+| `build-debug` | Emit `build/app-debug` with source debug information. |
+| `debug` | Prepare `build-debug` and select the executable for F5. |
+| `test` | Execute `tests/main.rl`; assertions verify the application. |
+| `docs` | Export manual objects and API help to `build/docs/my-application.json`. |
+| `clean` | Remove generated output under `build`. |
 
-Replace `recurloop.project.rl` with:
-
-```rl
-include "src/main.rl"
-
-target check {
-    assert Application:main() == 42
-    print "OK: application check passed."
-}
-
-target demo {
-    print str(Application:main())
-}
-
-target prepare {
-    mkdir -p .cache/recurloop
-}
-
-target build-debug depends [prepare, check] {
-    emit executable debug ".cache/recurloop/app-debug" app_main = fn () -> i64 {
-        return Application:main() - 42
-    }
-}
-
-target debug depends [build-debug] debug executable ".cache/recurloop/app-debug" {}
-```
-
-Save the files, then use **Terminal → Run Task** to select the discovered `check`
-or `demo` target. `demo` prints `42` without producing an executable. Select
-`debug` in **Run and Debug** to build the Debug executable and launch it.
-Set a breakpoint on `answer += 2` in `src/main.rl` first; inspect `answer` when
-execution stops. Debug dependencies are built automatically.
+Save the files, then use **Terminal → Run Task** to choose a discovered target.
+Running, building and documentation export do not run tests implicitly. For
+native debugging, set a breakpoint on `answer += 2` in `src/main.rl` and choose
+`debug` in **Run and Debug**. Its dependency builds the executable automatically.
+Use `recurloop --target docs` in a shell, or the `docs` task in VS Code, to
+regenerate the project's documentation without launching the application.
 
 To make a task your default build action, add `.vscode/tasks.json`:
 
@@ -206,9 +186,9 @@ You can explicitly use **RecurLoop: Open Project Console** or select the
 **RecurLoop** terminal profile. For the project above, enter these commands separately:
 
 ```rl
-print str(Application:main())
+print Application:answer()
 :targets
-:target check
+:target test
 ```
 
 The console inherits project definitions and the default `shell` and `inferred`
@@ -222,10 +202,10 @@ is preserved. Existing terminals keep their sessions.
 Each console keeps its own session state. Saved source changes republish the
 project; use `:refresh` to adopt the latest generation in an existing console.
 For example, change `answer += 2` to `answer += 3` in `src/main.rl` and save.
-After the project reloads, enter `:refresh`, then `print str(Application:main())`
+After the project reloads, enter `:refresh`, then `print Application:answer()`
 in the same console: the result changes from **42** to **43**. The application
 and terminal use the same source-defined function. Restore `2` before running
-`check`, whose assertion expects 42.
+`test`, whose assertion expects 42.
 
 A failed project load retains the previous valid publication. Use `:publish`
 when you intentionally want console changes shared with future sessions.

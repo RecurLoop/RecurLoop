@@ -112,6 +112,7 @@ function(recurloop_add_checked_example name)
 
     file(GLOB_RECURSE example_files CONFIGURE_DEPENDS "${example_dir}/*")
     list(FILTER example_files EXCLUDE REGEX "/README[.]md$")
+    list(FILTER example_files EXCLUDE REGEX "/([.]cache|build)/")
 
     string(REPLACE "/" "_" check_name "${name}")
     string(REPLACE "-" "_" check_name "${check_name}")
@@ -171,6 +172,21 @@ function(recurloop_define_incremental_example_checks)
             ${RECURLOOP_CHECK_LLVM_FILES})
 
     # Workflows explicitly declare the standard-library/backend inputs they use.
+    file(GLOB_RECURSE application_project_libraries CONFIGURE_DEPENDS
+        "${CMAKE_SOURCE_DIR}/libraries/project/*.rl"
+        "${CMAKE_SOURCE_DIR}/libraries/docs/*.rl")
+    recurloop_add_checked_example(07-workflows/application-project
+        DEPENDS
+            "${RECURLOOP_LIBRARY_OUTPUT_DIR}/docs.rli"
+            "${RECURLOOP_PROJECT_IMAGE}"
+            "${RECURLOOP_INFERRED_IMAGE}"
+            ${RECURLOOP_CHECK_COMMON_FILES}
+            ${RECURLOOP_CHECK_LANGUAGE_KIT_FILES}
+            ${RECURLOOP_CHECK_SHELL_FILES}
+            ${RECURLOOP_CHECK_INFERRED_FILES}
+            ${RECURLOOP_CHECK_COMPILER_FILES}
+            ${RECURLOOP_CHECK_LLVM_FILES}
+            ${application_project_libraries})
     recurloop_add_checked_example(07-workflows/reusable-language-image
         DEPENDS ${RECURLOOP_CHECK_COMMON_FILES})
     recurloop_add_checked_example(07-workflows/reusable-syntax-image

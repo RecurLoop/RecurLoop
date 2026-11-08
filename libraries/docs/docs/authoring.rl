@@ -38,6 +38,25 @@ Set `order = phrase { payload = \"20\" }` on a chapter to place it after rank 10
 
 Use short concept titles, such as Configuration or Views. Put detailed tasks under `##` and `###` headings in `body`; export generates their table of contents. Both source persistence and JSON merges preserve each page's rank, so separate packages can own their own reading paths.
 
+## Export your application's documentation
+
+The [First project](../../../source/docs/core/first-project.rl#author-and-export-documentation)
+starter includes a `docs` target, a `recurloop.docs` configuration, authored
+manual objects and short API descriptions beside the application functions.
+From that project directory, run:
+
+```console
+recurloop --target docs
+recurloop --docs search \"answer\" --from build/docs/my-application.json
+```
+
+Its target calls `Docs:export_package(\".\", \"build/docs/my-application.json\")`
+to export only the application's configured package as a v3 bundle. Loading discovers
+configured manual objects and documented source definitions; exporting produces
+rendered blocks, navigation and a search index. It does not run application
+targets or require the runtime's source repository. A website reader can render
+the exported data; HTML generation is a separate step.
+
 ## Package-local sources
 
 Keep extended `.rl` objects in the library's `docs` directory. Its `recurloop.docs` can set `name`, `version`, `directory`, `repository` and `entry`. Optional `image` selects an installed library image for phrase help; `repository-directory` preserves source links while a library lives inside a larger repository. A developer can choose another documentation directory through configuration or `--docs-dir`.

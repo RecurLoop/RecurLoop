@@ -28,6 +28,19 @@ let Docs:Build:scope_catalog = fn (source:Docs:Store*, scope:u8*) -> Docs:Store*
     }
     selected.index_ready = 1; Docs:sort(selected); return selected
 }
+
+// Application export keeps the configured package, excluding dependency scopes.
+let Docs:export_package = fn (root:u8*, path:u8*) -> i64 {
+    let catalog = Docs:load(root, "")
+    if !catalog { return 0 }; defer Docs:destroy(catalog)
+    if catalog.error { return 0 }
+    let selected = Docs:Build:scope_catalog(catalog, catalog.name)
+    if !selected { return 0 }; defer Docs:destroy(selected)
+    if selected.error || !selected.first { return 0 }
+    return Docs:export_file(selected, path)
+}
+set Docs:export_package.docs = "Exports one source package's configured manual objects and API help as portable v3 JSON. Reads recurloop.docs under root and excludes dependency scopes. The output directory must exist. Returns 1 on success, 0 on failure."
+
 // Retire only recognized generated documentation files, never arbitrary JSON.
 let Docs:Build:clean_obsolete = fn (output:u8*, scopes:u8*) -> void {
     let paths = capture find "{output}" -maxdepth 1 -type f -name "*.json"

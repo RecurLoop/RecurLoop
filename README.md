@@ -22,6 +22,13 @@ See [binary installation](https://recurloop.org/docs/core/installation) for upda
 custom locations and removal. For VS Code, start with the
 [extension installation guide](https://recurloop.org/docs/core/installation-vscode),
 which covers automatic runtime installation and selecting your own binary.
+Continue with [your first project](https://recurloop.org/docs/core/first-project)
+for source files, targets, project consoles and a complete VS Code F5 debug configuration.
+
+For a copyable application with `run`, `build`, `build-debug`, `debug`, `test`,
+`docs` and `clean` targets, start with the
+[application project example](examples/07-workflows/application-project/README.md).
+Generate its own documentation with `recurloop --target docs`.
 
 ## Develop the runtime
 

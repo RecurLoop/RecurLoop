@@ -102,6 +102,11 @@ This group demonstrates process boundaries and reusable language libraries.
 The reusable implementations themselves live under [`libraries/`](../libraries/);
 this directory contains showcases, fixtures, and workflow test runners.
 
+- [`application-project`](07-workflows/application-project/README.md) is a
+  copyable application starter with `run`, `build`, `build-debug`, `debug`,
+  `test`, `docs` and `clean` targets. Its workflow runner copies it to a temporary
+  directory, builds and runs both native variants, and checks documentation export.
+  In your own copy, generated executables and JSON live under its ignored `build/`.
 - `reusable-language-image` and `reusable-syntax-image` demonstrate image
   creation/import directly.
 - `language-kit`, `shell-language`, `inferred-language`, and `http-language`

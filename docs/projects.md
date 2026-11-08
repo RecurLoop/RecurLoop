@@ -6,31 +6,56 @@ not depend on VS Code, GUI or IDE libraries. An empty entry is a valid project.
 Imports/includes establish the language and processing graph. Target bodies
 are deferred source, so loading or inspecting the project does not build/run them.
 
+The [application starter](../examples/07-workflows/application-project/README.md)
+and public **First project** chapter use the following conventional targets.
+`run` starts in the runtime, `build` emits the distributable executable,
+`build-debug` prepares native debugging, `debug` declares the debugger input,
+`test` runs application tests, `docs` exports the application's own manual and
+API help, and `clean` removes generated output. These are naming conventions,
+not built-in target names. Builds and ordinary runs do not execute tests.
+
 ```rl
+import project
 include "src/main.rl"
 
-target build-release {
-    emit executable ".cache/recurloop/app" app_main = fn () -> i64 {
+target run {
+    assert Application:main() == 0
+}
+
+target build {
+    let prepared = run mkdir -p build
+    assert prepared == 0
+    module auto
+    emit executable "./build/app" application_main = fn () -> i64 {
         return Application:main()
     }
 }
 
 target build-debug {
-    emit executable debug ".cache/recurloop/app-debug" app_debug_main = fn () -> i64 {
+    let prepared = run mkdir -p build
+    assert prepared == 0
+    module auto
+    emit executable debug "./build/app-debug" application_debug_main = fn () -> i64 {
         return Application:main()
     }
 }
 
-target run depends [build-release] {
-    ./.cache/recurloop/app
+target debug depends [build-debug] debug executable "./build/app-debug" {}
+
+target test {
+    include "tests/main.rl"
 }
 
-target debug depends [build-debug] debug executable ".cache/recurloop/app-debug" {
-    var status = Application:main()
+target docs {
+    import docs
+    let prepared = run mkdir -p build/docs
+    assert prepared == 0
+    assert Docs:export_package(".", "build/docs/my-application.json") == 1
 }
 
-target check {
-    assert Application:answer() == 42
+target clean {
+    let cleaned = run rm -rf -- build
+    assert cleaned == 0
 }
 ```
 
@@ -53,12 +78,12 @@ The host consumes this shared registry for graph validation and execution.
 
 ```bash
 recurloop --targets
-recurloop --target build-release
+recurloop --target build
 recurloop --debug-target debug
 recurloop --inspect src/main.rl
 recurloop --trace src/main.rl
 recurloop --project recurloop.project.rl --serve
-recurloop --project config/build.rl --project-root . --target build-release
+recurloop --project config/build.rl --project-root . --target build
 ```
 
 Project actions discover the nearest saved `recurloop.project.rl` by walking

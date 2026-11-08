@@ -12,6 +12,7 @@ let Docs:Pages:language = [
 
 1. [Install the binary](installation.rl) or [set up VS Code](installation-vscode.rl).
 2. [First program](first-program.rl) shows execution, output and assertions.
+3. [First project](first-project.rl) organizes source files, tasks, consoles and F5 debugging in VS Code.
 
 ## Learn the language
 

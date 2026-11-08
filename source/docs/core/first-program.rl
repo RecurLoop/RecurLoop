@@ -44,6 +44,6 @@ recurloop --docs search \"function\"
 recurloop --docs search \"ownership\" --json
 ```
 
-Search finds public language and package documentation. The `--json` form is useful for tools. Continue through [Values](values.rl), [Control flow](control-flow.rl) and [Functions](functions.rl), or use the [Learning path](language.rl) to see the full sequence."
+Search finds public language and package documentation. The `--json` form is useful for tools. Continue with [First project](first-project.rl) to organize source files, run targets and configure F5 debugging in VS Code. Then follow [Values](values.rl), [Control flow](control-flow.rl) and [Functions](functions.rl), or use the [Learning path](language.rl) to see the full sequence."
     }
 ]

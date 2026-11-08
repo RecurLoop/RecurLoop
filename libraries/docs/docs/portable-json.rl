@@ -30,6 +30,19 @@ assert write_and_read(\"./catalog.json\") == 0
 Run this example in a writable directory. It creates or replaces `catalog.json`
 there, reads it back and checks that the introductory page survived the round trip.
 
+## Export one application's package
+
+`Docs:export_package(root, path)` reads `recurloop.docs`, loads manual objects
+and discovers documented source definitions. It selects the configured package
+scope before exporting, so dependency and standard-library documentation do
+not leak into the application's bundle. The destination directory must exist.
+It returns 1 on success, 0 on a loading, empty-package or writing failure.
+
+Use it inside the `docs` target shown in
+[First project](../../../source/docs/core/first-project.rl#author-and-export-documentation).
+Use `export_file` when you already own a catalog and intentionally want to
+export all of its scopes.
+
 ## Independent package indexes
 
 Each exported bundle contains its own pages and inverted index. A collection index combines bundle metadata and search postings; creating it does not require importing every source library into one runtime. Existing postings can be merged without re-tokenizing documentation.

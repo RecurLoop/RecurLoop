@@ -1,0 +1,4 @@
+name=my-application
+version=0.1.0
+directory=docs
+entry=recurloop.project.rl

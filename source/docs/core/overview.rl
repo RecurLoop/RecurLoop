@@ -11,7 +11,7 @@ let Docs:Pages:overview = [
 
 ## Begin here
 
-[Install the RecurLoop binary](installation.rl) for terminal use, or [set up the VS Code extension](installation-vscode.rl). Then write your [First program](first-program.rl).
+[Install the RecurLoop binary](installation.rl) for terminal use, or [set up the VS Code extension](installation-vscode.rl). Then write your [First program](first-program.rl) and create your [First project](first-project.rl), including tasks, a project console and F5 debugging in VS Code.
 
 ## Follow the learning path
 

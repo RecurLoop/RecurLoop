@@ -1,0 +1,12 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Application: debug",
+      "type": "recurloop",
+      "request": "launch",
+      "target": "debug",
+      "stopOnEntry": false
+    }
+  ]
+}

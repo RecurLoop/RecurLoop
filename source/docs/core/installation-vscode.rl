@@ -29,6 +29,8 @@ For WSL, SSH and containers, install the extension in the workspace's remote env
 
 The saved project entry opts the folder into runtime execution. A loose `.rl` file alone does not trigger a download, server or project analysis. Each folder in a multi-folder workspace opts in separately. Source colors come from the project's runtime inspection; files must belong to its included source graph for project-aware inspection.
 
+Continue with [First project](first-project.rl) for complete source and project files, running tasks and using the console. Its [F5 debugging instructions](first-project.rl#configure-f5-debugging-in-vs-code) include a ready-to-save `.vscode/launch.json`, the matching debug target and a breakpoint walkthrough.
+
 ### Use another project-entry filename
 
 Set the filename in your application's VS Code settings, then create and save that entry. Initialization follows this setting:

@@ -58,6 +58,27 @@ let DocsTests:source_packages = fn () -> i64 {
     if Docs:search(override, "rootrichuniquemarker", cast(Docs:Entry*, 0)) { return 8 }
     return 0
 }
+// One application's published bundle must not contain imported package help.
+let DocsTests:package_export = fn () -> i64 {
+    let path = ".cache/docs-export/application-package.json"
+    if !Docs:export_package("tests/fixtures/documentation/project", path) { return 1 }
+    let store = Docs:new("", "", "")
+    if !store { return 2 }; defer Docs:destroy(store)
+    if !Docs:read_export(store, path) || store.index_builds != 0 { return 3 }
+    if strcmp(store.name, "source-fixture") != 0 || strcmp(store.version, "1.0.0") != 0 { return 4 }
+    if !Docs:search(store, "rootrichuniquemarker", cast(Docs:Entry*, 0)) || !Docs:search(store, "local-code-token", cast(Docs:Entry*, 0)) { return 5 }
+    if Docs:search(store, "dependencyrichuniquemarker", cast(Docs:Entry*, 0)) || Docs:search(store, "nativecodeuniquemarker", cast(Docs:Entry*, 0)) { return 6 }
+    var page = store.first
+    while page { if strcmp(page.scope, "source-fixture") != 0 { return 7 }; page = page.next }
+    if Docs:export_package("tests/fixtures/documentation/not-a-package", path) { return 8 }
+    // An existing directory cannot be opened as an output file.
+    if Docs:export_package("tests/fixtures/documentation/project", ".cache/docs-export") { return 9 }
+    let prepared = run mkdir -p .cache/docs-export/empty-package/docs
+    if prepared != 0 { return 10 }
+    if Docs:export_package(".cache/docs-export/empty-package", path) { return 11 }
+    return 0
+}
+
 // Manuals follow their library, including when copied into a separate source tree.
 let DocsTests:library_manuals = fn () -> i64 {
     let store = Docs:load_options("libraries/ide", "", 1)
@@ -215,6 +236,7 @@ let DocsTests:all = fn () -> i64 {
     let overlap = DocsTests:standard_overlap(); if overlap != 0 { printf("[docs-check] source/standard overlap: %ld\n", overlap); return overlap }
     let installed = DocsTests:installed_cli(); if installed != 0 { printf("[docs-check] installed CLI: %ld\n", installed); return installed }
     let packages = DocsTests:source_packages(); if packages != 0 { printf("[docs-check] source packages: %ld\n", packages); return packages }
+    let application = DocsTests:package_export(); if application != 0 { printf("[docs-check] application package export: %ld\n", application); return application }
     let manuals = DocsTests:library_manuals(); if manuals != 0 { printf("[docs-check] library-owned manuals: %ld\n", manuals); return manuals }
     let cli = DocsTests:cli_exports(); if cli != 0 { printf("[docs-check] CLI JSON/merge: %ld\n", cli); return cli }
     printf("[docs-check] source .rl objects, generated/reused indexes, edits, JSON, merge, CLI and private-doc exclusion passed\n")
