@@ -196,9 +196,22 @@ machine path.
 
 The ELF audit rejects unexpected architectures, interpreters, RPATH/RUNPATH and
 undeclared shared dependencies and computes the actual maximum GLIBC symbol
-version. Official CI uses a Linux x86-64 glibc 2.35 profile and runs the finished
+version. Every packaging entry point enforces the glibc 2.35 ceiling, including
+local `make package` and `make verify`; `MAX_GLIBC` can tighten that ceiling but
+cannot raise it for the same release profile. This limits the symbol versions
+required by the binary. Supported runtime systems have glibc 2.35 or newer;
+there is no upper-version gate. Building on a newer distribution
+can introduce newer glibc requirements through its headers and C++ runtime even
+when LLVM itself comes from the pinned archive. Use an Ubuntu 22.04 builder or
+an explicit equivalent sysroot with matching C/C++ runtimes for production
+packages. A local development build on a newer host remains supported by
+`make build` and `make check`.
+
+Official CI uses a Linux x86-64 glibc 2.35 profile and runs the finished
 archive in clean representative newer distributions with networking disabled.
-Those clean containers verify JIT execution and missing-tool diagnostics;
+Those clean containers verify inferred function definitions and calls, JIT
+allocation and aggregation of record arrays, project discovery and target
+execution, and missing-tool diagnostics;
 actual native object emission is tested on the release builder with host LLD.
 
 ## Docker and other libc profiles

@@ -18,7 +18,11 @@ function(recurloop_cache_value key out_value)
         return()
     endif()
     list(GET lines 0 line)
-    string(REGEX REPLACE "^[^=]*=" "" value "${line}")
+    # Values such as "glibc >= 2.35" contain a second '='. Split only once;
+    # repeated anchored regex replacement under old CMake policies eats it too.
+    string(FIND "${line}" "=" separator)
+    math(EXPR value_start "${separator} + 1")
+    string(SUBSTRING "${line}" ${value_start} -1 value)
     set(${out_value} "${value}" PARENT_SCOPE)
 endfunction()
 

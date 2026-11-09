@@ -16,6 +16,15 @@ endif()
 if(NOT release_platform STREQUAL "linux-x86_64")
     message(FATAL_ERROR "AuditLinuxPackage.cmake only audits linux-x86_64 packages")
 endif()
+# Ceiling on the ELF's required symbol versions, not on the version installed
+# on the user's machine. A glibc 2.35-compatible package also runs on newer libc.
+if(NOT DEFINED MAX_GLIBC OR MAX_GLIBC STREQUAL "")
+    set(MAX_GLIBC "${RECURLOOP_RELEASE_GLIBC_BASELINE}")
+elseif(MAX_GLIBC VERSION_GREATER RECURLOOP_RELEASE_GLIBC_BASELINE)
+    message(FATAL_ERROR
+        "MAX_GLIBC=${MAX_GLIBC} exceeds the linux-x86_64 release baseline "
+        "${RECURLOOP_RELEASE_GLIBC_BASELINE}; use a builder with the supported glibc ABI")
+endif()
 
 # Symlinks must stay inside the package. Absolute or escaping links make a
 # relocatable archive depend on the builder's filesystem.
@@ -100,8 +109,11 @@ foreach(path IN LISTS files)
     endforeach()
 endforeach()
 
-if(DEFINED MAX_GLIBC AND max_glibc VERSION_GREATER MAX_GLIBC)
-    message(FATAL_ERROR "Package requires glibc ${max_glibc}; release baseline is ${MAX_GLIBC}")
+if(max_glibc VERSION_GREATER MAX_GLIBC)
+    message(FATAL_ERROR
+        "Package requires glibc ${max_glibc}; release baseline is ${MAX_GLIBC}. "
+        "Build on Ubuntu 22.04 or against an equivalent glibc ${MAX_GLIBC} sysroot; "
+        "a newer build host must not produce an archive labelled compatible with older glibc.")
 endif()
 file(MAKE_DIRECTORY "${PREFIX}/share/recurloop")
 file(WRITE "${PREFIX}/share/recurloop/BUILD-COMPATIBILITY.txt"

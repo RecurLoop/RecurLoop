@@ -56,4 +56,28 @@ execute_process(COMMAND "${CMAKE_COMMAND}" "-DPREFIX=${work}" -DMAX_GLIBC=2.0
 if(result EQUAL 0 OR NOT error MATCHES "release baseline")
     message(FATAL_ERROR "Audit did not enforce the ABI ceiling: ${output}${error}")
 endif()
+
+# Use a synthetic versioned libc dependency so this works even when the test
+# itself runs on the oldest supported glibc. Definitions do not impose a
+# requirement; the consumer's undefined versioned reference does.
+file(WRITE "${work}/future.c" "int future_glibc(void) { return 0; }\n")
+file(WRITE "${work}/future.map" "GLIBC_9.99 { global: future_glibc; };\n")
+execute_process(COMMAND "${CC}" -shared -fPIC -nostdlib "${work}/future.c"
+    "-Wl,--version-script=${work}/future.map" -Wl,-soname,libc.so.6
+    -o "${work}/lib/libc.so.6" COMMAND_ERROR_IS_FATAL ANY)
+file(WRITE "${work}/main.c" "extern int future_glibc(void); int main(void) { return future_glibc(); }\n")
+execute_process(COMMAND "${CC}" -shared -fPIC -nostdlib "${work}/main.c"
+    "-L${work}/lib" -l:libc.so.6 -o "${work}/bin/recurloop" COMMAND_ERROR_IS_FATAL ANY)
+execute_process(COMMAND "${CMAKE_COMMAND}" "-DPREFIX=${work}"
+    -P "${root}/cmake/AuditLinuxPackage.cmake"
+    RESULT_VARIABLE result OUTPUT_VARIABLE output ERROR_VARIABLE error)
+if(result EQUAL 0 OR NOT error MATCHES "requires glibc 9.99; release baseline is 2.35")
+    message(FATAL_ERROR "Audit must enforce the release baseline by default: ${output}${error}")
+endif()
+execute_process(COMMAND "${CMAKE_COMMAND}" "-DPREFIX=${work}" -DMAX_GLIBC=9.99
+    -P "${root}/cmake/AuditLinuxPackage.cmake"
+    RESULT_VARIABLE result OUTPUT_VARIABLE output ERROR_VARIABLE error)
+if(result EQUAL 0 OR NOT error MATCHES "exceeds.*release baseline")
+    message(FATAL_ERROR "Audit must reject a relaxed release baseline: ${output}${error}")
+endif()
 file(REMOVE_RECURSE "${work}")

@@ -679,6 +679,11 @@ let Inferred:native_arg = fn (args:LanguageKit:Value**, index:i64, value:Languag
 let Inferred:native_invoke = fn (state:Context*, name:u8*, args:LanguageKit:Value**, argc:i64) -> LanguageKit:Value* {
     if argc < 0 || (argc > 0 && !args) { return cast(LanguageKit:Value*, 0) }
     defer free(cast(u8*, args))
+    let binding = LanguageKit:binding_named(state, name)
+    if !binding || binding.kind != 2 || !binding.call {
+        context:diagnostic:error(state, "Inferred: call to unknown or non-callable function")
+        return cast(LanguageKit:Value*, 0)
+    }
     return LanguageKit:invoke(state, name, args, argc)
 }
 

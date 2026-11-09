@@ -1,0 +1,1 @@
+print "DIRECT_FILE_OK"

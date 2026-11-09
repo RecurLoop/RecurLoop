@@ -213,12 +213,17 @@ if(ENABLE_TESTS_FEATURE)
 
     if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
         recurloop_add_feature_test(packaging/audit.cmake
-            DEPENDS "${CMAKE_SOURCE_DIR}/cmake/AuditLinuxPackage.cmake")
+            DEPENDS "${CMAKE_SOURCE_DIR}/cmake/AuditLinuxPackage.cmake"
+                    "${CMAKE_SOURCE_DIR}/cmake/ReleasePlatform.cmake")
+        recurloop_add_feature_test(packaging/install_glibc.cmake
+            DEPENDS "${CMAKE_SOURCE_DIR}/tools/install.sh")
     endif()
 
     # CLI behavior depends on the normal runtime/language surface.
     recurloop_add_feature_test(recurloop/cli/project_cache.cmake
         DEPENDS ${RECURLOOP_CHECK_COMMON_FILES})
+    recurloop_add_feature_test(recurloop/cli/target_regressions.cmake
+        DEPENDS ${RECURLOOP_CHECK_COMMON_FILES} "${RECURLOOP_PROJECT_IMAGE}")
     recurloop_add_feature_test(recurloop/cli/error_locations.cmake
         DEPENDS
             ${RECURLOOP_CHECK_COMMON_FILES}
@@ -245,6 +250,13 @@ if(ENABLE_TESTS_FEATURE)
             "${CMAKE_SOURCE_DIR}/examples/01-getting-started/hello-world/main.rl")
     recurloop_add_feature_test(recurloop/language/core_work_collections.cmake
         DEPENDS ${RECURLOOP_CHECK_COMMON_FILES})
+    file(GLOB_RECURSE critical_regression_fixtures CONFIGURE_DEPENDS
+        "${CMAKE_CURRENT_SOURCE_DIR}/fixtures/critical-regressions/*.rl")
+    recurloop_add_feature_test(recurloop/language/critical_regressions.cmake
+        DEPENDS ${RECURLOOP_CHECK_COMMON_FILES} ${RECURLOOP_CHECK_COMPILER_FILES}
+                ${RECURLOOP_CHECK_ASSEMBLER_FRONTEND_FILES} ${RECURLOOP_CHECK_LLVM_FILES}
+                "${RECURLOOP_INFERRED_IMAGE}" "${RECURLOOP_PROJECT_IMAGE}"
+                ${critical_regression_fixtures})
     recurloop_add_feature_test(recurloop/language/image_native_state.cmake
         DEPENDS ${RECURLOOP_CHECK_COMMON_FILES} ${RECURLOOP_CHECK_LANGUAGE_KIT_FILES})
     recurloop_add_feature_test(recurloop/language/library_imports.cmake
@@ -290,6 +302,12 @@ if(ENABLE_TESTS_FEATURE)
         DEPENDS ${RECURLOOP_CHECK_COMMON_FILES} ${RECURLOOP_CHECK_FRIENDLY_CONTEXT_EXAMPLE_FILES})
     recurloop_add_feature_test(recurloop/language/indentation_functions.cmake
         DEPENDS ${RECURLOOP_CHECK_COMMON_FILES} ${RECURLOOP_CHECK_INDENTATION_EXAMPLE_FILES})
+    recurloop_add_feature_test(recurloop/language/inferred_regressions.cmake
+        DEPENDS ${RECURLOOP_CHECK_COMMON_FILES} ${RECURLOOP_CHECK_INFERRED_FILES}
+                "${RECURLOOP_INFERRED_IMAGE}")
+    recurloop_add_feature_test(recurloop/language/jit_aot_arrays.cmake
+        DEPENDS ${RECURLOOP_CHECK_COMMON_FILES} ${RECURLOOP_CHECK_COMPILER_FILES}
+                ${RECURLOOP_CHECK_ASSEMBLER_FRONTEND_FILES} ${RECURLOOP_CHECK_LLVM_FILES})
     recurloop_add_feature_test(recurloop/language/lexicon_merge.cmake
         DEPENDS
             ${RECURLOOP_CHECK_COMMON_FILES}
