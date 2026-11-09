@@ -22,6 +22,12 @@ set(migrated_actions
   "workspace.pass-lf"
   "workspace.pass-tab"
   "workspace.pass-vtab"
+  "dictionary.name-byte"
+  "dictionary.name-cr"
+  "dictionary.name-lf"
+  "dictionary.name-tab"
+  "dictionary.name-vtab"
+  "dictionary.name-interpolate"
   "hex.byte"
   "typed.instantiate")
 foreach(action IN LISTS migrated_actions)

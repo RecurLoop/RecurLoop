@@ -170,6 +170,32 @@ namespace recurloop {
       context.workspace.key.append(character);
     }
 
+    template <lexicon::Phrase::Action Pass>
+    void action_dictionary_name(context::Context &context, lexicon::Phrase &invoked) {
+      // Keep the source spelling while the existing name grammar consumes it.
+      // Workspace keys can contain decoded escapes/interpolation, and the input
+      // buffer can slide, so their byte length cannot recover a source range.
+      SourceLocation start{context.source.path, context.source.line, context.source.position};
+      const std::string spelling = invoked.getKey();
+      const auto columns = std::count_if(spelling.begin(), spelling.end(), [](unsigned char byte) {
+        return (byte & 0xc0) != 0x80;
+      });
+      start.column -= columns;
+      const auto previousBytes = context.workspace.key.size();
+      Pass(context, invoked);
+      if constexpr (Pass == action_pass_byte) {
+        // This grammar passes UTF-8 one byte at a time. A continuation byte
+        // must not advance the source column a second time for the same glyph.
+        const auto bytes = context.workspace.key.size();
+        if (bytes == previousBytes + 1 &&
+            (static_cast<unsigned char>(context.workspace.key.c_str()[bytes - 1]) & 0xc0) == 0x80)
+          --context.source.position;
+      }
+      auto &range = context.staging.definitions[context.staging.stack.size()];
+      if (range.first.path.empty()) range.first = std::move(start);
+      range.second = {context.source.path, context.source.line, context.source.position};
+    }
+
     void action_lexicon(context::Context &context, lexicon::Phrase &invoked) {
       SourceBlock block = Blocks::capture(context);
       const bool headerIsEmpty = std::all_of(block.header.begin(), block.header.end(),
@@ -554,6 +580,8 @@ namespace recurloop {
       Assembler::commitNative(context, saved);
       applyPhraseOptions(context, saved);
 
+      Semantic::recordDefinition(context, saved);
+
       context::Staging::pop(context, 0);
 
       context::Lookup::leave(context, invoked, 1);
@@ -697,6 +725,12 @@ namespace recurloop {
       actions.define("reference.whitespace", action_reference_whitespaces);
       actions.define("reference.commit", action_reference_commit);
       actions.define("dictionary.enter", action_dictionary_enter);
+      actions.define("dictionary.name-byte", action_dictionary_name<action_pass_byte>);
+      actions.define("dictionary.name-cr", action_dictionary_name<action_pass_carriage_return>);
+      actions.define("dictionary.name-lf", action_dictionary_name<action_pass_line_feed>);
+      actions.define("dictionary.name-tab", action_dictionary_name<action_pass_horizontal_tab>);
+      actions.define("dictionary.name-vtab", action_dictionary_name<action_pass_vertical_tab>);
+      actions.define("dictionary.name-interpolate", action_dictionary_name<NameInterpolation::append>);
       actions.define("dictionary.whitespace", action_dictionary_whitespaces);
       actions.define("dictionary.leave", action_dictionary_leave);
       actions.define("dictionary.equals", action_dictionary_equals);

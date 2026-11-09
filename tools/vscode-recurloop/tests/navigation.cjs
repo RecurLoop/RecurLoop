@@ -360,6 +360,44 @@ const at = (doc, text, occurrence = 0) => {
   await checkComponent(qualifiedUsesDoc, 'Game:Phase:Ready', 'Game', 'let Game');
   await checkComponent(qualifiedUsesDoc, 'Game:Phase:Ready', 'Phase', 'let Game:Phase');
   await checkComponent(qualifiedUsesDoc, 'Game:Phase:Ready', 'Ready', 'const Game:Phase:Ready');
+  // Target bodies are deferred, but calls in them still navigate to dictionary
+  // members in included source. Neither indexing nor navigation may run targets.
+  const applicationPath = path.join(root, 'main.rl');
+  const applicationSource = 'let Application = [\n    main = fn () -> i64 { return 42 }\n]\n' +
+    'let Other = [\n    main = fn () -> i64 { return 7 }\n]\n';
+  const targetSource = 'include "main.rl"\n' +
+    'target check { assert Application:main() == 42 }\n' +
+    'target run depends [check] { print Application:main() }\n' +
+    'target build_debug {\n    emit executable debug "./navigation-must-not-build" app_main = fn () -> i64 {\n' +
+    '        return Application:main() - 42\n    }\n}\n' +
+    'target other { print Other:main() }\n';
+  fs.writeFileSync(applicationPath, applicationSource);
+  fs.writeFileSync(entryPath, targetSource);
+  const applicationDoc = document(applicationPath);
+  const targetDoc = documents.get(entryPath); targetDoc.setText(targetSource);
+  const checkTargetDefinitions = async () => {
+    for (let occurrence = 0; occurrence < 3; occurrence++) {
+      const begin = targetDoc.offsetAt(at(targetDoc, 'Application:main', occurrence));
+      for (const component of ['Application', 'main']) {
+        const offset = begin + (component === 'main' ? 'Application:'.length : 0);
+        const definitions = await nav.locations(targetDoc, targetDoc.positionAt(offset), 'definition');
+        assert.equal(definitions.length, 1, `target ${occurrence}: ${component}`);
+        assert.equal(definitions[0].uri.fsPath, applicationPath);
+        const expected = applicationSource.indexOf(component === 'main' ? 'main =' : 'Application');
+        assert.equal(applicationDoc.offsetAt(definitions[0].range.start), expected);
+        assert.equal(applicationDoc.offsetAt(definitions[0].range.end), expected + component.length);
+      }
+    }
+    const other = targetDoc.offsetAt(at(targetDoc, 'Other:main')) + 'Other:'.length;
+    const definitions = await nav.locations(targetDoc, targetDoc.positionAt(other), 'definition');
+    assert.equal(definitions.length, 1);
+    assert.equal(applicationDoc.offsetAt(definitions[0].range.start), applicationSource.lastIndexOf('main ='));
+    assert.ok(!fs.existsSync(path.join(root, 'navigation-must-not-build')));
+  };
+  await runtime.restart(folder.uri);
+  await checkTargetDefinitions();
+  await runtime.restart(folder.uri); // Restore source modules from .rli cache.
+  await checkTargetDefinitions();
   console.log('Navigation passed: shared traces, scoped queries, cached results, incremental edits/publication/removal/reopening, Unicode, rename, symbols, retained work after cancellation and restart.');
 })().catch(error => { console.error(error); process.exitCode = 1; }).finally(() => {
   nav.dispose(); runtime.dispose(); fs.rmSync(root, { recursive: true, force: true }); fs.rmSync(external, { recursive: true, force: true });

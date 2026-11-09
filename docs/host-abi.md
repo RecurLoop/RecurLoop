@@ -75,6 +75,17 @@ source consumption or semantic tracing. LanguageKit registers it alongside its
 other fallback grammars; root matching stays ordinary phrase lookup and does
 not recognize function-call spellings itself.
 
+## Source definition metadata
+
+`context:source:definition:mark(Context*, rewind)` records the current source
+position in the existing pending declaration range. The first mark starts a
+range; later marks extend it. `rewind` counts source columns of an already
+consumed grammar token on the current line. Source-owned dictionary name actions use it while
+passing bytes, escapes and interpolation; the existing dictionary commit binds
+the range to the saved phrase. No new direct host action or persistent semantic
+store is introduced. Bootstrap compatibility callbacks are rebound to compiled
+source actions before exporting the final core image.
+
 ## Compiler registry
 
 The physical compiler-registry root, child keys, setting slots, counters and ABI

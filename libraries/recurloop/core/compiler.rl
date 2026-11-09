@@ -207,6 +207,7 @@ compiler {
   extern "context:memory:release" symbol "context:memory:release" params [ "Context*" "u8*" ] result "void" abi "sysv-amd64" imported
   extern "context:memory:copy" symbol "context:memory:copy" params [ "Context*" "u8*" "u8*" "u64" ] result "u8*" abi "sysv-amd64" imported
   extern "context:memory:move" symbol "context:memory:move" params [ "Context*" "u8*" "u8*" "u64" ] result "u8*" abi "sysv-amd64" imported
+  extern "context:source:definition:mark" symbol "context:source:definition:mark" params [ "Context*" "u64" ] result "u64" abi "sysv-amd64" imported
   extern "context:workspace:key:append_byte" symbol "context:workspace:key:append-byte" params [ "Context*" "u64" ] result "u64" abi "sysv-amd64" imported
   extern "context:workspace:code:append_byte" symbol "context:workspace:code:append-byte" params [ "Context*" "u64" ] result "u64" abi "sysv-amd64" imported
   extern "context:expression:boolean:at" symbol "context:expression:boolean:at" params [ "Context*" "u8*" "u8*" "u64" "u64" ] result "u64" abi "sysv-amd64" imported

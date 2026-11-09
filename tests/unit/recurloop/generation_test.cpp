@@ -504,6 +504,38 @@ TEST(RecurloopGeneration, QualifiedPhraseComponentsShareResolvedReferencesAndDec
   expect('R', alias + 27, 5, "47616d653a50686173653a5265616479");
 }
 
+TEST(RecurloopGeneration, DictionaryMembersKeepExactDefinitionRangesAcrossSourceChunks) {
+  char program[] = "recurloop-test";
+  char *argv[] = {program};
+  auto runtime = std::make_unique<recurloop::Recurloop>();
+  runtime->initialize(1, argv);
+  runtime->getContext().config.source.buffer.size = 16;
+  auto state = recurloop::Project::create(runtime->getContext(), {program});
+  auto session = state->openSession();
+  const std::string source = "let Application = [\n"
+                             "    main = fn () -> i64 { return 42 }\n"
+                             "    Nested = [ run = fn () -> i64 { return 7 } ]\n"
+                             "    \"other name\" = phrase {}\n"
+                             "    computed${\"_name\"} = phrase {}\n"
+                             "    café = phrase {}\n"
+                             "]\n";
+  const auto response = session->inspect(source, "/tmp/dictionary-member-definitions.rl", true);
+  ASSERT_EQ(response.status, 0) << response.error;
+  ASSERT_EQ(response.output.find("E\t"), std::string::npos) << response.output;
+  const auto expect = [&](std::size_t offset, std::size_t width, const std::string &name) {
+    const auto line = 1 + std::count(source.begin(), source.begin() + offset, '\n');
+    const auto declaration = "B\t" + std::to_string(offset) + '\t' + std::to_string(offset + width) + '\t' +
+                             std::to_string(line) + "\t0\t" + name + '\n';
+    EXPECT_NE(response.output.find(declaration), std::string::npos) << declaration;
+  };
+  expect(source.find("main ="), 4, "4170706c69636174696f6e3a6d61696e");
+  expect(source.find("Nested ="), 6, "4170706c69636174696f6e3a4e6573746564");
+  expect(source.find("run ="), 3, "4170706c69636174696f6e3a4e65737465643a72756e");
+  expect(source.find("other name"), 10, "4170706c69636174696f6e3a6f74686572206e616d65");
+  expect(source.find("computed${"), 18, "4170706c69636174696f6e3a636f6d70757465645f6e616d65");
+  expect(source.find("café"), 4, "4170706c69636174696f6e3a636166c3a9");
+}
+
 TEST(RecurloopGeneration, DefinitionLocationsFollowPhraseReferencesThroughImages) {
   auto session = project()->openSession();
   const auto root = std::filesystem::temp_directory_path() / "recurloop-definition-reference-test";
@@ -513,7 +545,9 @@ TEST(RecurloopGeneration, DefinitionLocationsFollowPhraseReferencesThroughImages
   const std::string source = "let \"words : with separators\" = phrase { payload = \"text\" }\n"
                              "let alias = <\"words : with separators\">\n"
                              "const answer = 42\nrecord State { value:i64 }\n"
-                             "fn read(state:State*) -> i64 { return state.value }\n";
+                             "fn read(state:State*) -> i64 { return state.value }\n"
+                             "let Application = [ main = fn () -> i64 { return 42 }\n"
+                             "    Nested = [ run = fn () -> i64 { return 7 } ] ]\n";
   const auto defined = session->evaluate(source, path);
   ASSERT_EQ(defined.status, 0) << defined.error;
   const auto before = session->inspect(source, path, true, true).output;
@@ -538,7 +572,7 @@ TEST(RecurloopGeneration, DefinitionLocationsFollowPhraseReferencesThroughImages
     return locations;
   };
   const auto expected = definitions(before);
-  EXPECT_EQ(expected.size(), 6); // phrase, alias, value, record, field, function
+  EXPECT_EQ(expected.size(), 10); // Six declarations above plus two dictionaries and their functions.
   const auto importedDefinitions = definitions(after);
   // Native compilation can add overload phrases inheriting the function's
   // definition; every source declaration must retain its original location.

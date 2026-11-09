@@ -75,6 +75,60 @@ let Core:Actions:workspace_pass_vtab = phrase {
     }
 }
 
+// Source spellings, including escapes, are tracked as the existing grammar
+// consumes them. The generic mark updates the kernel's pending declaration
+// range; dictionary.commit attaches it to the final saved phrase.
+let Core:Actions:definition_begin = fn (state:Context*, called:Phrase*) -> void {
+    let phrase = context:phrase:address(state, called)
+    let bytes = context:phrase:key(state, phrase, cast(u8*, 0), 0)
+    context:source:definition:mark(state, bytes)
+}
+
+let Core:Actions:dictionary_name_byte = phrase {
+    type = <phrase-types:callable>
+    action = fn (state:Context*, called:Phrase*) -> void {
+        if context:source:ensure(state, 1) == 0 { return }
+        Core:Actions:definition_begin(state, called)
+        let byte = context:source:peek(state, 0)
+        context:workspace:key:append_byte(state, byte)
+        context:source:advance(state, 1)
+        // A continuation byte belongs to the preceding UTF-8 code point.
+        if byte >= 128 && byte < 192 { state.source.position -= 1 }
+        context:source:definition:mark(state, 0)
+    }
+}
+
+let Core:Actions:dictionary_name_escape = fn (state:Context*, called:Phrase*, byte:u64) -> void {
+    Core:Actions:definition_begin(state, called)
+    context:workspace:key:append_byte(state, byte)
+    context:source:definition:mark(state, 0)
+}
+
+let Core:Actions:dictionary_name_cr = phrase {
+    type = <phrase-types:callable>
+    action = fn (state:Context*, called:Phrase*) -> void { Core:Actions:dictionary_name_escape(state, called, 13) }
+}
+let Core:Actions:dictionary_name_lf = phrase {
+    type = <phrase-types:callable>
+    action = fn (state:Context*, called:Phrase*) -> void { Core:Actions:dictionary_name_escape(state, called, 10) }
+}
+let Core:Actions:dictionary_name_tab = phrase {
+    type = <phrase-types:callable>
+    action = fn (state:Context*, called:Phrase*) -> void { Core:Actions:dictionary_name_escape(state, called, 9) }
+}
+let Core:Actions:dictionary_name_vtab = phrase {
+    type = <phrase-types:callable>
+    action = fn (state:Context*, called:Phrase*) -> void { Core:Actions:dictionary_name_escape(state, called, 11) }
+}
+let Core:Actions:dictionary_name_interpolate = phrase {
+    type = <phrase-types:callable>
+    action = fn (state:Context*, called:Phrase*) -> void {
+        Core:Actions:definition_begin(state, called)
+        context:phrase:dispatch(state, context:phrase:find(state, "__core_dictionary_name_interpolation"))
+        context:source:definition:mark(state, 0)
+    }
+}
+
 let Core:Actions:hex_nibble = fn (state:Context*, value:u64, high:i64) -> i64 {
     if value >= 48 && value <= 57 { return cast(i64, value - 48) }
     if value >= 65 && value <= 70 { return cast(i64, value - 65 + 10) }
@@ -179,6 +233,12 @@ let Core:ActionBindings:"workspace.pass-cr" = <Core:Actions:workspace_pass_cr>
 let Core:ActionBindings:"workspace.pass-lf" = <Core:Actions:workspace_pass_lf>
 let Core:ActionBindings:"workspace.pass-tab" = <Core:Actions:workspace_pass_tab>
 let Core:ActionBindings:"workspace.pass-vtab" = <Core:Actions:workspace_pass_vtab>
+let Core:ActionBindings:"dictionary.name-byte" = <Core:Actions:dictionary_name_byte>
+let Core:ActionBindings:"dictionary.name-cr" = <Core:Actions:dictionary_name_cr>
+let Core:ActionBindings:"dictionary.name-lf" = <Core:Actions:dictionary_name_lf>
+let Core:ActionBindings:"dictionary.name-tab" = <Core:Actions:dictionary_name_tab>
+let Core:ActionBindings:"dictionary.name-vtab" = <Core:Actions:dictionary_name_vtab>
+let Core:ActionBindings:"dictionary.name-interpolate" = <Core:Actions:dictionary_name_interpolate>
 let Core:ActionBindings:"hex.byte" = <Core:Actions:hex_byte>
 let Core:ActionBindings:"typed.instantiate" = <Core:Actions:typed_instantiate>
 

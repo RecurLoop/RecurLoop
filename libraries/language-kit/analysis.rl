@@ -778,6 +778,34 @@ let LanguageKit:Analysis:function = fn (file:LanguageKit:Analysis:File*, name:La
     }
 }
 
+// Deferred source has catalog facts without executed reference spans. Resolve
+// a known call component by component, preserving any exact compiler matches.
+let LanguageKit:Analysis:call_components = fn (file:LanguageKit:Analysis:File*, token:LanguageKit:Analysis:Token*) -> void {
+    var begin:u64 = 0; var end:u64 = 0
+    let length = strlen(token.text)
+    while end <= length {
+        if token.text[end] == 0 || token.text[end] == 58 {
+            let name = LanguageKit:copy_bytes(token.text, cast(i64, end))
+            let label = LanguageKit:copy_bytes(&token.text[begin], cast(i64, end - begin))
+            if !name || !label { free(name); free(label); return }
+            let symbol = LanguageKit:Analysis:symbol(file, name)
+            if symbol {
+                let start = token.start + cast(u64, LanguageKit:Analysis:find_byte_to_char(token.text, begin))
+                let finish = token.start + cast(u64, LanguageKit:Analysis:find_byte_to_char(token.text, end))
+                if !LanguageKit:Analysis:matched(file, symbol.key, start, finish) {
+                    var role:i64 = 1
+                    if token.text[end] == 0 { role = 3 }
+                    LanguageKit:Analysis:add(file, symbol.key, token.container, label, start, finish, token.line, role, 0, 0)
+                }
+            }
+            free(name); free(label)
+            if token.text[end] == 0 { return }
+            begin = end + 1
+        }
+        end += 1
+    }
+}
+
 let LanguageKit:Analysis:classify = fn (file:LanguageKit:Analysis:File*) -> void {
     LanguageKit:Analysis:tokenize(file)
     var token = file.tokens
@@ -824,11 +852,9 @@ let LanguageKit:Analysis:classify = fn (file:LanguageKit:Analysis:File*) -> void
                     local_entry = LanguageKit:Analysis:table_next(local_entry)
                 }
             }
-            if (definition != 0 || role == 4 || role == 5 || typed_call != 0) && symbol && !matched {
-                let added = LanguageKit:Analysis:add(file, symbol.key, "", token.text, token.start, token.finish, token.line, role, 0, 0)
-                if added && typed_call != 0 {
-                    free(added.container); added.container = LanguageKit:copy_text(token.container)
-                }
+            if typed_call != 0 && !matched { LanguageKit:Analysis:call_components(file, token) }
+            else if (definition != 0 || role == 4 || role == 5) && symbol && !matched {
+                LanguageKit:Analysis:add(file, symbol.key, "", token.text, token.start, token.finish, token.line, role, 0, 0)
             }
         }
         token = token.next

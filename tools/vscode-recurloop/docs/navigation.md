@@ -7,6 +7,12 @@ LanguageKit classifies real semantic traces and owns all query policy. The
 extension only synchronizes document snapshots, converts positions and manages
 cancellation. The same file constructor and queries serve the example IDE.
 
+Dictionary members retain their exact declaration ranges in the runtime's
+portable definition registry, including when their source module is restored
+from an image. Calls in deferred target bodies resolve through the exported
+function catalog without executing the targets. Fallback qualified calls have
+separate namespace and function occurrences; exact runtime matches take priority.
+
 ## Updates and scope
 
 Runtime inspection is shared between providers, including requests in flight.
@@ -60,4 +66,6 @@ a local rename. Project-wide rename still requires complete, unambiguous analysi
 commands. It covers cold local scope, warm reuse, one-file unsaved updates,
 unchanged publication, dependency removal, Unicode positions, shadowing, rename,
 workspace symbols, independent/queued/active cancellation and runtime restart.
+It also covers dictionary-member calls inside targets, identically named members
+of different dictionaries, component ranges and navigation after cached reloads.
 Run `npm test` after building the host and standard libraries.

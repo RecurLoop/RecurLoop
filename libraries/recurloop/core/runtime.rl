@@ -2106,7 +2106,14 @@ phrase less_apostrophe_v = "\\v" in less_apostrophe {
 
 phrase lbracket_empty_empty = "" in lbracket_empty {
   type phrase_types_elaborate
-  action host "workspace.pass-byte"
+  action host "dictionary.name-byte"
+}
+
+// Source-owned name tracking delegates interpolation to the existing kernel
+// action. This carrier keeps that service available without a new host action.
+phrase dictionary_name_interpolation_delegate = "__core_dictionary_name_interpolation" in root {
+  type phrase_types_callable
+  action host "name.interpolate"
 }
 
 phrase lbracket_empty_tab = "\t" in lbracket_empty {
@@ -2143,7 +2150,7 @@ phrase lbracket_empty_quote = "\"" in lbracket_empty {
 
 phrase lbracket_empty_empty_93bab9 = "${" in lbracket_empty {
   type phrase_types_elaborate
-  action host "name.interpolate"
+  action host "dictionary.name-interpolate"
 }
 
 phrase lbracket_empty_apostrophe = "'" in lbracket_empty {
@@ -2161,27 +2168,27 @@ phrase lbracket_empty_equals = "=" in lbracket_empty {
 
 phrase lbracket_empty_backslash = "\\" in lbracket_empty {
   type phrase_types_elaborate
-  action host "workspace.pass-byte"
+  action host "dictionary.name-byte"
 }
 
 phrase lbracket_empty_n = "\\n" in lbracket_empty {
   type phrase_types_elaborate
-  action host "workspace.pass-lf"
+  action host "dictionary.name-lf"
 }
 
 phrase lbracket_empty_r = "\\r" in lbracket_empty {
   type phrase_types_elaborate
-  action host "workspace.pass-cr"
+  action host "dictionary.name-cr"
 }
 
 phrase lbracket_empty_t = "\\t" in lbracket_empty {
   type phrase_types_elaborate
-  action host "workspace.pass-tab"
+  action host "dictionary.name-tab"
 }
 
 phrase lbracket_empty_v = "\\v" in lbracket_empty {
   type phrase_types_elaborate
-  action host "workspace.pass-vtab"
+  action host "dictionary.name-vtab"
 }
 
 phrase lbracket_empty_merge = "merge" in lbracket_empty {
@@ -2191,7 +2198,7 @@ phrase lbracket_empty_merge = "merge" in lbracket_empty {
 
 phrase lbracket_quote_empty = "" in lbracket_quote {
   type phrase_types_elaborate
-  action host "workspace.pass-byte"
+  action host "dictionary.name-byte"
 }
 
 phrase lbracket_quote_quote = "\"" in lbracket_quote {
@@ -2201,42 +2208,42 @@ phrase lbracket_quote_quote = "\"" in lbracket_quote {
 
 phrase lbracket_quote_empty_6a50db = "${" in lbracket_quote {
   type phrase_types_elaborate
-  action host "name.interpolate"
+  action host "dictionary.name-interpolate"
 }
 
 phrase lbracket_quote_backslash = "\\" in lbracket_quote {
   type phrase_types_elaborate
-  action host "workspace.pass-byte"
+  action host "dictionary.name-byte"
 }
 
 phrase lbracket_quote_n = "\\n" in lbracket_quote {
   type phrase_types_elaborate
-  action host "workspace.pass-lf"
+  action host "dictionary.name-lf"
 }
 
 phrase lbracket_quote_r = "\\r" in lbracket_quote {
   type phrase_types_elaborate
-  action host "workspace.pass-cr"
+  action host "dictionary.name-cr"
 }
 
 phrase lbracket_quote_t = "\\t" in lbracket_quote {
   type phrase_types_elaborate
-  action host "workspace.pass-tab"
+  action host "dictionary.name-tab"
 }
 
 phrase lbracket_quote_v = "\\v" in lbracket_quote {
   type phrase_types_elaborate
-  action host "workspace.pass-vtab"
+  action host "dictionary.name-vtab"
 }
 
 phrase lbracket_apostrophe_empty = "" in lbracket_apostrophe {
   type phrase_types_elaborate
-  action host "workspace.pass-byte"
+  action host "dictionary.name-byte"
 }
 
 phrase lbracket_apostrophe_empty_b1c883 = "${" in lbracket_apostrophe {
   type phrase_types_elaborate
-  action host "name.interpolate"
+  action host "dictionary.name-interpolate"
 }
 
 phrase lbracket_apostrophe_apostrophe = "'" in lbracket_apostrophe {
@@ -2246,27 +2253,27 @@ phrase lbracket_apostrophe_apostrophe = "'" in lbracket_apostrophe {
 
 phrase lbracket_apostrophe_backslash = "\\" in lbracket_apostrophe {
   type phrase_types_elaborate
-  action host "workspace.pass-byte"
+  action host "dictionary.name-byte"
 }
 
 phrase lbracket_apostrophe_n = "\\n" in lbracket_apostrophe {
   type phrase_types_elaborate
-  action host "workspace.pass-lf"
+  action host "dictionary.name-lf"
 }
 
 phrase lbracket_apostrophe_r = "\\r" in lbracket_apostrophe {
   type phrase_types_elaborate
-  action host "workspace.pass-cr"
+  action host "dictionary.name-cr"
 }
 
 phrase lbracket_apostrophe_t = "\\t" in lbracket_apostrophe {
   type phrase_types_elaborate
-  action host "workspace.pass-tab"
+  action host "dictionary.name-tab"
 }
 
 phrase lbracket_apostrophe_v = "\\v" in lbracket_apostrophe {
   type phrase_types_elaborate
-  action host "workspace.pass-vtab"
+  action host "dictionary.name-vtab"
 }
 
 phrase debug_break_tab = "\t" in debug_break {

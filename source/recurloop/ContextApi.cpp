@@ -62,6 +62,7 @@ namespace recurloop {
     constexpr std::string_view SourceBytes{"context:source:bytes"};
     constexpr std::string_view SourcePeek{"context:source:peek"};
     constexpr std::string_view SourceAdvance{"context:source:advance"};
+    constexpr std::string_view SourceDefinitionMark{"context:source:definition:mark"};
     constexpr std::string_view SourceMatch{"context:source:match"};
     constexpr std::string_view SourceRoot{"context:source:root"};
     constexpr std::string_view SourceConsume{"context:source:consume"};
@@ -1222,6 +1223,18 @@ namespace recurloop {
         if (sourceAvailable(value, bytes) < bytes) THROW(, "context source advance exceeds available input")
         context::Source::progress(value, bytes * Byte::length);
         return bytes;
+      });
+    }
+
+    extern "C" std::uint64_t contextSourceDefinitionMark(context::Context *context,
+                                                         std::uint64_t rewind) noexcept {
+      return checked(context, std::uint64_t{0}, [&](context::Context &value) {
+        if (rewind >= value.source.position) THROW(, "source definition mark precedes the current line")
+        SourceLocation location{value.source.path, value.source.line, value.source.position - rewind};
+        auto &range = value.staging.definitions[value.staging.stack.size()];
+        if (range.first.path.empty()) range.first = location;
+        range.second = std::move(location);
+        return std::uint64_t{1};
       });
     }
 
@@ -2473,6 +2486,8 @@ namespace recurloop {
                         reinterpret_cast<std::uintptr_t>(&contextSourcePeek));
     declareHostFunction(context, SourceAdvance, "context:source:advance", {contextPointer, u64}, u64,
                         reinterpret_cast<std::uintptr_t>(&contextSourceAdvance));
+    declareHostFunction(context, SourceDefinitionMark, "context:source:definition:mark", {contextPointer, u64}, u64,
+                        reinterpret_cast<std::uintptr_t>(&contextSourceDefinitionMark));
     declareHostFunction(context, SourceRoot, "context:source:root", {contextPointer}, u64,
                         reinterpret_cast<std::uintptr_t>(&contextSourceRoot));
     declareHostFunction(context, SourceConsume, "context:source:consume", {contextPointer, bytePointer}, u64,
