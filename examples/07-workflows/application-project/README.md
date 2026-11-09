@@ -36,6 +36,13 @@ imports its vocabulary and definitions; target bodies run when selected. Test
 sources are included only by `test`. Extend the source graph through includes
 from the entry or other included application files.
 
+The entry imports `docs` and includes `docs/overview.rl` outside target bodies.
+This makes the manual part of the project processing graph, so its vocabulary,
+semantic colors, diagnostics and navigation are available in the editor before
+running `docs`. Include additional manual files in that graph as you add them.
+Their declarations only define documentation objects; they do not export files
+or start the application.
+
 ## Documentation
 
 Edit the package name and version in `recurloop.docs`, author manual objects in

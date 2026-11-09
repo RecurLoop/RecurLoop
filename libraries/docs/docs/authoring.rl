@@ -57,6 +57,21 @@ rendered blocks, navigation and a search index. It does not run application
 targets or require the runtime's source repository. A website reader can render
 the exported data; HTML generation is a separate step.
 
+## Include manual sources for editor analysis
+
+Import `docs` and include the manual's source files outside deferred target
+bodies in `recurloop.project.rl`. For example, the application starter begins
+with `import docs` and `include \"docs/overview.rl\"`. This supplies the Docs
+vocabulary and makes the manual part of the saved processing graph used for
+semantic colors, diagnostics and navigation. Add each new manual source through
+an include from that graph. Loading documentation objects does not export files
+or start the application.
+
+`directory=docs` in `recurloop.docs` selects files for export discovery. It does
+not add those files to the editor's processing graph by itself. A manual loaded
+only inside a deferred `docs` target is unavailable to ordinary editor analysis
+until its source is included in the project graph.
+
 ## Package-local sources
 
 Keep extended `.rl` objects in the library's `docs` directory. Its `recurloop.docs` can set `name`, `version`, `directory`, `repository` and `entry`. Optional `image` selects an installed library image for phrase help; `repository-directory` preserves source links while a library lives inside a larger repository. A developer can choose another documentation directory through configuration or `--docs-dir`.

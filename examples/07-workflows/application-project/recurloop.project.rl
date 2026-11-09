@@ -1,5 +1,7 @@
 import project
+import docs
 include "src/main.rl"
+include "docs/overview.rl"
 
 target run {
     assert Application:main() == 0
@@ -30,7 +32,6 @@ target test {
 }
 
 target docs {
-    import docs
     let prepared = run mkdir -p build/docs
     assert prepared == 0
     assert Docs:export_package(".", "build/docs/my-application.json") == 1

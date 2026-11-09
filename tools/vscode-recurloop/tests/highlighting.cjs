@@ -21,6 +21,7 @@ class Range {
 class CancellationError extends Error {}
 let enabled = true;
 const colors = new Map();
+const diagnostics = new Map();
 const vscode = { Position, Range, CancellationError, Diagnostic: class {}, DiagnosticSeverity: { Error: 0, Warning: 1 },
   commands: { registerCommand: disposable },
   workspace: { workspaceFolders: [folder], textDocuments: [], getWorkspaceFolder: () => folder,
@@ -29,14 +30,15 @@ const vscode = { Position, Range, CancellationError, Diagnostic: class {}, Diagn
     onDidChangeTextDocument: disposable, onDidOpenTextDocument: disposable, onDidCloseTextDocument: disposable },
   window: { visibleTextEditors: [], onDidChangeVisibleTextEditors: disposable,
     createTextEditorDecorationType: ({ color }) => ({ color, dispose() { colors.delete(color); } }) },
-  languages: new Proxy({ createDiagnosticCollection: () => ({ ...disposable(), set() {}, delete() {} }) }, {
+  languages: new Proxy({ createDiagnosticCollection: () => ({ ...disposable(),
+    set: (uri, items) => diagnostics.set(uri.toString(), items), delete: uri => diagnostics.delete(uri.toString()) }) }, {
     get: (target, key) => target[key] || disposable
   })
 };
 const original = Module._load;
 Module._load = function(name, ...rest) { return name === 'vscode' ? vscode : original.call(this, name, ...rest); };
 const { RecurLoopRuntime } = require('../out/runtime');
-const { AnalysisController } = require('../out/analysis');
+const { AnalysisController, parseInspection } = require('../out/analysis');
 const log = [];
 const output = { appendLine: text => log.push(text), append: text => log.push(text) };
 const runtime = new RecurLoopRuntime(output);
@@ -145,6 +147,41 @@ let Probe:advance = fn (distance:i64, speed:i64) -> i64 { return distance + spee
   fs.unlinkSync(entry);
   await analysis.refresh(document);
   plain();
-  console.log('Highlighting passed: plain loose files, runtime let colors, editor cache, persisted module cache, disabled analysis and removed project.');
+
+  // The starter's manual must belong to the processing graph before any target
+  // runs. Exercise the actual distributed sources, not a parallel test fixture.
+  const starter = path.join(repo, 'examples/07-workflows/application-project');
+  for (const item of ['src', 'docs', 'recurloop.project.rl', 'recurloop.docs']) {
+    fs.cpSync(path.join(starter, item), path.join(root, item), { recursive: true });
+  }
+  const manualSource = fs.readFileSync(path.join(root, 'docs/overview.rl'), 'utf8');
+  const manualLines = manualSource.split('\n');
+  const manual = { uri: uri(path.join(root, 'docs/overview.rl')), languageId: 'recurloop', version: 1,
+    getText: () => manualSource, lineCount: manualLines.length, lineAt: line => ({ text: manualLines[line] }),
+    positionAt: offset => { const prefix = manualSource.slice(0, offset).split('\n');
+      return new Position(prefix.length - 1, prefix.at(-1).length); } };
+  editor.document = manual;
+  await runtime.restart(folder.uri);
+  const inspection = parseInspection(manual, await runtime.inspect(manual));
+  assert.equal(inspection.diagnostic, undefined);
+  await analysis.refresh(manual);
+  assert.equal(diagnostics.has(manual.uri.toString()), false);
+  for (const word of ['let', 'phrase', 'payload']) {
+    const position = manual.positionAt(manualSource.indexOf(word));
+    assert.ok([...colors.values()].some(ranges => ranges.some(range =>
+      range.start.line === position.line && range.end.line === position.line
+      && range.start.character <= position.character && range.end.character >= position.character + word.length)), word);
+  }
+  const manualPalette = palette();
+  await runtime.restart(folder.uri);
+  await analysis.refresh(manual);
+  assert.equal(diagnostics.has(manual.uri.toString()), false);
+  assert.deepEqual(palette(), manualPalette);
+  assert.equal(fs.existsSync(path.join(root, 'build')), false, 'opening documentation must not run targets');
+  const unrelated = { ...manual, uri: uri(path.join(root, 'unrelated.rl')) };
+  fs.writeFileSync(unrelated.uri.fsPath, manualSource);
+  const excluded = parseInspection(unrelated, await runtime.inspect(unrelated));
+  assert.match(excluded.diagnostic, /source is outside the current project processing graph/);
+  console.log('Highlighting passed: plain loose files, runtime colors, editor and module caches, disabled analysis, removed project and starter documentation without target execution.');
 })().catch(error => { console.error(error, log.join('\n')); process.exitCode = 1; })
   .finally(() => { analysis.dispose(); runtime.dispose(); fs.rmSync(root, { recursive: true, force: true }); });

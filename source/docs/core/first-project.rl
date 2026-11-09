@@ -19,6 +19,8 @@ cd my-application
 
 Alternatively, open a new folder in VS Code and run **RecurLoop: Initialize Project**. It creates an empty entry without replacing an existing file; add the following files yourself.
 
+Create all the files below before running the target commands in this chapter. The entry includes both the application source and its manual.
+
 ```text
 my-application/
   recurloop.project.rl
@@ -59,7 +61,9 @@ Save this as `recurloop.project.rl`:
 
 ```recurloop
 import project
+import docs
 include \"src/main.rl\"
+include \"docs/overview.rl\"
 
 target run {
     assert Application:main() == 0
@@ -90,7 +94,6 @@ target test {
 }
 
 target docs {
-    import docs
     let prepared = run mkdir -p build/docs
     assert prepared == 0
     assert Docs:export_package(\".\", \"build/docs/my-application.json\") == 1
@@ -114,7 +117,7 @@ target clean {
 
 These names are project conventions, not reserved keywords. Running or building does not implicitly run tests. The only dependency here is `debug` on `build-debug`. A shared dependency executes once per request; targets do not automatically skip work based on file timestamps.
 
-Keep imports and shared application definitions outside target bodies. Keep startup, tests, native output and documentation export inside their targets. Tests are included only by `test`, and the Docs library is imported only by `docs`. Merely placing a source file in the folder does not include it in the application's source graph.
+Keep imports and shared application definitions outside target bodies. Keep startup, tests, native output and documentation export inside their targets. Tests are included only by `test`. The Docs vocabulary and `docs/overview.rl` are loaded with the project so the editor can analyze the manual without running an export. Merely placing a source file in the folder does not include it in the project's processing graph.
 
 ## Add tests
 
@@ -181,7 +184,9 @@ Run `recurloop --target docs`. The portable bundle in
 ]
 ```
 
-The loader supplies the Docs vocabulary when reading manual objects. Add more `.rl` objects under `docs`; put concise `.docs` help beside the application's API definitions.
+The entry's `import docs` supplies the vocabulary used by manual objects, and its top-level `include \"docs/overview.rl\"` makes this file available to the editor's semantic analysis. Add more `.rl` objects under `docs` and include them from the entry or another included source; put concise `.docs` help beside the application's API definitions.
+
+If the editor reports \"source is outside the current project processing graph; semantic analysis is unavailable\", check that the manual is included outside a deferred target body and save the entry. The `directory=docs` setting controls documentation export discovery; it does not itself include files in the editor's processing graph. Loading manual objects defines data only; `recurloop --target docs` performs the export.
 
 ```console
 recurloop --target docs
